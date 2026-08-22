@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a0c12" />
+    <title>Praetorium</title>
+    <link rel="stylesheet" href="/css/owner-console.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true">P</div>
+      <div class="brand-copy">
+        <strong>Praetorium</strong>
+        <span>Local agent command</span>
+      </div>
+      <div class="header-spacer"></div>
+      <span class="connection-state" id="connection-state"><i></i><span>연결 중</span></span>
+      <span class="local-badge">LOCAL ONLY</span>
+      <button class="icon-button" id="project-settings-btn" type="button">프로젝트</button>
+      <button class="icon-button" id="theme-toggle" type="button" aria-label="테마 전환">◐</button>
+    </header>
+
+    <main class="owner-shell">
+      <aside class="director-rail">
+        <div class="section-kicker">Directors</div>
+        <div id="owner-director-list"></div>
+        <div class="rail-note">
+          <strong>Owner가 목표만 준다.</strong>
+          <span>Director가 계획·위임·검증 루프와 워커 수를 결정합니다.</span>
+        </div>
+      </aside>
+
+      <section class="director-chat">
+        <header class="chat-header">
+          <div>
+            <h1 id="owner-chat-title">Director</h1>
+            <p id="owner-chat-subtitle"></p>
+          </div>
+          <button class="ghost-button" id="owner-refresh-btn" type="button">새로고침</button>
+        </header>
+        <div class="chat-stream" id="owner-chat-stream"></div>
+        <div class="composer">
+          <textarea id="owner-message-input" rows="3" placeholder="목표와 판단 기준을 Director에게 전달…"></textarea>
+          <button id="owner-send-btn" type="button">위임</button>
+        </div>
+      </section>
+
+      <aside class="worker-panel">
+        <header class="worker-header">
+          <div><span class="section-kicker">Execution</span><strong>Worker board</strong></div>
+          <button class="ghost-button" id="owner-dispatch-btn" type="button">지금 배치</button>
+        </header>
+        <div class="task-board" id="owner-task-board"></div>
+        <section class="attention-panel">
+          <header>Owner 판단함</header>
+          <div id="owner-attention-list"></div>
+        </section>
+      </aside>
+    </main>
+
+    <dialog id="project-dialog" class="project-dialog">
+      <form method="dialog" class="dialog-card">
+        <header>
+          <div><span class="section-kicker">Configuration</span><h2>프로젝트 Director 배정</h2></div>
+          <button class="dialog-close" value="cancel" aria-label="닫기">×</button>
+        </header>
+        <p class="dialog-help">등록 순서대로 Project Director 1–3에 배정됩니다. 프로젝트 폴더 밖으로 작업 권한이 확장되지 않습니다.</p>
+        <div id="project-list" class="project-list"></div>
+        <div class="discover-row">
+          <button type="button" class="secondary-button" id="discover-projects-btn">C:\projects 자동 검색</button>
+          <span id="project-capacity">0 / 3</span>
+        </div>
+        <div class="project-form">
+          <input id="project-name" type="text" maxlength="80" placeholder="프로젝트 이름" />
+          <input id="project-path" type="text" placeholder="C:\projects\my-project" />
+          <button type="button" id="add-project-btn">추가</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/js/owner-console.js"></script>
+  </body>
+</html>

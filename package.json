@@ -1,0 +1,14 @@
+{
+  "name": "praetorium",
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test --test-isolation=none tests/lib/director-service.test.js tests/lib/hermes-runtime.test.js tests/lib/local-only.test.js tests/lib/praetorium-config.test.js tests/routes/directors.test.js",
+    "test:watch": "node --watch --test --test-isolation=none tests/lib/director-service.test.js tests/lib/hermes-runtime.test.js tests/lib/local-only.test.js tests/lib/praetorium-config.test.js tests/routes/directors.test.js",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}
