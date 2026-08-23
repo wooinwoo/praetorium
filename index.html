@@ -3,79 +3,124 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0a0c12" />
+    <meta name="theme-color" content="#0b0d12" />
     <title>Praetorium</title>
     <link rel="stylesheet" href="/css/owner-console.css" />
   </head>
   <body>
-    <header class="app-header">
-      <div class="brand-mark" aria-hidden="true">P</div>
-      <div class="brand-copy">
-        <strong>Praetorium</strong>
-        <span>Local agent command</span>
+    <header class="topbar">
+      <div class="brand" aria-label="Praetorium">
+        <span class="brand-mark">P</span>
+        <span><strong>Praetorium</strong><small>Local orchestration</small></span>
       </div>
-      <div class="header-spacer"></div>
-      <span class="connection-state" id="connection-state"><i></i><span>연결 중</span></span>
-      <span class="local-badge">LOCAL ONLY</span>
-      <button class="icon-button" id="project-settings-btn" type="button">프로젝트</button>
-      <button class="icon-button" id="theme-toggle" type="button" aria-label="테마 전환">◐</button>
+      <div class="topbar-context">
+        <strong id="active-project-name">Project</strong>
+        <span id="active-project-path"></span>
+      </div>
+      <div class="topbar-actions">
+        <span class="signal" id="session-count"><i></i><span>0 sessions</span></span>
+        <span class="signal" id="connection-state"><i></i><span>연결 중</span></span>
+        <button class="quiet-button" id="text-scale-down" type="button" aria-label="글자 작게">A−</button>
+        <button class="quiet-button" id="text-scale-up" type="button" aria-label="글자 크게">A+</button>
+        <button class="quiet-button" id="project-settings-btn" type="button">프로젝트</button>
+        <button class="quiet-button square" id="theme-toggle" type="button" aria-label="테마 전환">◐</button>
+      </div>
     </header>
 
-    <main class="owner-shell">
-      <aside class="director-rail">
-        <div class="section-kicker">Directors</div>
-        <div id="owner-director-list"></div>
-        <div class="rail-note">
-          <strong>Owner가 목표만 준다.</strong>
-          <span>Director가 계획·위임·검증 루프와 워커 수를 결정합니다.</span>
+    <main class="app-shell">
+      <nav class="project-sidebar" aria-label="Director 목록">
+        <header><span>Directors</span><b id="director-count">0</b></header>
+        <div class="director-list" id="owner-director-list"></div>
+        <button class="workflow-button" id="workflow-library-btn" type="button">
+          <span><b>Workflow library</b><small>6개 운영 플로우</small></span><i>→</i>
+        </button>
+        <div class="sidebar-footer">
+          <span class="local-lock"><i></i>LOCAL ONLY</span>
+          <small>외부 게이트웨이와 원격 접속이 꺼져 있습니다.</small>
         </div>
-      </aside>
+      </nav>
 
-      <section class="director-chat">
-        <header class="chat-header">
-          <div>
-            <h1 id="owner-chat-title">Director</h1>
-            <p id="owner-chat-subtitle"></p>
+      <section class="mission-pane">
+        <header class="mission-header">
+          <div class="mission-copy">
+            <div class="eyebrow"><span id="mission-board-name">BOARD</span><i>•</i><span id="mission-run-time">대기</span></div>
+            <h1 id="mission-title">새 목표를 기다리고 있습니다</h1>
+            <p id="mission-subtitle">Owner가 목표를 주면 Director가 분석·계획·위임·검증 흐름을 구성합니다.</p>
           </div>
-          <button class="ghost-button" id="owner-refresh-btn" type="button">새로고침</button>
+          <div class="mission-actions">
+            <button class="secondary-button" id="owner-dispatch-btn" type="button">배치 확인</button>
+            <button class="secondary-button icon-only" id="owner-refresh-btn" type="button" aria-label="새로고침">↻</button>
+          </div>
         </header>
-        <div class="chat-stream" id="owner-chat-stream"></div>
-        <div class="composer">
-          <textarea id="owner-message-input" rows="3" placeholder="목표와 판단 기준을 Director에게 전달…"></textarea>
-          <button id="owner-send-btn" type="button">위임</button>
-        </div>
-      </section>
 
-      <aside class="worker-panel">
-        <header class="worker-header">
-          <div><span class="section-kicker">Execution</span><strong>Worker board</strong></div>
-          <button class="ghost-button" id="owner-dispatch-btn" type="button">지금 배치</button>
-        </header>
-        <div class="task-board" id="owner-task-board"></div>
-        <section class="attention-panel">
-          <header>Owner 판단함</header>
+        <section class="current-focus" id="current-focus" aria-live="polite"></section>
+
+        <section class="owner-gate" id="owner-gate" hidden>
+          <div><span>OWNER DECISION</span><strong>판단이 필요한 작업이 있습니다</strong></div>
+          <button type="button" id="owner-gate-open">확인</button>
+        </section>
+
+        <section class="trace-section">
+          <header class="section-header">
+            <div><span class="eyebrow-label">Execution trace</span><h2>실행 흐름</h2></div>
+            <div class="trace-summary" id="trace-summary"></div>
+          </header>
+          <div class="trace-list" id="owner-trace-list"></div>
+        </section>
+
+        <section class="attention-section" id="attention-section" hidden>
+          <header class="section-header"><div><span class="eyebrow-label">Needs attention</span><h2>Owner 판단함</h2></div></header>
           <div id="owner-attention-list"></div>
         </section>
+      </section>
+
+      <aside class="command-pane">
+        <header class="command-header">
+          <div><span class="eyebrow-label">Inspector</span><h2 id="inspector-title">Director 개요</h2></div>
+          <button class="quiet-button" id="inspector-expand" type="button">크게 보기</button>
+        </header>
+        <div class="inspector-scroll">
+          <section class="inspector-content" id="owner-inspector"></section>
+          <details class="conversation" id="conversation-panel">
+            <summary><span>Owner ↔ Director</span><small id="conversation-count">0 messages</small></summary>
+            <div class="conversation-stream" id="owner-chat-stream"></div>
+          </details>
+        </div>
+        <div class="composer">
+          <textarea id="owner-message-input" rows="3" placeholder="목표, 제약, 완료 기준을 입력하세요…"></textarea>
+          <div class="composer-footer">
+            <select id="owner-message-mode" aria-label="요청 처리 방식">
+              <option value="auto">자동 판단</option>
+              <option value="delegate">강제 위임</option>
+              <option value="conversation">대화만</option>
+            </select>
+            <span><kbd>Enter</kbd> 전송 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈</span>
+            <button id="owner-send-btn" type="button">보내기</button>
+          </div>
+        </div>
       </aside>
     </main>
 
-    <dialog id="project-dialog" class="project-dialog">
-      <form method="dialog" class="dialog-card">
-        <header>
-          <div><span class="section-kicker">Configuration</span><h2>프로젝트 Director 배정</h2></div>
-          <button class="dialog-close" value="cancel" aria-label="닫기">×</button>
-        </header>
-        <p class="dialog-help">등록 순서대로 Project Director 1–3에 배정됩니다. 프로젝트 폴더 밖으로 작업 권한이 확장되지 않습니다.</p>
+    <dialog id="workflow-dialog" class="sheet-dialog">
+      <form method="dialog" class="sheet-card wide-sheet">
+        <header><div><span class="eyebrow-label">Workflow library</span><h2>운영 플로우</h2><p>Director가 목표와 위험에 따라 선택하고 필요한 단계만 조정합니다.</p></div><button value="cancel" aria-label="닫기">×</button></header>
+        <div class="workflow-grid" id="owner-workflow-list"></div>
+      </form>
+    </dialog>
+
+    <dialog id="project-dialog" class="sheet-dialog">
+      <form method="dialog" class="sheet-card">
+        <header><div><span class="eyebrow-label">Configuration</span><h2>프로젝트 Director 배정</h2><p>등록 순서대로 세 개의 Project Director에 연결됩니다.</p></div><button value="cancel" aria-label="닫기">×</button></header>
         <div id="project-list" class="project-list"></div>
-        <div class="discover-row">
-          <button type="button" class="secondary-button" id="discover-projects-btn">C:\projects 자동 검색</button>
-          <span id="project-capacity">0 / 3</span>
-        </div>
-        <div class="project-form">
-          <input id="project-name" type="text" maxlength="80" placeholder="프로젝트 이름" />
-          <input id="project-path" type="text" placeholder="C:\projects\my-project" />
-          <button type="button" id="add-project-btn">추가</button>
-        </div>
+        <div class="discover-row"><button type="button" class="secondary-button" id="discover-projects-btn">C:\projects 검색</button><span id="project-capacity">0 / 3</span></div>
+        <div class="project-form"><input id="project-name" type="text" maxlength="80" placeholder="프로젝트 이름" /><input id="project-path" type="text" placeholder="C:\projects\my-project" /><button type="button" id="add-project-btn">추가</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="focus-dialog" class="focus-dialog">
+      <form method="dialog" class="focus-card">
+        <header><div><span class="eyebrow-label">Expanded details</span><h2 id="focus-dialog-title">상세 보기</h2></div><button value="cancel" aria-label="닫기">×</button></header>
+        <div id="focus-dialog-content" class="focus-content"></div>
       </form>
     </dialog>
 

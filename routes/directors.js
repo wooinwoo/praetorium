@@ -15,15 +15,44 @@ export function register(ctx) {
     json(res, run);
   });
 
-  addRoute('GET', '/api/directors/:id/board', async (req, res) => {
-    try { json(res, { tasks: await directorService.getBoard(req.params.id) }); }
+  addRoute('GET', '/api/directors/:id/board', (req, res) => {
+    try {
+      json(res, {
+        tasks: directorService.getBoard(req.params.id),
+        status: directorService.getBoardStatus?.(req.params.id) || null,
+      });
+    }
     catch (err) { json(res, { error: err.message }, 500); }
+  });
+
+  addRoute('GET', '/api/directors/:id/tasks/:taskId', async (req, res) => {
+    try { json(res, await directorService.getTaskDetails(req.params.id, req.params.taskId)); }
+    catch (err) { json(res, { error: err.message }, /not found/i.test(err.message) ? 404 : 400); }
+  });
+
+  addRoute('GET', '/api/directors/:id/tasks/:taskId/trace', async (req, res) => {
+    try { json(res, await directorService.getTaskTrace(req.params.id, req.params.taskId)); }
+    catch (err) { json(res, { error: err.message }, /not found/i.test(err.message) ? 404 : 400); }
+  });
+
+  addRoute('POST', '/api/directors/:id/tasks/:taskId/interventions', async (req, res) => {
+    try {
+      const body = await readBody(req);
+      json(res, await directorService.interveneTask(req.params.id, req.params.taskId, body.message), 202);
+    } catch (err) { json(res, { error: err.message }, /not found/i.test(err.message) ? 404 : 400); }
+  });
+
+  addRoute('POST', '/api/directors/:id/tasks/:taskId/control', async (req, res) => {
+    try {
+      const body = await readBody(req);
+      json(res, await directorService.controlTask(req.params.id, req.params.taskId, body.action, body.reason), 202);
+    } catch (err) { json(res, { error: err.message }, /not found/i.test(err.message) ? 404 : 400); }
   });
 
   addRoute('POST', '/api/directors/:id/messages', async (req, res) => {
     try {
       const body = await readBody(req);
-      json(res, directorService.submitMessage(req.params.id, body.prompt), 202);
+      json(res, directorService.submitMessage(req.params.id, body.prompt, { mode: body.mode }), 202);
     } catch (err) {
       const status = /not found/i.test(err.message) ? 404 : /already running/i.test(err.message) ? 409 : 400;
       json(res, { error: err.message }, status);

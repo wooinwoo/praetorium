@@ -1,6 +1,6 @@
 # Praetorium
 
-Praetorium is a local-only Owner Console for running several real Codex workstreams with minimal human intervention.
+Praetorium is a local-only Owner Console for directing several real Codex workstreams with minimal human intervention. The product is organized around an observable execution trace, not a collection of chat tabs.
 
 - One Owner Console
 - Three project Directors
@@ -52,7 +52,28 @@ Hermes stores durable profiles, boards, tasks, results, and worker lifecycle sta
 
 Open the desktop app or browse locally to `http://127.0.0.1:3847`.
 
-The single product screen contains the three project Directors, Skill Director, current worker board, Owner decision queue, and Director conversation. There are no worker tabs to manage.
+The single product screen contains the three project Directors, Skill Director, current objective, execution trace, Owner decision queue, detail inspector, and Director conversation. There are no worker tabs to manage.
+
+The central trace is ordered as:
+
+```text
+Owner objective
+→ Director requirement/risk analysis
+→ Director workflow and worker plan
+→ Worker execution, review, remediation, and gates
+```
+
+Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, and stop conditions. Selecting a Worker exposes the full task contract, live public reasoning checkpoints, observed commands, raw worker log, lifecycle events, acceptance criteria, and final evidence.
+
+New Worker tasks are required to publish concise `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` comments at meaningful checkpoints. These are public operational artifacts, not private chain-of-thought. Historical tasks still expose their raw Hermes log even when they predate the structured checkpoint contract.
+
+The Owner can intervene without opening a Worker tab:
+
+- add a durable instruction to a queued or blocked task;
+- steer a running Worker in-place through Hermes' live comment bridge (normally observed within about six seconds);
+- immediately pause a running Worker, which terminates its current local process and parks the task for Owner input;
+- resume a paused task and return it to automatic dispatch;
+- enlarge the Inspector or change global text scale for long traces.
 
 Project slots are populated from existing configuration. On a fresh install, Praetorium discovers up to three immediate Git repositories under `PRAETORIUM_PROJECTS_ROOT` (default `C:\projects`). The Project dialog can replace or rediscover assignments.
 
@@ -88,6 +109,8 @@ Praetorium is designed for background operation without approval popups inside t
 - external actions, new authority, irreversible operations, and material product decisions remain Owner decisions;
 - unattended escalation without a local decision path fails closed.
 
+Worker intervention does not broaden authority. A mid-run Owner note may narrow or redirect work inside the existing project objective, but new external authority, destructive operations, remote access, or publication still requires an explicit Owner decision.
+
 The pinned bridge applies only to Hermes Agent `v0.20.5` and fails closed on an unknown layout. It removes a redundant Hermes OAuth preflight while leaving the real Codex app-server login check intact, fixes the narrow Windows Kanban writable-root override, and makes the selected project override static profile working directories.
 
 ## Local development
@@ -101,6 +124,18 @@ npm ci
 npm test
 npm start
 ```
+
+The development server is available only at `http://127.0.0.1:3847`. Static UI changes are served directly; Node service changes require a restart. Persistent Director and project state is read from `%LOCALAPPDATA%\PraetoriumData`, while Hermes boards and logs remain in the local Hermes data directory.
+
+Useful verification commands:
+
+```powershell
+node --check .\js\owner-console.js
+npm test
+git diff --check
+```
+
+The test suite covers Director control-envelope validation, bounded handoff, durable task materialization, board caching, worker concurrency, local-only policy, live task evidence, Owner intervention, pause/resume commands, and route behavior.
 
 Bootstrap profiles and skills:
 
@@ -124,9 +159,28 @@ npm run tauri build -- --bundles nsis
 - Hermes child processes use argument arrays with `shell: false`.
 - Director state and project assignment are written atomically; interrupted runs recover as failed on restart.
 - Existing user project changes are never reset or discarded by the installer.
+- Worker logs and comments are read from local Hermes Kanban state and are never relayed to a remote Praetorium service.
+
+## Source map
+
+- `index.html`, `css/owner-console.css`, `js/owner-console.js`: trace-first Owner Console
+- `lib/director-service.js`: Director lifecycle, public analysis checkpoint, task graph materialization, board scheduler, Worker intervention
+- `lib/director-actions.js`: strict Director analysis and action-envelope extraction/validation
+- `lib/workflow-catalog.js`: six built-in workflows, twelve operating skills, approved Worker profiles
+- `lib/hermes-runtime.js`: local Hermes process adapter, task evidence/logs, comments, pause/resume primitives
+- `routes/directors.js`: local Director, board, trace, intervention, and control HTTP API
+- `.agents/skills/`: Director, reviewer, remediation, release, and quality-gate skills
+- `.agents/hermes-profiles/`: Director and Worker role profiles
+- `scripts/bootstrap-director-system.ps1`: deterministic local profile, skill, and board setup
+- `scripts/patch-hermes-codex-runtime.ps1`: pinned Hermes/Codex bridge patches
+- `src-tauri/`: Windows/macOS desktop shell and installer packaging
+
+Repository automation instructions live in `AGENTS.md`; `CLAUDE.md` points Claude-based coding sessions to the same source of truth.
 
 ## Release
 
 Tags matching `v*` run the active test suite and build Windows NSIS and macOS DMG artifacts. Release assets include SHA-256 checksum files. The company-PC bootstrap currently supports Windows; macOS packaging remains available for the desktop shell.
+
+The `v2.0.0` installer is the last published binary baseline. The trace-first console and live Worker intervention described above are currently on `main`; create a new versioned release before using the one-line installer to deploy those post-2.0 changes on another machine. For development or continuation now, clone `main` and run the local-development steps above.
 
 License and internal deployment policy follow the repository and company policy.

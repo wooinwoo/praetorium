@@ -10,6 +10,7 @@ $HermesRoot = [IO.Path]::GetFullPath($HermesRoot)
 $runtimeProvider = Join-Path $HermesRoot 'hermes-agent\hermes_cli\runtime_provider.py'
 $appServerClient = Join-Path $HermesRoot 'hermes-agent\agent\transports\codex_app_server.py'
 $codexRuntime = Join-Path $HermesRoot 'hermes-agent\agent\codex_runtime.py'
+$kanbanDb = Join-Path $HermesRoot 'hermes-agent\hermes_cli\kanban_db.py'
 $hermesExeCandidates = @(
     (Join-Path $HermesRoot 'hermes-agent\venv\Scripts\hermes.exe'),
     (Join-Path $HermesRoot 'hermes-agent\bin\hermes.exe')
@@ -29,6 +30,9 @@ if (-not (Test-Path -LiteralPath $appServerClient -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $codexRuntime -PathType Leaf)) {
     throw "Hermes Codex runtime not found: $codexRuntime"
+}
+if (-not (Test-Path -LiteralPath $kanbanDb -PathType Leaf)) {
+    throw "Hermes Kanban runtime not found: $kanbanDb"
 }
 
 $version = (& $hermesExe --version 2>&1) -join [Environment]::NewLine
@@ -127,6 +131,39 @@ if (-not $appServerSource.Contains($windowsPathMarker)) {
     Write-Host 'Hermes Windows writable-root TOML bridge is already installed.'
 }
 
+# Directors and specialist reviewers must be structurally read-only. The
+# Director returns a validated action envelope; Praetorium itself writes tasks
+# to the board after validation. Reviewers return reports but never mutate the
+# candidate they inspect.
+$readOnlyMarker = 'PRAETORIUM_READ_ONLY_ROLE_BRIDGE_V1'
+$appServerSource = [IO.File]::ReadAllText($appServerClient)
+if (-not $appServerSource.Contains($readOnlyMarker)) {
+    $argsNeedle = '        app_server_args = list(extra_args or [])'
+    $guardNeedle = '        if spawn_env.get("HERMES_KANBAN_TASK") or spawn_env.get("HERMES_KANBAN_BOARD"):'
+    if (([regex]::Matches($appServerSource, [regex]::Escape($argsNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: app-server args insertion point is not unique.'
+    }
+    if (([regex]::Matches($appServerSource, [regex]::Escape($guardNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: Director board guard is not unique.'
+    }
+    $argsReplacement = @'
+        app_server_args = list(extra_args or [])
+        # PRAETORIUM_READ_ONLY_ROLE_BRIDGE_V1
+        _praetorium_read_only = (
+            spawn_env.get("PRAETORIUM_DIRECTOR_MODE") == "true"
+            or spawn_env.get("PRAETORIUM_REVIEWER_MODE") == "true"
+        )
+        if _praetorium_read_only:
+            app_server_args.extend(["-c", 'sandbox_mode="read-only"'])
+'@
+    $guardReplacement = '        if not _praetorium_read_only and (spawn_env.get("HERMES_KANBAN_TASK") or spawn_env.get("HERMES_KANBAN_BOARD")):'
+    $appServerPatched = $appServerSource.Replace($argsNeedle, $argsReplacement.TrimEnd()).Replace($guardNeedle, $guardReplacement)
+    [IO.File]::WriteAllText($appServerClient, $appServerPatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Installed structural read-only Director/reviewer bridge.'
+} else {
+    Write-Host 'Hermes structural read-only Director/reviewer bridge is already installed.'
+}
+
 # Hermes profiles have a static terminal.cwd fallback. A project Director is
 # selected dynamically by Praetorium, so that static value must not decide the
 # Codex app-server thread root. The parent supplies this absolute path in the
@@ -155,4 +192,48 @@ if (-not $codexRuntimeSource.Contains($projectCwdMarker)) {
     Write-Host 'Installed Hermes project-scoped Codex cwd bridge.'
 } else {
     Write-Host 'Hermes project-scoped Codex cwd bridge is already installed.'
+}
+
+# Codex app-server workers do not receive Hermes' in-process lifecycle tools.
+# Make the required completion/block handoff explicit in every worker turn and
+# mark specialist reviewer profiles for the read-only bridge above.
+$workerLifecycleMarker = 'PRAETORIUM_WORKER_LIFECYCLE_BRIDGE_V1'
+$kanbanSource = [IO.File]::ReadAllText($kanbanDb)
+if (-not $kanbanSource.Contains($workerLifecycleMarker)) {
+    $profileNeedle = '    profile_arg = normalize_profile_name(task.assignee)'
+    $promptNeedle = '    prompt = f"work kanban task {task.id}"'
+    if (([regex]::Matches($kanbanSource, [regex]::Escape($profileNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: worker profile insertion point is not unique.'
+    }
+    if (([regex]::Matches($kanbanSource, [regex]::Escape($promptNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: worker prompt insertion point is not unique.'
+    }
+    $profileReplacement = @'
+    profile_arg = normalize_profile_name(task.assignee)
+
+    # PRAETORIUM_WORKER_LIFECYCLE_BRIDGE_V1
+'@
+    $promptReplacement = @'
+    prompt = (
+        f"Work Kanban task {task.id}. Read the full card before acting. "
+        "You must finish the durable board lifecycle before your final answer: "
+        "call the kanban_complete tool with evidence and artifacts on success, "
+        "or kanban_block with the concrete blocker. Plain text is not completion."
+    )
+'@
+    $kanbanPatched = $kanbanSource.Replace($profileNeedle, $profileReplacement.TrimEnd()).Replace($promptNeedle, $promptReplacement.TrimEnd())
+    $reviewerEnvNeedle = '    env["HERMES_KANBAN_TASK"] = task.id'
+    $reviewerEnvReplacement = @'
+    if profile_arg.endswith("-reviewer"):
+        env["PRAETORIUM_REVIEWER_MODE"] = "true"
+    env["HERMES_KANBAN_TASK"] = task.id
+'@
+    if (([regex]::Matches($kanbanPatched, [regex]::Escape($reviewerEnvNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: worker environment insertion point is not unique.'
+    }
+    $kanbanPatched = $kanbanPatched.Replace($reviewerEnvNeedle, $reviewerEnvReplacement.TrimEnd())
+    [IO.File]::WriteAllText($kanbanDb, $kanbanPatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Installed durable worker lifecycle and read-only reviewer bridge.'
+} else {
+    Write-Host 'Hermes durable worker lifecycle bridge is already installed.'
 }

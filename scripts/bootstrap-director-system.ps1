@@ -2,7 +2,8 @@
 param(
     [string]$HermesExecutable,
     [string]$HermesRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'hermes'),
-    [string]$DefaultWorkdir = 'C:\projects'
+    [string]$DefaultWorkdir = 'C:\projects',
+    [switch]$AssetsOnly
 )
 
 Set-StrictMode -Version Latest
@@ -246,6 +247,19 @@ Write-Host 'Remote surfaces remain disabled; this script never starts Hermes gat
 
 Set-DotEnvFlags -Path (Join-Path $HermesRoot '.env')
 Copy-DirectorSkills -DestinationRoot $HermesRoot
+
+if ($AssetsOnly) {
+    foreach ($profile in $profileSpecs) {
+        $profilePath = Join-Path $profilesRoot $profile.Name
+        if (-not (Test-Path -LiteralPath $profilePath -PathType Container)) {
+            throw "Profile '$($profile.Name)' is missing; run the full bootstrap first."
+        }
+        Copy-DirectorSkills -DestinationRoot $profilePath
+        Install-SoulTemplate -ProfileName $profile.Name -TemplateName $profile.Soul -BoardSlug $profile.Board -ReviewSkill $profile.ReviewSkill
+    }
+    Write-Host "Director assets reconciled: $($profileSpecs.Count) profiles updated without changing runtime configuration."
+    return
+}
 
 foreach ($profile in $profileSpecs) {
     $profilePath = Join-Path $profilesRoot $profile.Name

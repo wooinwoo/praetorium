@@ -20,12 +20,15 @@ When emitting machine-consumable orchestration, return:
 ```json
 {
   "schema": "director-action.v1",
-  "objective_id": "string",
+  "mode": "conversation|delegate",
+  "workflow_id": "quick-fix|standard-feature|high-risk-change|research-planning|release|skill-development|null",
   "state": "planning|executing|reviewing|remediating|awaiting_owner|complete|blocked",
   "requirements": ["string"],
+  "decisions": ["public operational reason without private chain-of-thought"],
   "actions": [
     {
-      "type": "spawn|message|wait|cancel|request_owner|finish",
+      "id": "stable-local-action-id",
+      "title": "short worker-card title",
       "target": "worker-or-role",
       "task": "bounded outcome",
       "skills": ["skill-name"],
@@ -44,4 +47,4 @@ When emitting machine-consumable orchestration, return:
 }
 ```
 
-Omit no required field; use empty arrays and `null` where appropriate. Human-readable discussion may precede this object when the owner is actively conversing with the director, but automation consumers should receive exactly one final action object.
+Omit no required field; use empty arrays and `null` where appropriate. Wrap the object in the exact `<PRAETORIUM_CONTROL>...</PRAETORIUM_CONTROL>` tags injected by the runtime. Human-readable discussion may precede it. Conversation mode has no workflow and no actions. Delegation mode must select a known workflow and create at least one approved worker action. Dependencies may reference only earlier action IDs so Praetorium can materialize them deterministically.

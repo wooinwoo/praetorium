@@ -15,7 +15,12 @@ function setup() {
     summary: () => ({ localOnly: true, directors: [] }),
     syncProjects: () => [],
     getRun: id => id === 'run-1' ? { id } : null,
-    getBoard: async () => [],
+    getBoard: () => [],
+    getBoardStatus: () => ({ refreshing: true }),
+    getTaskDetails: async (_id, taskId) => ({ task: { id: taskId }, latest_summary: 'done' }),
+    getTaskTrace: async (_id, taskId) => ({ taskId, log: 'live log' }),
+    interveneTask: async (_id, taskId, message) => ({ taskId, message, delivered: true }),
+    controlTask: async (_id, taskId, action) => ({ taskId, action, accepted: true }),
     submitMessage: (id, prompt) => ({ id: 'run-1', directorId: id, prompt }),
     createObjective: async () => ({ id: 'task-1' }),
     tickDirector: async () => ({ spawned: 1 }),
@@ -43,6 +48,43 @@ describe('director routes', () => {
     await routes['POST /api/directors/:id/messages']({ params: { id: 'project-director-1' }, body: { prompt: 'go' } }, res);
     assert.equal(res.status, 202);
     assert.equal(res.body.prompt, 'go');
+  });
+
+  it('serves a cache-only board snapshot with refresh status', () => {
+    const res = response();
+    routes['GET /api/directors/:id/board']({ params: { id: 'project-director-1' } }, res);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.tasks, []);
+    assert.equal(res.body.status.refreshing, true);
+  });
+
+  it('serves worker task evidence for the one-screen inspector', async () => {
+    const res = response();
+    await routes['GET /api/directors/:id/tasks/:taskId']({ params: { id: 'project-director-1', taskId: 't_one' } }, res);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.task.id, 't_one');
+    assert.equal(res.body.latest_summary, 'done');
+  });
+
+  it('serves the live worker execution log', async () => {
+    const res = response();
+    await routes['GET /api/directors/:id/tasks/:taskId/trace']({ params: { id: 'project-director-1', taskId: 't_one' } }, res);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.log, 'live log');
+  });
+
+  it('injects an Owner intervention into a running worker', async () => {
+    const res = response();
+    await routes['POST /api/directors/:id/tasks/:taskId/interventions']({ params: { id: 'project-director-1', taskId: 't_one' }, body: { message: 'change direction' } }, res);
+    assert.equal(res.status, 202);
+    assert.equal(res.body.delivered, true);
+  });
+
+  it('controls worker execution lifecycle', async () => {
+    const res = response();
+    await routes['POST /api/directors/:id/tasks/:taskId/control']({ params: { id: 'project-director-1', taskId: 't_one' }, body: { action: 'pause' } }, res);
+    assert.equal(res.status, 202);
+    assert.equal(res.body.action, 'pause');
   });
 
   it('requires objective title', async () => {
