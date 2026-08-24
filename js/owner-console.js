@@ -1472,13 +1472,14 @@ function renderGateRunway() {
     const failed = ['failed', 'blocked'].includes(task?.status) || audit?.rejectedProfiles?.includes(profile);
     const tone = passed ? 'done' : failed ? 'failed' : running ? 'running' : 'pending';
     const label = passed ? '통과' : failed ? '확인 필요' : running ? '검증 중' : task ? statusLabel(task.status) : '대기';
-    const content = `<i aria-hidden="true"></i><span><small>${escapeHtml(gateProfileLabel(profile))}</small><strong>${escapeHtml(label)}</strong></span>${taskId ? '<b aria-hidden="true">›</b>' : ''}<details class="technical-details"><summary>기술 정보</summary><code>${escapeHtml(profile)}</code></details>`;
+    const content = `<i aria-hidden="true"></i><span><small>${escapeHtml(gateProfileLabel(profile))}</small><strong>${escapeHtml(label)}</strong></span>${taskId ? '<b aria-hidden="true">›</b>' : ''}`;
     return taskId ? `<button type="button" class="gate-step ${tone}" data-select-task="${escapeHtml(taskId)}">${content}</button>` : `<div class="gate-step ${tone}">${content}</div>`;
   });
   const passedCount = visibleProfiles.filter(profile => Boolean(credited[profile]) && !missing.has(profile)).length;
   $('gate-runway-summary').textContent = goal ? `${passedCount} / ${visibleProfiles.length} 통과 · 현재 후보 기준` : '실행할 목표 없음';
   section.hidden = false;
-  const changed = updateHtml(root, rows.join(''));
+  const technicalProfiles = visibleProfiles.map(profile => `${gateProfileLabel(profile)}: ${profile}`).join(' · ');
+  const changed = updateHtml(root, `${rows.join('')}<details class="technical-details gate-technical"><summary>기술 정보</summary><code>${escapeHtml(technicalProfiles)}</code></details>`);
   if (changed) root.querySelectorAll('[data-select-task]').forEach(button => button.addEventListener('click', () => void selectTask(button.dataset.selectTask)));
 }
 

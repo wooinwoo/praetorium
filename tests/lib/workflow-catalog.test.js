@@ -167,6 +167,37 @@ describe('workflow gate policy', () => {
     assert.equal(audit.gateConsistency.satisfied, true);
   });
 
+  it('credits a warn review when every finding is explicitly non-blocking', () => {
+    const evidence = validQuickFixEvidence();
+    const review = evidence.find(item => item.profile === 'test-gap-reviewer');
+    review.report.verdict = 'warn';
+    review.report.checks.push({
+      id: 'durable-boundary-coverage',
+      status: 'fail',
+      evidence: ['The current candidate passes a read-only probe, but the case is not retained in the committed suite.'],
+    });
+    review.report.findings.push({
+      id: 'TG-001',
+      severity: 'low',
+      confidence: 'high',
+      category: 'regression-coverage',
+      title: 'A boundary lacks a durable regression test',
+      claim: 'A future change could regress without failing the committed suite.',
+      evidence: [{ path: 'test/example.test.js', line: 10, detail: 'No direct boundary assertion.' }],
+      impact: 'Future regression detection is weaker.',
+      required_action: 'Add the direct assertion when test changes are allowed.',
+      verification: 'Run the new assertion and the complete suite.',
+      blocking: false,
+    });
+    evidence.find(item => item.profile === 'quality-gate-reviewer')
+      .report.reports.find(row => row.review_kind === 'test-gap').verdict = 'warn';
+
+    assert.equal(isStructuredEvidenceApproved(review), true);
+    const audit = auditQuickFix(evidence);
+    assert.equal(audit.satisfied, true);
+    assert.deepEqual(audit.blockingTaskIds, []);
+  });
+
   it('requires the assigned profile and its exact review_kind', () => {
     const missingProfile = structuredClone(validQuickFixEvidence());
     missingProfile.find(item => item.taskId === 'task-convention-reviewer').profile = '';

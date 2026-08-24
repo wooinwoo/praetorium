@@ -464,6 +464,38 @@ describe('durable Goal supervisor', () => {
     );
   });
 
+  it('accepts conservative ordered criterion labels without reusing or guessing rows', () => {
+    const successCriteria = [
+      'Non-string inputs throw TypeError.',
+      'Strings undergo NFKD normalization, combining-mark removal, trimming, lowercasing, ASCII-alphanumeric run separation, edge-hyphen removal, safe 32-character truncation, and untitled fallback.',
+      'No runtime dependency or test-file changes are introduced.',
+      'The complete npm test suite passes on the final revision.',
+      'Convention, security, test-gap, and adversarial reviewers report no unresolved blocking findings, followed by a passing quality gate.',
+    ];
+    const acceptance = [
+      { criterion: successCriteria[0], status: 'met', evidence: ['type probe'] },
+      { criterion: 'Required normalization and slug pipeline.', status: 'met', evidence: ['pipeline probe'] },
+      { criterion: 'No runtime dependency or protected-file changes.', status: 'met', evidence: ['git diff'] },
+      { criterion: 'Complete npm test suite passes.', status: 'met', evidence: ['npm test'] },
+      { criterion: 'Required current reviews have no unresolved blockers and quality gate passes.', status: 'met', evidence: ['gate audit'] },
+    ];
+    const evidence = [{
+      taskId: 'ordered-gate', profile: 'quality-gate-reviewer', status: 'done', waveIndex: 3,
+      completedAt: '2026-08-24T00:03:00.000Z', report: gateReport(acceptance),
+    }];
+    assert.equal(evaluateGoalAcceptance(
+      goalRecord({ successCriteria }), evidence, { gateTaskId: 'ordered-gate' },
+    ).satisfied, true);
+
+    const duplicateGoal = goalRecord({ successCriteria: ['API returns 200', 'API returns 200'] });
+    evidence[0].report = gateReport([
+      { criterion: 'API returns 200', status: 'met', evidence: ['one row'] },
+    ]);
+    const duplicate = evaluateGoalAcceptance(duplicateGoal, evidence, { gateTaskId: 'ordered-gate' });
+    assert.equal(duplicate.satisfied, false);
+    assert.equal(duplicate.criteria.filter(item => item.met).length, 1, 'one gate row may be consumed only once');
+  });
+
   it('builds a bounded fresh-turn prompt with current evidence, limited history, and recent Owner answers', () => {
     const ownerAnswers = Array.from({ length: 12 }, (_, index) => ({ at: `time-${index}`, answer: `answer-${index}` }));
     const goal = goalRecord({
