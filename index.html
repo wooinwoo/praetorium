@@ -19,7 +19,7 @@
         <span id="active-project-path"></span>
       </div>
       <div class="topbar-actions">
-        <span class="signal" id="session-count" role="status" aria-label="실행 세션 0개"><i></i><span class="signal-copy">0 sessions</span></span>
+        <span class="signal" id="session-count" role="status" aria-label="실행 중인 세션 없음"><i></i><span class="signal-copy">실행 대기</span></span>
         <span class="signal" id="connection-state" role="status" aria-label="로컬 연결 확인 중"><i></i><span class="signal-copy">연결 중</span></span>
         <button class="quiet-button" id="text-scale-down" type="button" aria-label="글자 작게">A−</button>
         <button class="quiet-button" id="text-scale-up" type="button" aria-label="글자 크게">A+</button>
@@ -37,13 +37,13 @@
 
     <main class="app-shell">
       <nav class="project-sidebar" aria-label="Director 목록">
-        <header><span>Directors</span><b id="director-count">0</b></header>
+        <header><span>운영 Director</span><b id="director-count">0</b></header>
         <div class="director-list" id="owner-director-list"></div>
-        <button class="workflow-button" id="workflow-library-btn" type="button" aria-label="Workflow library 열기" data-tooltip="Workflow library 열기">
-          <span><b>Workflow library</b><small>6개 운영 플로우</small></span><i>→</i>
+        <button class="workflow-button" id="workflow-library-btn" type="button" aria-label="운영 플로우 열기" data-tooltip="운영 플로우 열기">
+          <span><b>운영 플로우</b><small>6개 실행 방식</small></span><i>→</i>
         </button>
         <div class="sidebar-footer">
-          <span class="local-lock"><i></i>LOCAL ONLY</span>
+          <span class="local-lock"><i></i>로컬 전용</span>
           <small>외부 게이트웨이와 원격 접속이 꺼져 있습니다.</small>
         </div>
       </nav>
@@ -56,7 +56,7 @@
             <p id="mission-subtitle">Owner가 목표를 주면 Director가 분석·계획·위임·검증 흐름을 구성합니다.</p>
           </div>
           <div class="mission-actions">
-            <button class="secondary-button" id="owner-dispatch-btn" type="button">배치 확인</button>
+            <button class="secondary-button" id="owner-dispatch-btn" type="button">대기 Worker 없음</button>
             <button class="secondary-button icon-only" id="owner-refresh-btn" type="button" aria-label="새로고침">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
             </button>
@@ -67,33 +67,33 @@
         <span id="status-announcer" class="visually-hidden" aria-live="polite"></span>
 
         <section class="owner-gate" id="owner-gate" hidden>
-          <div><span>OWNER DECISION</span><strong>판단이 필요한 작업이 있습니다</strong></div>
+          <div><span>OWNER 확인</span><strong>판단이 필요한 작업이 있습니다</strong></div>
           <button type="button" id="owner-gate-open">확인</button>
         </section>
 
         <section class="trace-section">
           <header class="section-header">
-            <div><h2>실행 흐름</h2><p>목표부터 검증까지 시간순으로 추적합니다.</p></div>
+            <div><h2>실행 흐름</h2><p>요구사항부터 구현과 검증까지 시간순으로 추적합니다.</p></div>
             <div class="trace-summary" id="trace-summary"></div>
           </header>
           <div class="trace-list" id="owner-trace-list"></div>
         </section>
 
         <section class="attention-section" id="attention-section" hidden>
-          <header class="section-header"><div><h2>Owner 판단함</h2><p>멈춰 있거나 검토가 필요한 작업입니다.</p></div></header>
+          <header class="section-header"><div><h2>내 확인 필요</h2><p>멈춰 있거나 결정이 필요한 작업입니다.</p></div></header>
           <div id="owner-attention-list"></div>
         </section>
       </section>
 
       <aside class="command-pane" id="command-pane" tabindex="-1">
         <header class="command-header">
-          <div><h2 id="inspector-title">Director 개요</h2><p>선택한 실행 근거와 제어</p></div>
+          <div><h2 id="inspector-title">Director 개요</h2><p>근거, 결과, 다음 제어</p></div>
           <div class="command-header-actions"><button class="quiet-button" id="inspector-expand" type="button">크게 보기</button><button class="quiet-button square" id="inspector-close" type="button" aria-label="Inspector 닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></div>
         </header>
         <div class="inspector-scroll">
           <section class="inspector-content" id="owner-inspector"></section>
           <details class="conversation" id="conversation-panel">
-            <summary><span>Owner ↔ Director</span><small id="conversation-count">0 messages</small></summary>
+            <summary><span>Owner ↔ Director</span><small id="conversation-count">메시지 0개</small></summary>
             <div class="conversation-stream" id="owner-chat-stream"></div>
           </details>
         </div>
@@ -103,8 +103,8 @@
           <div class="composer-footer">
             <select id="owner-message-mode" aria-label="요청 처리 방식">
               <option value="auto">자동 판단</option>
-              <option value="delegate">강제 위임</option>
-              <option value="conversation">대화만</option>
+              <option value="delegate">실행 요청</option>
+              <option value="conversation">답변만 받기</option>
             </select>
             <span><kbd>Enter</kbd> 전송 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈</span>
             <button id="owner-send-btn" type="button">보내기</button>
@@ -115,19 +115,21 @@
 
     <dialog id="workflow-dialog" class="sheet-dialog" aria-labelledby="workflow-dialog-title">
       <form method="dialog" class="sheet-card wide-sheet">
-        <header><div><h2 id="workflow-dialog-title">운영 플로우</h2><p>Director가 목표와 위험에 따라 선택하고 필요한 단계만 조정합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
+        <header><div><h2 id="workflow-dialog-title">운영 플로우</h2><p>Director가 작업 유형과 위험에 맞는 실행·검증 흐름을 선택합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
         <div class="workflow-grid" id="owner-workflow-list"></div>
       </form>
     </dialog>
 
     <dialog id="project-dialog" class="management-dialog" aria-labelledby="project-dialog-title">
       <form method="dialog" class="management-card">
-        <header class="management-header"><div><h2 id="project-dialog-title">환경 관리</h2><p>프로젝트 실행 위치, 로컬 런타임, 14개 역할 프로필을 한곳에서 확인합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
+        <header class="management-header"><div><h2 id="project-dialog-title">운영 환경</h2><p>프로젝트, 실행 런타임, 역할 프로필과 운영 스킬을 확인합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
         <nav class="management-tabs" role="tablist" aria-label="환경 관리 항목">
           <button id="management-tab-projects" type="button" role="tab" aria-selected="true" aria-controls="management-panel-projects" tabindex="0" data-management-tab="projects">프로젝트 <span id="project-capacity">0 / 3</span></button>
           <button id="management-tab-runtimes" type="button" role="tab" aria-selected="false" aria-controls="management-panel-runtimes" tabindex="-1" data-management-tab="runtimes">런타임 <span id="runtime-count">0</span></button>
-          <button id="management-tab-roles" type="button" role="tab" aria-selected="false" aria-controls="management-panel-roles" tabindex="-1" data-management-tab="roles">역할 프로필 <span id="profile-count">14</span></button>
+          <button id="management-tab-roles" type="button" role="tab" aria-selected="false" aria-controls="management-panel-roles" tabindex="-1" data-management-tab="roles">역할 <span id="profile-count">14</span></button>
+          <button id="management-tab-skills" type="button" role="tab" aria-selected="false" aria-controls="management-panel-skills" tabindex="-1" data-management-tab="skills">스킬 <span id="skill-count">12</span></button>
         </nav>
+        <div id="management-feedback" class="management-feedback" role="status" aria-live="polite" hidden></div>
         <div class="management-body">
           <section id="management-panel-projects" class="management-panel active" role="tabpanel" data-management-panel="projects" aria-labelledby="management-tab-projects">
             <header class="panel-heading"><div><h3 id="projects-heading">Project Director 배정</h3><p>각 프로젝트가 실제로 실행될 운영체제와 경로를 함께 저장합니다.</p></div></header>
@@ -137,10 +139,10 @@
               <label><span>실행 환경</span><select id="project-runtime"><option value="windows">Windows</option><option value="wsl">WSL2</option></select></label>
               <label id="project-distro-field" hidden><span>WSL 배포판</span><select id="project-distro"></select></label>
               <label><span>표시 이름</span><input id="project-name" type="text" maxlength="80" autocomplete="off" placeholder="예: Praetorium" /></label>
-              <label class="path-field"><span>프로젝트 절대 경로</span><input id="project-path" type="text" autocomplete="off" placeholder="C:\projects\praetorium" aria-describedby="project-path-help" /><small id="project-path-help">Windows에서 존재하는 폴더를 입력하세요.</small></label>
+              <label class="path-field"><span>프로젝트 절대 경로</span><input id="project-path" type="text" autocomplete="off" placeholder="C:\projects\praetorium" aria-describedby="project-path-help" /><small id="project-path-help" aria-live="polite">Windows에서 존재하는 폴더를 입력하세요.</small></label>
               <div class="project-editor-actions"><button type="button" class="secondary-button" id="validate-project-btn">경로 확인</button><button type="button" class="primary-button" id="add-project-btn">Director에 연결</button></div>
             </fieldset>
-            <section class="project-discovery"><div><h4>로컬 Git 프로젝트 자동 찾기</h4><p>지정한 루트에서 한 단계까지 묶인 Git 저장소를 찾습니다. GitHub 계정은 조회하지 않으며 기존 배정은 유지합니다.</p></div><label><span>검색 루트</span><input id="discovery-root" type="text" placeholder="C:\projects" /></label><button type="button" class="secondary-button" id="discover-projects-btn">검색하고 빈 슬롯에 연결</button></section>
+            <section class="project-discovery"><div><h4>로컬 Git 프로젝트 자동 연결</h4><p>선택한 실행 환경에서 Git 저장소를 찾아 빈 Director 슬롯에 바로 연결합니다. GitHub 계정은 조회하지 않습니다.</p><small id="discovery-target">검색 대상 확인 중</small></div><label><span>검색 루트</span><input id="discovery-root" type="text" placeholder="C:\projects" aria-describedby="discovery-target" /></label><button type="button" class="secondary-button" id="discover-projects-btn">찾아서 빈 슬롯에 연결</button></section>
           </section>
 
           <section id="management-panel-runtimes" class="management-panel" role="tabpanel" data-management-panel="runtimes" aria-labelledby="management-tab-runtimes" hidden>
@@ -150,8 +152,14 @@
           </section>
 
           <section id="management-panel-roles" class="management-panel" role="tabpanel" data-management-panel="roles" aria-labelledby="management-tab-roles" hidden>
-            <header class="panel-heading"><div><h3 id="roles-heading">역할 프로필</h3><p>Director, 구현, 전문 리뷰, 수정, 품질 게이트의 권한과 스킬 구성을 확인합니다.</p></div></header>
+            <header class="panel-heading"><div><h3 id="roles-heading">누가 어떤 책임으로 일하는가</h3><p>프로필은 모델 이름이 아니라 권한과 책임, 호출 시점을 고정하는 역할 계약입니다.</p></div></header>
+            <div class="role-flow" aria-label="역할 실행 순서"><span>Director 지휘</span><i>→</i><span>Worker 구현</span><i>→</i><span>전문 검토</span><i>→</i><span>수정</span><i>→</i><span>품질 판정</span></div>
             <div class="role-browser"><div id="profile-list" class="profile-list"></div><article id="profile-detail" class="profile-detail"></article></div>
+          </section>
+
+          <section id="management-panel-skills" class="management-panel" role="tabpanel" data-management-panel="skills" aria-labelledby="management-tab-skills" hidden>
+            <header class="panel-heading"><div><h3 id="skills-heading">어떻게 일할 것인가</h3><p>스킬은 역할 프로필이 작업을 분해하고 검토하고 인계하는 재사용 절차입니다. Director가 목표와 위험에 따라 필요한 것만 붙입니다.</p></div></header>
+            <div class="skill-browser"><div id="skill-list" class="skill-list"></div><article id="skill-detail" class="skill-detail"></article></div>
           </section>
         </div>
       </form>

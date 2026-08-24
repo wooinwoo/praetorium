@@ -1,6 +1,7 @@
 const MAX_PROJECTS = 3;
 const POLL_INTERVAL_MS = 3000;
 const TASK_POLL_INTERVAL_MS = 2800;
+const NARROW_VIEW_QUERY = '(max-width: 860px)';
 
 const state = {
   summary: null,
@@ -15,6 +16,7 @@ const state = {
   profilesLoaded: false,
   profilesError: null,
   selectedProfileId: null,
+  selectedSkillId: null,
   managementTab: 'projects',
   selectedId: 'project-director-1',
   board: [],
@@ -22,12 +24,18 @@ const state = {
   selection: { type: 'overview', id: null },
   taskDetail: null,
   taskTrace: null,
+  taskError: null,
+  taskTraceError: null,
   taskLoading: false,
   taskLoadedAt: 0,
   inspectorRenderKey: null,
   inspectorOpener: null,
   interventionDraft: '',
+  interventionComposing: false,
   rawLogOpen: null,
+  runtimeGuideId: null,
+  busyActions: new Set(),
+  managementLoads: {},
   consoleError: null,
   loading: null,
   timer: null,
@@ -36,8 +44,9 @@ const state = {
 const $ = id => document.getElementById(id);
 
 const FOCUS_KEYS = [
-  'data-director', 'data-select-trace', 'data-select-task', 'data-attention-task', 'data-profile',
+  'data-director', 'data-select-trace', 'data-select-task', 'data-attention-task', 'data-profile', 'data-skill',
   'data-worker-control', 'data-send-intervention', 'data-raw-worker-log-summary', 'data-retry-board',
+  'data-retry-task', 'data-open-projects',
 ];
 
 function activeElementIdentity() {
@@ -74,7 +83,37 @@ function preferredScrollBehavior() {
 }
 
 function panelErrorHtml(title, message, target) {
-  return `<div class="project-empty" role="alert"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(message)}</span><button type="button" class="secondary-button" data-retry-management="${escapeHtml(target)}">다시 시도</button></div>`;
+  return `<div class="project-empty" role="alert"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(friendlyErrorMessage(message))}</span><button type="button" class="secondary-button" data-retry-management="${escapeHtml(target)}">다시 시도</button></div>`;
+}
+
+function friendlyErrorMessage(value) {
+  const message = String(value?.message || value || '알 수 없는 오류가 발생했습니다.');
+  const known = [
+    [/Director has no assigned project directory/i, '프로젝트를 먼저 Director에 연결하세요.'],
+    [/Director is already running/i, 'Director가 현재 다른 요청을 처리하고 있습니다. 완료 후 다시 시도하세요.'],
+    [/Director not found/i, '선택한 Director를 찾을 수 없습니다. 화면을 새로고침하세요.'],
+    [/Task not found/i, '선택한 Worker 작업을 찾을 수 없습니다. 작업 보드를 다시 불러오세요.'],
+    [/Only a paused task can be resumed/i, '일시정지된 Worker만 재개할 수 있습니다.'],
+    [/previous Praetorium shutdown|Interrupted by/i, '이전 앱 종료로 Director 실행이 중단됐습니다. 같은 목표를 새로 보내 다시 시작하세요.'],
+    [/timed out|timeout/i, '로컬 실행 응답이 제한 시간을 넘겼습니다. 런타임 상태를 확인한 뒤 다시 시도하세요.'],
+    [/Failed to fetch|NetworkError/i, '로컬 Praetorium 서버에 연결할 수 없습니다. 서버 상태를 확인하세요.'],
+  ];
+  return known.find(([pattern]) => pattern.test(message))?.[1] || message;
+}
+
+function inlineErrorHtml(title, error, retry = '') {
+  const raw = String(error?.message || error || '');
+  const friendly = friendlyErrorMessage(raw);
+  return `<div class="inline-error" role="alert"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(friendly)}</p>${raw && raw !== friendly ? `<details><summary>기술 정보</summary><code>${escapeHtml(raw)}</code></details>` : ''}${retry ? `<button type="button" class="secondary-button" ${retry}>다시 시도</button>` : ''}</div>`;
+}
+
+function setManagementFeedback(message = '', kind = 'info') {
+  const root = $('management-feedback');
+  if (!root) return;
+  root.hidden = !message;
+  root.className = `management-feedback ${kind}`;
+  root.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  root.textContent = message ? friendlyErrorMessage(message) : '';
 }
 
 function escapeHtml(value) {
@@ -144,8 +183,12 @@ function traceStatus(status) {
 }
 
 function toast(message, kind = 'info') {
+  if ($('project-dialog')?.open) {
+    setManagementFeedback(message, kind);
+    return;
+  }
   const root = $('toast');
-  root.textContent = message;
+  root.textContent = friendlyErrorMessage(message);
   root.className = `toast visible ${kind}`;
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => { root.className = 'toast'; }, 3200);
@@ -218,19 +261,32 @@ function detailGroup(title, content, className = '') {
   return `<section class="detail-group ${className}"><h4>${escapeHtml(title)}</h4>${content}</section>`;
 }
 
-function openFocus(title) {
-  $('focus-dialog-title').textContent = title;
+function syncFocusDialog() {
+  const dialog = $('focus-dialog');
+  if (!dialog.open) return;
+  const content = $('focus-dialog-content');
+  const previousTop = content.scrollTop;
+  const rawLogOpen = content.querySelector('.raw-worker-log')?.open;
+  const rawLogFocused = document.activeElement?.closest('#focus-dialog-content')?.hasAttribute('data-raw-worker-log-summary');
   const copy = $('owner-inspector').cloneNode(true);
   copy.querySelectorAll('.worker-control').forEach(element => element.remove());
   copy.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
-  $('focus-dialog-content').replaceChildren(...copy.childNodes);
+  content.replaceChildren(...copy.childNodes);
+  if (rawLogOpen != null && content.querySelector('.raw-worker-log')) content.querySelector('.raw-worker-log').open = rawLogOpen;
+  content.scrollTop = previousTop;
+  if (rawLogFocused) requestAnimationFrame(() => content.querySelector('[data-raw-worker-log-summary]')?.focus({ preventScroll: true }));
+}
+
+function openFocus(title) {
+  $('focus-dialog-title').textContent = title;
   $('focus-dialog').showModal();
+  syncFocusDialog();
 }
 
 function renderTopbar() {
   const director = selectedDirector();
   const sessions = state.summary?.sessions || { total: 0 };
-  $('active-project-name').textContent = director?.kind === 'skill' ? 'Skill governance' : (director?.name || 'Project').replace(/ Director$/, '');
+  $('active-project-name').textContent = director?.kind === 'skill' ? '스킬 운영' : (director?.name || '프로젝트').replace(/ Director$/, '');
   $('active-project-path').textContent = director?.cwd || '프로젝트 미배정';
   const runtimeBadge = $('mission-runtime-badge');
   runtimeBadge.textContent = runtimeLabel(director).toUpperCase();
@@ -238,7 +294,7 @@ function renderTopbar() {
   const sessionSignal = $('session-count');
   sessionSignal.className = `signal ${sessions.total ? 'active' : 'idle'}`;
   const sessionLabel = sessions.total
-    ? `${sessions.total} 실행 중 · D${sessions.directors || 0} W${sessions.workers || 0}`
+    ? `${sessions.total} 실행 중 · Director ${sessions.directors || 0} · Worker ${sessions.workers || 0}`
     : '실행 대기';
   if (sessionSignal.lastElementChild.textContent !== sessionLabel) sessionSignal.lastElementChild.textContent = sessionLabel;
   const accessibleSessionLabel = sessions.total ? sessionLabel : '실행 중인 세션 없음';
@@ -248,16 +304,20 @@ function renderTopbar() {
 
 function renderDirectors() {
   const directors = state.summary?.directors || [];
-  $('owner-director-list').innerHTML = directors.map(director => {
+  const groups = [
+    ['프로젝트 운영', directors.filter(director => director.kind === 'project')],
+    ['공용 운영', directors.filter(director => director.kind === 'skill')],
+  ];
+  $('owner-director-list').innerHTML = groups.filter(([, items]) => items.length).map(([label, items]) => `<section class="director-group"><h2>${label}</h2>${items.map(director => {
     const index = director.kind === 'skill' ? 'S' : director.id.split('-').at(-1);
-    const subtitle = director.kind === 'skill' ? '공용 역량·워크플로' : (director.projectId ? `${director.projectId} · ${runtimeLabel(director)}` : '프로젝트 미배정');
+    const subtitle = director.kind === 'skill' ? '스킬·운영 플로우 관리' : (director.projectId ? `${runtimeLabel(director)} · ${statusLabel(director.status)}` : '프로젝트 연결 필요');
     const accessibleName = `${director.name}, ${subtitle}, ${statusLabel(director.status)}`;
     return `<button class="director-row ${director.id === state.selectedId ? 'active' : ''}" data-director="${escapeHtml(director.id)}" type="button" aria-label="${escapeHtml(accessibleName)}" data-tooltip="${escapeHtml(accessibleName)}">
       <span class="director-index">${escapeHtml(index)}</span>
       <span class="director-copy"><strong>${escapeHtml(director.name)}</strong><small>${escapeHtml(subtitle)}</small></span>
       <i class="status-dot ${traceStatus(director.status)}" title="${escapeHtml(statusLabel(director.status))}"></i>
     </button>`;
-  }).join('');
+  }).join('')}</section>`).join('');
   document.querySelectorAll('[data-director]').forEach(button => {
     if (button.dataset.director === state.selectedId) button.setAttribute('aria-current', 'true');
     button.addEventListener('click', () => selectDirector(button.dataset.director));
@@ -269,53 +329,73 @@ function renderMissionHeader() {
   const run = latestRun();
   const workflow = workflowFor(run?.workflowId);
   const activeTasks = state.board.filter(task => task.status === 'running').length;
+  const readyTasks = state.board.filter(task => ['ready', 'todo'].includes(task.status)).length;
   $('mission-board-name').textContent = director?.board || 'BOARD';
   $('mission-run-time').textContent = run ? (run.status === 'running' ? `실행 ${elapsedLabel(run.startedAt)}` : clockLabel(run.completedAt || run.createdAt)) : '대기';
-  $('mission-title').textContent = run?.prompt || (director?.cwd ? '새 목표를 기다리고 있습니다' : '프로젝트를 먼저 배정하세요');
+  $('mission-title').textContent = run?.prompt || (director?.cwd ? '새 목표를 기다리고 있습니다' : '첫 프로젝트를 연결하세요');
   $('mission-subtitle').textContent = run
     ? `${workflow?.name || phaseLabel(run.phase)} · ${run.taskIds?.length || 0}개 작업 · ${activeTasks}개 Worker 실행 중`
-    : 'Owner 목표를 보내면 Director 분석부터 Worker 검증까지 이 화면에 실행 흐름이 생깁니다.';
-  const canMessage = Boolean(director?.cwd) && director?.status !== 'running';
+    : director?.cwd
+      ? '기능, 버그, API 명세나 완료 기준을 보내면 Director가 실행과 검증 흐름을 만듭니다.'
+      : '운영 환경에서 로컬 프로젝트를 연결한 뒤 목표를 보내면 실행 흐름이 시작됩니다.';
+  const canMessage = Boolean(director?.cwd) && director?.status !== 'running' && !state.busyActions.has('send-message');
   $('owner-message-input').disabled = !canMessage;
   $('owner-message-input').placeholder = director?.cwd
     ? (director.status === 'running' ? 'Director가 현재 목표를 분석하고 있습니다…' : '목표, 제약, 완료 기준을 입력하세요…')
     : '먼저 프로젝트를 배정하세요.';
   $('owner-send-btn').disabled = !canMessage;
-  $('owner-dispatch-btn').disabled = !director?.cwd || director.kind !== 'project';
+  $('owner-send-btn').textContent = state.busyActions.has('send-message') ? '전송 중…' : '보내기';
+  const dispatch = $('owner-dispatch-btn');
+  dispatch.textContent = state.busyActions.has('dispatch') ? 'Worker 시작 중…' : readyTasks ? `대기 Worker ${readyTasks}개 실행` : '대기 Worker 없음';
+  dispatch.disabled = !director?.cwd || director.kind !== 'project' || !readyTasks || state.busyActions.has('dispatch');
+  dispatch.title = !director?.cwd ? '프로젝트를 먼저 연결하세요.' : !readyTasks ? '지금 수동으로 시작할 대기 작업이 없습니다.' : `${director.name}의 대기 작업 ${readyTasks}개를 지금 실행합니다.`;
 }
 
 function currentOperationalTask() {
   const currentIds = new Set(latestRun()?.taskIds || []);
   const tasks = currentIds.size ? state.board.filter(task => currentIds.has(task.id)) : state.board;
   return tasks.find(task => task.status === 'running')
+    || tasks.find(task => task.status === 'failed')
     || tasks.find(task => ['blocked', 'review', 'scheduled'].includes(task.status))
     || tasks.find(task => ['ready', 'todo'].includes(task.status))
     || null;
 }
 
 function renderCurrentFocus() {
+  const director = selectedDirector();
   const run = latestRun();
   const task = currentOperationalTask();
   let status = 'queued';
-  let kicker = 'READY';
+  let kicker = '목표 대기';
   let title = 'Owner의 다음 목표를 기다리는 중';
   let description = '목표를 보내면 Director가 작업 플로우와 Worker 구성을 먼저 공개합니다.';
   let meta = '개입 없음';
+  let action = '';
   if (state.consoleError) {
     status = 'failed';
     kicker = 'CONNECTION';
     title = '로컬 Praetorium 연결이 끊겼습니다';
     description = state.consoleError;
     meta = '새로고침으로 재시도';
+    action = '<button type="button" class="secondary-button" data-retry-board>다시 연결</button>';
+  } else if (director?.kind === 'project' && !director.cwd) {
+    status = 'queued';
+    kicker = '시작 준비';
+    title = '첫 프로젝트를 Director에 연결하세요';
+    description = 'Windows 또는 WSL의 로컬 경로를 연결하면 목표 입력과 Worker 실행이 열립니다.';
+    meta = '1 / 3 단계';
+    action = '<button type="button" class="primary-button" data-open-projects>프로젝트 연결</button>';
   } else if (task) {
     const action = actionForTask(task.id);
     status = traceStatus(task.status);
     kicker = statusLabel(task.status).toUpperCase();
     title = task.status === 'running'
       ? `${task.assignee || 'Worker'}가 “${task.title}” 수행 중`
+      : task.status === 'failed' ? `“${task.title}” 실패 확인 필요`
       : task.status === 'blocked' || task.status === 'scheduled'
         ? `“${task.title}”에 Owner 판단이 필요함`
-        : task.status === 'review' ? `“${task.title}” 리뷰 결과 확인 중` : `“${task.title}” 실행 대기`;
+        : task.status === 'review' ? `“${task.title}” 리뷰 결과 확인 중`
+          : task.status === 'todo' ? `“${task.title}” 선행 작업 완료 대기` : `“${task.title}” 실행 대기`;
     description = action?.task || sectionFromBody(task.body, 'ACTION') || task.result || '작업 세부 정보를 열어 실행 근거를 확인하세요.';
     meta = `${task.assignee || '미배정'}${task.started_at ? ` · ${elapsedLabel(task.started_at, task.completed_at || Date.now())}` : ''}`;
   } else if (run?.status === 'running') {
@@ -326,18 +406,18 @@ function renderCurrentFocus() {
     meta = `Director · ${elapsedLabel(run.startedAt)}`;
   } else if (run?.taskIds?.length && run.taskIds.every(id => ['done', 'archived'].includes(state.board.find(taskItem => taskItem.id === id)?.status))) {
     status = 'done';
-    kicker = 'WAVE COMPLETE';
-    title = `${run.taskIds.length}개 작업이 모두 완료됨`;
-    description = '실행 trace에서 각 Worker의 결과와 검증 근거를 확인할 수 있습니다.';
+    kicker = '이번 작업 묶음 완료';
+    title = `${run.taskIds.length}개 작업이 완료됨`;
+    description = '프로젝트 전체 완료 판정은 아니며, 실행 흐름에서 각 Worker의 결과와 검증 근거를 확인할 수 있습니다.';
     meta = clockLabel(run.completedAt);
   }
-  updateHtml($('current-focus'), `<i class="focus-pulse ${status}"></i><div class="focus-copy"><span>${escapeHtml(kicker)}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></div><div class="focus-meta"><b>${escapeHtml(meta)}</b></div>`);
+  updateHtml($('current-focus'), `<i class="focus-pulse ${status}"></i><div class="focus-copy"><span>${escapeHtml(kicker)}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></div><div class="focus-meta"><b>${escapeHtml(meta)}</b>${action}</div>`);
   const announcement = `${statusLabel(status)}. ${title}`;
   if ($('status-announcer') && $('status-announcer').textContent !== announcement) $('status-announcer').textContent = announcement;
 }
 
 function ownerAttentionTasks() {
-  return state.board.filter(task => ['blocked', 'review', 'scheduled'].includes(task.status));
+  return state.board.filter(task => ['failed', 'blocked', 'review', 'scheduled'].includes(task.status));
 }
 
 function renderOwnerGate() {
@@ -358,9 +438,10 @@ function renderOwnerGate() {
 function traceNode({ key, kind, title, description, status = 'queued', side = '', tags = [], marker = '·', depth = 0 }) {
   const selected = state.selection.type === key || (key === 'task' && state.selection.type === 'task' && state.selection.id === marker);
   const data = key === 'task' ? `data-select-task="${escapeHtml(marker)}"` : `data-select-trace="${escapeHtml(key)}"`;
+  const accessibleName = [title, kind, statusLabel(status), side, description].filter(Boolean).join(', ');
   return `<article class="trace-node ${traceStatus(status)} depth-${Math.min(2, depth)} ${selected ? 'selected' : ''}">
     <span class="trace-marker">${key === 'task' ? 'W' : escapeHtml(marker)}</span>
-    <div class="trace-body"><button class="trace-button" type="button" ${data} ${selected ? 'aria-current="step"' : ''}>
+    <div class="trace-body"><button class="trace-button" type="button" ${data} aria-label="${escapeHtml(accessibleName)}" ${selected ? 'aria-current="step"' : ''}>
       <span class="trace-title-row"><strong class="trace-title">${escapeHtml(title)}</strong><small class="trace-kind">${escapeHtml(kind)}</small></span>
       <span class="trace-description">${escapeHtml(description || '세부 정보를 준비하는 중입니다.')}</span>
       ${tags.length ? `<span class="trace-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>` : ''}
@@ -373,14 +454,16 @@ function renderTrace() {
   const run = latestRun();
   const root = $('owner-trace-list');
   if (state.boardStatus?.error) {
-    root.innerHTML = `<div class="trace-empty" role="alert"><strong>작업 보드를 불러오지 못했습니다</strong><span>${escapeHtml(state.boardStatus.error)}</span><button class="secondary-button" type="button" data-retry-board>다시 시도</button></div>`;
-    root.querySelector('[data-retry-board]')?.addEventListener('click', () => loadConsole());
+    root.innerHTML = `<div class="trace-empty" role="alert"><strong>작업 보드를 불러오지 못했습니다</strong><span>${escapeHtml(friendlyErrorMessage(state.boardStatus.error))}</span><button class="secondary-button" type="button" data-retry-board>다시 시도</button></div>`;
     $('trace-summary').innerHTML = '<span class="blocked"><i></i>보드 오류</span>';
     return;
   }
   if (!run) {
-    root.innerHTML = '<div class="trace-empty"><strong>실행 trace가 아직 없습니다</strong><span>아래 입력창에 목표를 보내면 Director의 분석, 계획, Worker 실행과 검증이 시간순으로 표시됩니다.</span></div>';
-    $('trace-summary').innerHTML = '<span><i></i>0 nodes</span>';
+    const director = selectedDirector();
+    root.innerHTML = director?.kind === 'project' && !director.cwd
+      ? '<div class="trace-empty onboarding-empty"><strong>목표를 맡길 준비를 시작하세요</strong><span>프로젝트 연결 → 목표·완료 기준 입력 → 실행·검증 추적 순서로 진행됩니다.</span><ol><li class="current"><b>1</b>로컬 프로젝트 연결</li><li><b>2</b>목표와 완료 기준 입력</li><li><b>3</b>Worker 실행과 검증 확인</li></ol></div>'
+      : '<div class="trace-empty"><strong>실행 흐름이 아직 없습니다</strong><span>오른쪽 입력창에 기능, 버그, API 명세나 완료 기준을 보내면 분석·계획·Worker 실행·검증이 시간순으로 표시됩니다.</span></div>';
+    $('trace-summary').innerHTML = '<span><i></i>단계 0개</span>';
     return;
   }
   const nodes = [];
@@ -396,7 +479,7 @@ function renderTrace() {
   nodes.push(traceNode({
     key: 'plan', marker: '3', kind: 'DIRECTOR', title: run.workflowId ? `${workflowFor(run.workflowId)?.name || run.workflowId} 실행 계획` : 'Worker 구성과 실행 경계 설계',
     description: run.publicDecisions?.[0] || run.progressEvents?.find(event => event.phase === 'directing')?.message,
-    status: planStatus, side: `${run.actions?.length || 0} tasks`, tags: run.publicDecisions?.slice(0, 2) || [],
+    status: planStatus, side: `작업 ${run.actions?.length || 0}개`, tags: run.publicDecisions?.slice(0, 2) || [],
   }));
   for (const action of run.actions || []) {
     const task = taskForAction(action);
@@ -418,16 +501,20 @@ function renderTrace() {
   const running = statuses.filter(status => status === 'running').length;
   const blocked = statuses.filter(status => ['blocked', 'review', 'scheduled', 'failed'].includes(status)).length;
   const done = statuses.filter(status => ['done', 'archived'].includes(status)).length;
-  $('trace-summary').innerHTML = `<span class="running"><i></i>${running} 실행</span><span><i></i>${done} 완료</span><span class="blocked"><i></i>${blocked} 판단</span>`;
+  $('trace-summary').innerHTML = `<span class="running"><i></i>${running} 실행</span><span><i></i>${done} 완료</span><span class="blocked"><i></i>${blocked} 확인</span>`;
 }
 
 function renderOverviewInspector() {
   const director = selectedDirector();
   const run = latestRun();
   $('inspector-title').textContent = 'Director 개요';
+  if (director?.kind === 'project' && !director.cwd) {
+    return `<div class="inspector-hero setup-hero"><span class="setup-kicker">시작 준비</span><h3>${escapeHtml(director.name)}</h3><p>이 슬롯에 Windows 또는 WSL 프로젝트를 연결하면 목표 입력과 Worker 실행이 열립니다.</p><button type="button" class="primary-button" data-open-projects>프로젝트 연결</button></div>
+      ${detailGroup('연결 후 할 수 있는 일', listHtml(['기능·버그·API 명세를 목표로 전달', 'Director의 분석과 작업 분할 확인', 'Worker 실행·검증 근거와 Owner 판단 추적']))}`;
+  }
   return `<div class="inspector-hero"><h3>${escapeHtml(director?.name || 'Director')}</h3><p>${escapeHtml(director?.cwd || '프로젝트가 배정되지 않았습니다.')}</p><div class="inspector-meta"><span>${escapeHtml(director?.kind === 'skill' ? 'Skill Director' : 'Project Director')}</span><span>${escapeHtml(runtimeLabel(director))}</span><span>${escapeHtml(statusLabel(director?.status))}</span><code>${escapeHtml(director?.board || '')}</code></div></div>
     ${detailGroup('현재 목표', run ? `<p>${formatText(run.prompt)}</p>` : '<p class="detail-empty">새 목표를 기다리는 중입니다.</p>')}
-    ${run ? detailGroup('현재 운영 상태', `<p>${escapeHtml(phaseLabel(run.phase))} · ${run.taskIds?.length || 0} tasks · ${elapsedLabel(run.startedAt, run.completedAt || Date.now())}</p>`) : ''}
+    ${run ? detailGroup('현재 운영 상태', `<p>${escapeHtml(phaseLabel(run.phase))} · 작업 ${run.taskIds?.length || 0}개 · ${elapsedLabel(run.startedAt, run.completedAt || Date.now())}</p>`) : ''}
     ${detailGroup('Owner 개입', '<p>Director 분석·계획과 모든 Worker 실행을 같은 trace에서 선택할 수 있습니다. 실행 중 Worker를 열면 추가 지시와 일시정지 제어가 나타납니다.</p>')}`;
 }
 
@@ -458,7 +545,7 @@ function renderPlanInspector(run) {
   if (!run?.workflowId && !run?.actions?.length) return `<div class="inspector-hero"><h3>Worker 구성과 의존성을 설계하는 중</h3><p>${escapeHtml(run?.progressEvents?.at(-1)?.message || '분석 결과를 실행 가능한 작업 그래프로 변환합니다.')}</p><div class="inspector-meta"><span>Director 계획</span></div></div>`;
   const workflow = workflowFor(run.workflowId);
   const actions = (run.actions || []).map((action, index) => `<article class="plan-action"><span>${index + 1}</span><div><strong>${escapeHtml(action.title)}</strong><p>${escapeHtml(action.task)}</p><small>${escapeHtml(action.target)}${action.parentTaskIds?.length ? ` · 선행 ${escapeHtml(action.parentTaskIds.join(', '))}` : ' · 즉시 실행 가능'}</small></div></article>`).join('');
-  return `<div class="inspector-hero"><h3>${escapeHtml(workflow?.name || run.workflowId || '대화')}</h3><p>${escapeHtml(workflow?.description || 'Director 응답')}</p><div class="inspector-meta"><span>실행 계획</span><span>${run.actions?.length || 0} tasks</span><code>${escapeHtml(run.workflowId || 'conversation')}</code></div></div>
+  return `<div class="inspector-hero"><h3>${escapeHtml(workflow?.name || run.workflowId || '대화')}</h3><p>${escapeHtml(workflow?.description || 'Director 응답')}</p><div class="inspector-meta"><span>실행 계획</span><span>작업 ${run.actions?.length || 0}개</span><code>${escapeHtml(run.workflowId || 'conversation')}</code></div></div>
     ${detailGroup('운영 판단', listHtml(run.publicDecisions))}
     ${detailGroup('작업 그래프', `<div class="plan-actions">${actions || '<p class="detail-empty">Worker 작업 없음</p>'}</div>`)}`;
 }
@@ -489,30 +576,39 @@ function renderPublicTrace(details, log) {
   }).join('');
   const eventsHtml = events.map(event => `<li><i></i><span>${escapeHtml(eventDescription(event))}</span><time>${escapeHtml(clockLabel(event.created_at))}</time></li>`).join('');
   const rawLogOpen = state.rawLogOpen ?? task.status === 'running';
-  return `<div class="live-trace-head"><span class="live-indicator ${task.status === 'running' ? 'active' : ''}"><i></i>${task.status === 'running' ? 'LIVE' : statusLabel(task.status)}</span><small>${state.taskTrace?.observedAt ? `마지막 동기화 ${clockLabel(state.taskTrace.observedAt)}` : '로그 동기화 중'}</small></div>
+  const traceError = state.taskTraceError ? inlineErrorHtml('실행 로그를 불러오지 못했습니다', state.taskTraceError, 'data-retry-task') : '';
+  const statusUncertain = Boolean(state.taskError || state.taskLoading);
+  const statusText = state.taskError ? '상태 확인 실패' : state.taskLoading ? '동기화 중' : task.status === 'running' ? 'LIVE' : statusLabel(task.status);
+  return `<div class="live-trace-head"><span class="live-indicator ${task.status === 'running' && !statusUncertain ? 'active' : ''}"><i></i>${statusText}</span><small>${state.taskError ? '최신 Worker 상태를 확인하지 못함' : state.taskTrace?.observedAt ? `마지막 동기화 ${clockLabel(state.taskTrace.observedAt)}` : state.taskTraceError ? '동기화 실패' : '로그 동기화 중'}</small></div>
+    ${traceError}
     <div class="reasoning-feed">${commentsHtml || '<div class="trace-placeholder">이전 작업에는 공개 체크포인트가 없습니다. 새 작업부터 PLAN · OBSERVED · DECISION · VERIFY가 실시간으로 쌓입니다.</div>'}</div>
     ${observedSteps.length ? `<div class="observed-commands"><header><strong>관찰된 실행 단계</strong><span>${observedSteps.length}</span></header><ol>${observedSteps.map(step => `<li><i></i><code>${escapeHtml(step)}</code></li>`).join('')}</ol></div>` : ''}
-    ${logText ? `<details class="raw-worker-log" ${rawLogOpen ? 'open' : ''}><summary data-raw-worker-log-summary>실행 로그 원문 <span>${logText.split(/\r?\n/).length} lines</span></summary><pre>${escapeHtml(logText)}</pre></details>` : '<div class="trace-placeholder">Worker 로그가 아직 생성되지 않았습니다.</div>'}
+    ${logText ? `<details class="raw-worker-log" ${rawLogOpen ? 'open' : ''}><summary data-raw-worker-log-summary>실행 로그 원문 <span>${logText.split(/\r?\n/).length}줄</span></summary><pre>${escapeHtml(logText)}</pre></details>` : state.taskTraceError ? '' : '<div class="trace-placeholder">Worker 로그가 아직 생성되지 않았습니다.</div>'}
     <ol class="event-list worker-lifecycle">${eventsHtml}</ol>`;
 }
 
 function renderTaskInspector() {
   $('inspector-title').textContent = 'Worker 실시간 추적';
   if (state.taskLoading && !state.taskDetail) return '<div class="inspector-loading">Worker 실행 trace를 불러오는 중…</div>';
+  if (state.taskError && !state.taskDetail) return inlineErrorHtml('Worker 상세 정보를 불러오지 못했습니다', state.taskError, 'data-retry-task');
   const details = state.taskDetail;
-  if (!details?.task) return '<div class="inspector-loading">Worker 상세 정보를 불러오지 못했습니다.</div>';
+  if (!details?.task) return '<div class="inspector-loading">Worker 상세 정보를 기다리는 중…</div>';
   const { task, latest_summary: summary, runs = [] } = details;
   const action = actionForTask(task.id);
   const lastRun = runs.at(-1);
   const taskAction = action?.task || sectionFromBody(task.body, 'ACTION') || task.body;
   const acceptance = action?.acceptance || sectionFromBody(task.body, 'ACCEPTANCE').split(/\r?\n/).map(line => line.replace(/^[-*]\s*/, '')).filter(Boolean);
-  const canIntervene = ['running', 'ready', 'todo', 'blocked', 'scheduled', 'review'].includes(task.status);
-  const control = task.status === 'running'
-    ? '<button class="danger-button" type="button" data-worker-control="pause">즉시 일시정지</button>'
+  const statusUncertain = Boolean(state.taskError || state.taskLoading);
+  const staleNotice = state.taskError ? inlineErrorHtml('최신 Worker 상태를 확인하지 못했습니다', state.taskError, 'data-retry-task') : '';
+  const canIntervene = !statusUncertain && ['running', 'ready', 'todo', 'blocked', 'scheduled', 'review'].includes(task.status);
+  const taskBusy = state.busyActions.has(`control:${task.id}`);
+  const interventionBusy = state.busyActions.has(`intervention:${task.id}`);
+  const control = !statusUncertain && task.status === 'running'
+    ? `<button class="danger-button" type="button" data-worker-control="pause" ${taskBusy ? 'disabled' : ''}>${taskBusy ? '처리 중…' : '즉시 일시정지'}</button>`
     : ['blocked', 'scheduled'].includes(task.status)
-      ? '<button class="resume-button" type="button" data-worker-control="resume">재개</button>' : '';
-  const intervention = canIntervene ? `<section class="worker-control"><header><div><span>OWNER STEERING</span><strong>실행 중 방향을 바꿀 수 있습니다</strong></div>${control}</header><textarea id="worker-intervention-input" rows="3" aria-label="Worker에게 전달할 추가 지시" placeholder="예: 그 파일은 건드리지 말고 API 계약부터 확인해. 이 지시는 실행 중 Worker에 바로 전달됩니다.">${escapeHtml(state.interventionDraft)}</textarea><div><small>실행 중에는 약 6초 이내 현재 Worker 세션에 주입됩니다.</small><button type="button" data-send-intervention>지시 추가</button></div></section>` : '';
-  return `<div class="inspector-hero"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(taskAction)}</p><div class="inspector-meta"><span>Worker 실행</span><code>${escapeHtml(task.id)}</code><span>${escapeHtml(task.assignee || '미배정')}</span><span>${escapeHtml(statusLabel(task.status))}</span>${task.started_at ? `<span>${escapeHtml(elapsedLabel(task.started_at, task.completed_at || Date.now()))}</span>` : ''}</div></div>
+      ? `<button class="resume-button" type="button" data-worker-control="resume" ${taskBusy ? 'disabled' : ''}>${taskBusy ? '처리 중…' : '재개'}</button>` : '';
+  const intervention = canIntervene ? `<section class="worker-control"><header><div><span>OWNER 개입</span><strong>실행 중 방향을 바꿀 수 있습니다</strong></div>${control}</header><textarea id="worker-intervention-input" rows="3" aria-label="Worker에게 전달할 추가 지시" placeholder="예: 그 파일은 건드리지 말고 API 계약부터 확인해. 이 지시는 실행 중 Worker에 바로 전달됩니다." ${interventionBusy ? 'disabled' : ''}>${escapeHtml(state.interventionDraft)}</textarea><div><small>실행 중에는 약 6초 이내 현재 Worker 세션에 주입됩니다.</small><button type="button" data-send-intervention ${interventionBusy ? 'disabled' : ''}>${interventionBusy ? '전달 중…' : '지시 추가'}</button></div></section>` : '';
+  return `${staleNotice}<div class="inspector-hero"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(taskAction)}</p><div class="inspector-meta"><span>Worker 실행</span><code>${escapeHtml(task.id)}</code><span>${escapeHtml(task.assignee || '미배정')}</span><span>${escapeHtml(statusLabel(task.status))}</span>${task.started_at ? `<span>${escapeHtml(elapsedLabel(task.started_at, task.completed_at || Date.now()))}</span>` : ''}</div></div>
     ${intervention}
     ${detailGroup('공개 추론·실행 trace', renderPublicTrace(details, state.taskTrace?.log), 'public-trace-group')}
     ${detailGroup('완료 기준', listHtml(acceptance))}
@@ -521,14 +617,30 @@ function renderTaskInspector() {
 }
 
 function bindInspectorActions() {
-  $('worker-intervention-input')?.addEventListener('input', event => { state.interventionDraft = event.currentTarget.value; });
+  const interventionInput = $('worker-intervention-input');
+  interventionInput?.addEventListener('input', event => { state.interventionDraft = event.currentTarget.value; });
+  interventionInput?.addEventListener('compositionstart', () => { state.interventionComposing = true; });
+  interventionInput?.addEventListener('compositionend', event => {
+    state.interventionComposing = false;
+    state.interventionDraft = event.currentTarget.value;
+    renderInspector({ force: true });
+  });
   $('owner-inspector').querySelector('.raw-worker-log')?.addEventListener('toggle', event => { state.rawLogOpen = event.currentTarget.open; });
   $('owner-inspector').querySelector('[data-send-intervention]')?.addEventListener('click', sendIntervention);
   $('owner-inspector').querySelectorAll('[data-worker-control]').forEach(button => button.addEventListener('click', () => controlWorker(button.dataset.workerControl)));
+  $('owner-inspector').querySelectorAll('[data-retry-task]').forEach(button => button.addEventListener('click', () => refreshSelectedTask({ force: true })));
 }
 
 function renderInspector({ force = false } = {}) {
-  if (!force && document.activeElement?.id === 'worker-intervention-input') return;
+  if (!force && state.interventionComposing) return;
+  const focusedInput = document.activeElement?.id === 'worker-intervention-input' ? document.activeElement : null;
+  const inputSelection = focusedInput ? {
+    start: focusedInput.selectionStart,
+    end: focusedInput.selectionEnd,
+    direction: focusedInput.selectionDirection,
+    scrollTop: focusedInput.scrollTop,
+  } : null;
+  const activeInFocus = Boolean(document.activeElement?.closest('#focus-dialog-content'));
   const activeElement = activeElementIdentity();
   const scroller = document.querySelector('.inspector-scroll');
   const renderKey = `${state.selectedId}:${state.selection.type}:${state.selection.id || ''}`;
@@ -544,7 +656,15 @@ function renderInspector({ force = false } = {}) {
   else html = renderOverviewInspector();
   $('owner-inspector').innerHTML = html;
   bindInspectorActions();
-  restoreActiveElement(activeElement);
+  syncFocusDialog();
+  if (inputSelection) requestAnimationFrame(() => {
+    const nextInput = $('worker-intervention-input');
+    if (!nextInput || nextInput.disabled) return;
+    nextInput.focus({ preventScroll: true });
+    nextInput.setSelectionRange(inputSelection.start, inputSelection.end, inputSelection.direction);
+    nextInput.scrollTop = inputSelection.scrollTop;
+  });
+  else if (!activeInFocus) restoreActiveElement(activeElement);
   state.inspectorRenderKey = renderKey;
   if (scroller) requestAnimationFrame(() => {
     scroller.scrollTop = preserve ? (stickToBottom ? scroller.scrollHeight : previousTop) : 0;
@@ -553,7 +673,7 @@ function renderInspector({ force = false } = {}) {
 
 function renderConversation() {
   const runs = selectedRuns().slice(0, 6).reverse();
-  $('conversation-count').textContent = `${runs.length * 2} messages`;
+  $('conversation-count').textContent = `메시지 ${runs.length * 2}개`;
   $('owner-chat-stream').innerHTML = runs.length ? runs.map(run => `<article class="chat-message owner"><div class="chat-label">OWNER</div>${formatText(run.prompt)}</article><article class="chat-message director ${run.status === 'failed' ? 'failed' : ''}"><div class="chat-label">DIRECTOR · ${escapeHtml(phaseLabel(run.phase || run.status))}</div>${run.output ? formatText(run.output) : run.error ? formatText(run.error) : '<span class="thinking">판단 중…</span>'}</article>`).join('') : '<div class="chat-empty">아직 대화가 없습니다.</div>';
 }
 
@@ -572,6 +692,8 @@ function renderAll() {
   renderInspector();
   renderConversation();
   renderWorkflowCatalog();
+  $('skill-count').textContent = String(Object.keys(state.summary?.skills || {}).length);
+  if ($('project-dialog').open && state.managementTab === 'skills') renderSkills();
   restoreActiveElement(activeElement);
 }
 
@@ -599,6 +721,10 @@ async function refreshSelectedTask({ force = false } = {}) {
   if (!taskId || state.taskLoading || (!force && Date.now() - state.taskLoadedAt < TASK_POLL_INTERVAL_MS)) return;
   const directorId = state.selectedId;
   state.taskLoading = true;
+  if (force) {
+    state.taskError = null;
+    state.taskTraceError = null;
+  }
   if (force) renderInspector({ force: true });
   try {
     const [detailsResult, traceResult] = await Promise.allSettled([
@@ -606,12 +732,15 @@ async function refreshSelectedTask({ force = false } = {}) {
       api(`/api/directors/${encodeURIComponent(directorId)}/tasks/${encodeURIComponent(taskId)}/trace`),
     ]);
     if (state.selectedId !== directorId || state.selection.id !== taskId) return;
-    if (detailsResult.status === 'fulfilled') state.taskDetail = detailsResult.value;
-    else throw detailsResult.reason;
-    if (traceResult.status === 'fulfilled') state.taskTrace = traceResult.value;
+    if (detailsResult.status === 'fulfilled') {
+      state.taskDetail = detailsResult.value;
+      state.taskError = null;
+    } else state.taskError = detailsResult.reason;
+    if (traceResult.status === 'fulfilled') {
+      state.taskTrace = traceResult.value;
+      state.taskTraceError = null;
+    } else state.taskTraceError = traceResult.reason;
     state.taskLoadedAt = Date.now();
-  } catch (error) {
-    if (force) toast(error.message, 'error');
   } finally {
     state.taskLoading = false;
     renderInspector();
@@ -647,13 +776,15 @@ async function loadConsole(options = {}) {
 }
 
 async function selectDirector(id) {
-  if (window.matchMedia('(max-width: 820px)').matches) setInspectorOpen(false);
+  if (window.matchMedia(NARROW_VIEW_QUERY).matches) setInspectorOpen(false);
   state.selectedId = id;
   state.board = [];
   state.boardStatus = null;
   state.selection = { type: 'overview', id: null };
   state.taskDetail = null;
   state.taskTrace = null;
+  state.taskError = null;
+  state.taskTraceError = null;
   state.taskLoadedAt = 0;
   state.interventionDraft = '';
   state.rawLogOpen = null;
@@ -668,7 +799,7 @@ function selectTrace(type) {
   renderTrace();
   renderInspector({ force: true });
   restoreActiveElement(opener);
-  if (window.matchMedia('(max-width: 820px)').matches) setInspectorOpen(true, opener);
+  if (window.matchMedia(NARROW_VIEW_QUERY).matches) setInspectorOpen(true, opener);
 }
 
 async function selectTask(taskId) {
@@ -677,6 +808,8 @@ async function selectTask(taskId) {
   state.selection = { type: 'task', id: taskId };
   state.taskDetail = null;
   state.taskTrace = null;
+  state.taskError = null;
+  state.taskTraceError = null;
   state.taskLoadedAt = 0;
   if (changedTask) {
     state.interventionDraft = '';
@@ -685,7 +818,7 @@ async function selectTask(taskId) {
   renderTrace();
   renderInspector({ force: true });
   restoreActiveElement(opener);
-  if (window.matchMedia('(max-width: 820px)').matches) setInspectorOpen(true, opener);
+  if (window.matchMedia(NARROW_VIEW_QUERY).matches) setInspectorOpen(true, opener);
   await refreshSelectedTask({ force: true });
 }
 
@@ -693,52 +826,65 @@ async function sendIntervention() {
   const input = $('worker-intervention-input');
   const message = input?.value.trim();
   if (!message || state.selection.type !== 'task') return;
+  const taskId = state.selection.id;
+  const button = $('owner-inspector').querySelector('[data-send-intervention]');
+  if (!button || button.disabled || state.busyActions.has(`intervention:${taskId}`)) return;
   try {
-    await api(`/api/directors/${encodeURIComponent(state.selectedId)}/tasks/${encodeURIComponent(state.selection.id)}/interventions`, {
+    await withBusy(button, '전달 중…', () => api(`/api/directors/${encodeURIComponent(state.selectedId)}/tasks/${encodeURIComponent(taskId)}/interventions`, {
       method: 'POST', body: JSON.stringify({ message }),
-    });
+    }), `intervention:${taskId}`);
     input.value = '';
     state.interventionDraft = '';
     toast('Owner 지시를 Worker 실행에 전달했습니다.', 'success');
     state.taskLoadedAt = 0;
     await refreshSelectedTask({ force: true });
   } catch (error) { toast(error.message, 'error'); }
+  finally { renderInspector({ force: true }); }
 }
 
 async function controlWorker(action) {
   if (state.selection.type !== 'task') return;
+  const taskId = state.selection.id;
+  const button = $('owner-inspector').querySelector(`[data-worker-control="${action}"]`);
+  if (!button || button.disabled || state.busyActions.has(`control:${taskId}`)) return;
   const label = action === 'pause' ? '일시정지' : '재개';
   try {
-    await api(`/api/directors/${encodeURIComponent(state.selectedId)}/tasks/${encodeURIComponent(state.selection.id)}/control`, {
+    await withBusy(button, '처리 중…', () => api(`/api/directors/${encodeURIComponent(state.selectedId)}/tasks/${encodeURIComponent(taskId)}/control`, {
       method: 'POST', body: JSON.stringify({ action, reason: `Owner가 Praetorium에서 ${label}했습니다.` }),
-    });
+    }), `control:${taskId}`);
     toast(`Worker ${label} 요청을 적용했습니다.`, 'success');
     state.taskLoadedAt = 0;
     await loadConsole({ quiet: true });
     await refreshSelectedTask({ force: true });
   } catch (error) { toast(error.message, 'error'); }
+  finally { renderInspector({ force: true }); }
 }
 
 async function sendMessage() {
   const input = $('owner-message-input');
   const prompt = input.value.trim();
-  if (!prompt) return;
+  const button = $('owner-send-btn');
+  if (!prompt || button.disabled || state.busyActions.has('send-message')) return;
   try {
-    await api(`/api/directors/${encodeURIComponent(state.selectedId)}/messages`, {
+    await withBusy(button, '전송 중…', () => api(`/api/directors/${encodeURIComponent(state.selectedId)}/messages`, {
       method: 'POST', body: JSON.stringify({ prompt, mode: $('owner-message-mode').value }),
-    });
+    }), 'send-message');
     input.value = '';
     state.selection = { type: 'analysis', id: null };
     await loadConsole({ quiet: true });
   } catch (error) { toast(error.message, 'error'); }
+  finally { renderMissionHeader(); }
 }
 
 async function dispatchNow() {
+  const button = $('owner-dispatch-btn');
+  if (button.disabled || state.busyActions.has('dispatch')) return;
   try {
-    const result = await api(`/api/directors/${encodeURIComponent(state.selectedId)}/dispatch`, { method: 'POST', body: '{}' });
-    toast(`배치 완료 · ${result.spawned ?? 0}개 Worker 시작`, 'success');
+    const result = await withBusy(button, 'Worker 시작 중…', () => api(`/api/directors/${encodeURIComponent(state.selectedId)}/dispatch`, { method: 'POST', body: '{}' }), 'dispatch');
+    toast(`Worker ${result.spawned ?? 0}개를 시작했습니다.`, 'success');
     await loadConsole({ quiet: true });
   } catch (error) { toast(error.message, 'error'); }
+  finally { renderMissionHeader(); }
 }
 
 function renderProjects() {
@@ -799,7 +945,10 @@ function syncProjectForm({ resetValidation = false } = {}) {
   }
   if (resetValidation) $('project-path').removeAttribute('aria-invalid');
   const target = state.runtimes.find(item => item.id === (wsl ? `wsl:${$('project-distro').value}` : 'windows'));
-  $('discovery-root').placeholder = wsl ? `${target?.home || '/home/owner'}/projects` : 'C:\\projects';
+  const fallbackRoot = wsl ? `${target?.home || '/home/owner'}/projects` : 'C:\\projects';
+  $('discovery-root').placeholder = fallbackRoot;
+  const selectedRoot = $('discovery-root').value || fallbackRoot;
+  $('discovery-target').textContent = `검색 대상: ${wsl ? `WSL · ${$('project-distro').value || '배포판 선택 필요'}` : 'Windows'} · ${selectedRoot} · 발견 즉시 빈 슬롯에 연결`;
 }
 
 function projectPayload() {
@@ -811,13 +960,20 @@ function projectPayload() {
   };
 }
 
-async function withBusy(button, label, action) {
-  if (button.disabled) return;
-  const previous = button.textContent;
+async function withBusy(button, label, action, key = button?.id || label) {
+  if (!button || button.disabled || state.busyActions.has(key)) return;
+  const previous = button.innerHTML;
+  state.busyActions.add(key);
   button.disabled = true;
   button.textContent = label;
   try { return await action(); }
-  finally { button.disabled = false; button.textContent = previous; }
+  finally {
+    state.busyActions.delete(key);
+    if (button.isConnected) {
+      button.disabled = false;
+      button.innerHTML = previous;
+    }
+  }
 }
 
 async function validateProject() {
@@ -894,16 +1050,58 @@ function renderRuntimes() {
     const profileCount = state.profilesLoaded ? target.profiles?.filter(name => state.profiles.some(profile => profile.id === name)).length || 0 : '—';
     const system = target.system ? '<span class="runtime-system">시스템 배포판</span>' : '';
     const codex = target.codex?.version ? `${target.codex.version} · ${target.codex.authenticated ? '로그인됨' : '로그인 필요'}` : '설치되지 않음';
-    return `<article class="runtime-row ${target.ready ? 'ready' : 'warning'}"><div class="runtime-state"><i></i><span>${target.ready ? 'READY' : target.system ? 'SYSTEM' : 'SETUP'}</span></div><div class="runtime-copy"><header><h4>${escapeHtml(target.label)}</h4>${system}</header><p>${escapeHtml(target.error || 'Praetorium 실행 요구사항을 모두 충족합니다.')}</p><dl><div><dt>Hermes</dt><dd>${escapeHtml(target.hermes?.version || '설치되지 않음')}</dd></div><div><dt>Codex</dt><dd>${escapeHtml(codex)}</dd></div><div><dt>역할</dt><dd>${profileCount} / ${profileTotal}</dd></div></dl></div>${target.kind === 'wsl' && !target.ready && !target.system && target.setupCommand ? `<button type="button" class="secondary-button" data-runtime-setup="${escapeHtml(target.id)}">준비 방법</button>` : ''}</article>`;
+    return `<article class="runtime-row ${target.ready ? 'ready' : 'warning'}"><div class="runtime-state"><i></i><span>${target.ready ? '준비됨' : target.system ? '시스템' : '설정 필요'}</span></div><div class="runtime-copy"><header><h4>${escapeHtml(target.label)}</h4>${system}</header><p>${escapeHtml(target.error || 'Praetorium 실행 요구사항을 모두 충족합니다.')}</p><dl><div><dt>Hermes</dt><dd>${escapeHtml(target.hermes?.version || '설치되지 않음')}</dd></div><div><dt>Codex</dt><dd>${escapeHtml(codex)}</dd></div><div><dt>역할</dt><dd>${profileCount} / ${profileTotal}</dd></div></dl></div>${target.kind === 'wsl' && !target.ready && !target.system && target.setupCommand ? `<button type="button" class="secondary-button" data-runtime-setup="${escapeHtml(target.id)}">준비 방법</button>` : ''}</article>`;
   }).join('') : '<div class="project-empty"><strong>진단 가능한 런타임이 없습니다.</strong><span>Windows에서 WSL2 배포판이 설치되어 있는지 확인하세요.</span></div>';
+  const guidedTarget = state.runtimes.find(target => target.id === state.runtimeGuideId);
+  if (!guidedTarget || guidedTarget.ready || !guidedTarget.setupCommand) {
+    state.runtimeGuideId = null;
+    $('runtime-guide').hidden = true;
+  }
   document.querySelectorAll('[data-runtime-setup]').forEach(button => button.addEventListener('click', () => showRuntimeGuide(button.dataset.runtimeSetup)));
   renderProjects();
   renderProfiles();
 }
 
+const PROFILE_KIND_LABELS = {
+  orchestrate: '지휘', write: '구현·수정', review: '전문 검토', gate: '품질 판정',
+};
+
+function accessLabel(access) {
+  return access === 'read-only' ? '읽기 전용' : access === 'workspace-write' ? '파일 변경 가능' : access;
+}
+
+function profileContract(profile) {
+  if (profile.group === 'director') return {
+    trigger: 'Owner가 목표나 질문을 보낼 때',
+    responsibility: '요구 분석, 실행 플로우 선택, Worker 작업과 완료 기준 설계',
+    next: '작업 보드에 실행 묶음을 만들고 Worker에 넘김',
+  };
+  if (profile.id === 'codex-implementer') return {
+    trigger: 'Director가 범위와 완료 기준이 있는 구현 작업을 배정할 때',
+    responsibility: '허용된 작업공간에서 구현하고 테스트·변경 근거 기록',
+    next: '결과를 보드에 남겨 후속 리뷰가 이어받음',
+  };
+  if (profile.id === 'remediator') return {
+    trigger: '전문 리뷰가 현재 리비전에 수정 지적을 남겼을 때',
+    responsibility: '해당 지적 범위만 수정하고 회귀 근거 기록',
+    next: '영향받은 리뷰와 품질 판정이 다시 확인',
+  };
+  if (profile.kind === 'gate') return {
+    trigger: '구현과 필요한 리뷰 근거가 모였을 때',
+    responsibility: '현재 후보 리비전의 근거만으로 진행 또는 중단 판정',
+    next: '판정과 부족한 근거를 보드에 기록',
+  };
+  return {
+    trigger: 'Director가 작업 위험에 맞춰 전문 검토를 배정할 때',
+    responsibility: '파일을 바꾸지 않고 현재 리비전의 결함과 근거 검토',
+    next: '통과 또는 수정 지적을 보드에 기록',
+  };
+}
+
 function showRuntimeGuide(id) {
   const target = state.runtimes.find(item => item.id === id);
   if (!target?.setupCommand) return;
+  state.runtimeGuideId = id;
   $('runtime-guide').hidden = false;
   $('runtime-guide-copy').textContent = `${target.label} 터미널에서 아래 두 명령을 순서대로 실행하면 고정 버전과 Praetorium 역할 프로필을 준비합니다.`;
   $('runtime-setup-command').textContent = target.setupCommand;
@@ -912,6 +1110,8 @@ function showRuntimeGuide(id) {
 
 async function loadRuntimes({ force = false } = {}) {
   const requestId = ++state.runtimeRequestId;
+  state.runtimeGuideId = null;
+  $('runtime-guide').hidden = true;
   state.runtimesLoaded = false;
   state.runtimesError = null;
   renderRuntimes();
@@ -955,15 +1155,61 @@ function renderProfiles() {
     return;
   }
   if (!state.selectedProfileId || !state.profiles.some(profile => profile.id === state.selectedProfileId)) state.selectedProfileId = state.profiles[0].id;
-  const groupNames = { director: 'Directors', worker: 'Implementation', review: 'Review & gate' };
+  const groupNames = { director: '지휘', worker: '구현·수정', review: '검토·품질 판정' };
   $('profile-list').innerHTML = Object.entries(groupNames).map(([group, label]) => {
     const profiles = state.profiles.filter(profile => profile.group === group);
-    return `<section><h4>${label}</h4>${profiles.map(profile => `<button type="button" class="profile-row ${profile.id === state.selectedProfileId ? 'active' : ''}" data-profile="${escapeHtml(profile.id)}" aria-pressed="${profile.id === state.selectedProfileId}"><span><strong>${escapeHtml(profile.label)}</strong><small>${escapeHtml(profile.id)}</small></span><b>${escapeHtml(profile.access)}</b></button>`).join('')}</section>`;
+    return `<section><h4>${label}</h4>${profiles.map(profile => `<button type="button" class="profile-row ${profile.id === state.selectedProfileId ? 'active' : ''}" data-profile="${escapeHtml(profile.id)}" aria-pressed="${profile.id === state.selectedProfileId}"><span><strong>${escapeHtml(profile.label)}</strong><small>${escapeHtml(profile.id)}</small></span><b>${escapeHtml(accessLabel(profile.access))}</b></button>`).join('')}</section>`;
   }).join('');
-  document.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => { state.selectedProfileId = button.dataset.profile; renderProfiles(); }));
+  document.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => {
+    state.selectedProfileId = button.dataset.profile;
+    renderProfiles();
+    if (window.matchMedia(NARROW_VIEW_QUERY).matches) requestAnimationFrame(() => $('profile-detail').scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' }));
+  }));
   const profile = state.profiles.find(item => item.id === state.selectedProfileId);
+  const contract = profileContract(profile);
   const installations = state.runtimes.filter(target => !target.system).map(target => `<li><span>${escapeHtml(target.label)}</span><b class="readiness ${target.profiles?.includes(profile.id) ? 'ready' : 'warning'}">${target.profiles?.includes(profile.id) ? '설치됨' : '없음'}</b></li>`).join('');
-  $('profile-detail').innerHTML = `<header><div><h3>${escapeHtml(profile.label)}</h3><code>${escapeHtml(profile.id)}</code></div><span class="access-badge ${profile.access === 'read-only' ? 'readonly' : 'write'}">${escapeHtml(profile.access)}</span></header><p>${escapeHtml(profile.description)}</p><dl><div><dt>모델</dt><dd>${escapeHtml(profile.model)}</dd></div><div><dt>추론 강도</dt><dd>${escapeHtml(profile.reasoning)}</dd></div><div><dt>기본 스킬</dt><dd>${escapeHtml(profile.skill || '작업에서 지정')}</dd></div><div><dt>역할 유형</dt><dd>${escapeHtml(profile.kind)}</dd></div></dl><section><h4>런타임 설치 상태</h4><ul>${installations || '<li><span>진단 전</span></li>'}</ul></section>`;
+  $('profile-detail').innerHTML = `<header><div><h3>${escapeHtml(profile.label)}</h3><code>${escapeHtml(profile.id)}</code></div><span class="access-badge ${profile.access === 'read-only' ? 'readonly' : 'write'}">${escapeHtml(accessLabel(profile.access))}</span></header><p>${escapeHtml(profile.description)}</p><section class="role-contract"><h4>실행 계약</h4><dl><div><dt>시작 시점</dt><dd>${escapeHtml(contract.trigger)}</dd></div><div><dt>책임</dt><dd>${escapeHtml(contract.responsibility)}</dd></div><div><dt>다음 단계</dt><dd>${escapeHtml(contract.next)}</dd></div></dl></section><dl class="profile-spec"><div><dt>모델</dt><dd>${escapeHtml(profile.model)}</dd></div><div><dt>추론 강도</dt><dd>${escapeHtml(profile.reasoning)}</dd></div><div><dt>기본 스킬</dt><dd>${escapeHtml(profile.skill || '작업에서 지정')}</dd></div><div><dt>역할 유형</dt><dd>${escapeHtml(PROFILE_KIND_LABELS[profile.kind] || profile.kind)}</dd></div></dl><section><h4>런타임 설치 상태</h4><ul>${installations || '<li><span>런타임 탭에서 진단할 수 있습니다.</span></li>'}</ul></section>`;
+  restoreActiveElement(activeElement);
+}
+
+const SKILL_GROUPS = [
+  ['지휘·인계', ['project-director', 'context-handoff', 'skill-director']],
+  ['전문 검토', ['convention-review', 'security-review', 'adversarial-review', 'test-gap-review', 'architecture-review', 'performance-review']],
+  ['수정·출시', ['remediate-findings', 'release-readiness', 'quality-gate']],
+];
+
+function skillUsers(skillId) {
+  const workers = Object.entries(state.summary?.workerProfiles || {})
+    .filter(([, profile]) => profile.skill === skillId)
+    .map(([, profile]) => profile.label);
+  if (skillId === 'project-director') workers.unshift('Project Director 1–3');
+  if (skillId === 'skill-director') workers.unshift('Skill Director');
+  return workers;
+}
+
+function renderSkills() {
+  const activeElement = activeElementIdentity();
+  const skills = state.summary?.skills || {};
+  const ids = Object.keys(skills);
+  $('skill-count').textContent = String(ids.length);
+  if (!ids.length) {
+    $('skill-list').innerHTML = '<div class="project-empty"><strong>등록된 운영 스킬이 없습니다.</strong></div>';
+    $('skill-detail').innerHTML = '';
+    return;
+  }
+  if (!state.selectedSkillId || !skills[state.selectedSkillId]) state.selectedSkillId = ids[0];
+  $('skill-list').innerHTML = SKILL_GROUPS.map(([label, groupIds]) => {
+    const available = groupIds.filter(id => skills[id]);
+    if (!available.length) return '';
+    return `<section><h4>${label}</h4>${available.map(id => `<button type="button" class="skill-row ${id === state.selectedSkillId ? 'active' : ''}" data-skill="${escapeHtml(id)}" aria-pressed="${id === state.selectedSkillId}"><span><strong>${escapeHtml(id)}</strong><small>${escapeHtml(skills[id])}</small></span><b>→</b></button>`).join('')}</section>`;
+  }).join('');
+  document.querySelectorAll('[data-skill]').forEach(button => button.addEventListener('click', () => {
+    state.selectedSkillId = button.dataset.skill;
+    renderSkills();
+    if (window.matchMedia(NARROW_VIEW_QUERY).matches) requestAnimationFrame(() => $('skill-detail').scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' }));
+  }));
+  const users = skillUsers(state.selectedSkillId);
+  $('skill-detail').innerHTML = `<header><div><h3>${escapeHtml(state.selectedSkillId)}</h3><code>운영 절차</code></div><span class="access-badge readonly">재사용</span></header><p>${escapeHtml(skills[state.selectedSkillId])}</p><section><h4>기본 사용 역할</h4>${users.length ? listHtml(users) : '<p class="detail-empty">고정 프로필 없이 Director가 필요한 작업에 지정합니다.</p>'}</section><section><h4>적용 방식</h4><p>프로필의 기본 스킬로 적용되거나, Director가 Worker 작업을 만들 때 필요한 스킬만 지정합니다.</p></section>`;
   restoreActiveElement(activeElement);
 }
 
@@ -986,6 +1232,7 @@ async function loadProfiles() {
 
 function setManagementTab(tab) {
   state.managementTab = tab;
+  setManagementFeedback();
   document.querySelectorAll('[data-management-tab]').forEach(button => {
     const active = button.dataset.managementTab === tab;
     button.setAttribute('aria-selected', String(active));
@@ -998,22 +1245,51 @@ function setManagementTab(tab) {
   });
   const body = document.querySelector('.management-body');
   if (body) body.scrollTop = 0;
+  if ($('project-dialog').open) void loadManagementTab(tab).catch(() => {});
 }
 
-async function openManagement(tab = 'projects') {
+async function loadManagementTab(tab, { force = false } = {}) {
+  if (tab === 'skills') {
+    renderSkills();
+    return;
+  }
+  if (!force && ((tab === 'projects' && state.projectsLoaded && state.runtimesLoaded) || (tab === 'runtimes' && state.runtimesLoaded) || (tab === 'roles' && state.profilesLoaded))) return;
+  if (state.managementLoads[tab]) return state.managementLoads[tab];
+  const loaders = {
+    projects: async () => {
+      await loadProjects();
+      if (!state.runtimesLoaded) await loadRuntimes();
+    },
+    runtimes: () => loadRuntimes({ force }),
+    roles: loadProfiles,
+  };
+  const loader = loaders[tab];
+  if (!loader) return;
+  state.managementLoads[tab] = loader().catch(error => {
+    if (state.managementTab === tab) setManagementFeedback(error.message, 'error');
+    throw error;
+  }).finally(() => { delete state.managementLoads[tab]; });
+  return state.managementLoads[tab];
+}
+
+function openManagement(tab = 'projects') {
+  setManagementFeedback();
+  if (!$('project-dialog').open) $('project-dialog').showModal();
   setManagementTab(tab);
-  $('project-dialog').showModal();
-  const results = await Promise.allSettled([loadProjects(), loadProfiles(), loadRuntimes()]);
-  const failed = results.find(result => result.status === 'rejected');
-  if (failed) toast(failed.reason.message, 'error');
 }
 
 function initTheme() {
   const saved = localStorage.getItem('praetorium-theme') || 'dark';
-  document.documentElement.dataset.theme = saved;
+  const apply = theme => {
+    document.documentElement.dataset.theme = theme;
+    const nextLabel = theme === 'light' ? '다크 테마로 전환' : '라이트 테마로 전환';
+    $('theme-toggle').setAttribute('aria-label', nextLabel);
+    $('theme-toggle').title = nextLabel;
+  };
+  apply(saved);
   $('theme-toggle').addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-    document.documentElement.dataset.theme = next;
+    apply(next);
     localStorage.setItem('praetorium-theme', next);
   });
 }
@@ -1023,6 +1299,11 @@ function initScale() {
   const apply = () => {
     document.documentElement.style.setProperty('--ui-scale', scale);
     localStorage.setItem('praetorium-scale', String(scale));
+    const percent = Math.round(scale * 100);
+    $('text-scale-down').disabled = scale <= .9;
+    $('text-scale-up').disabled = scale >= 1.25;
+    $('text-scale-down').title = `현재 ${percent}% · 글자 작게`;
+    $('text-scale-up').title = `현재 ${percent}% · 글자 크게`;
   };
   $('text-scale-down').addEventListener('click', () => { scale = Math.max(.9, +(scale - .05).toFixed(2)); apply(); });
   $('text-scale-up').addEventListener('click', () => { scale = Math.min(1.25, +(scale + .05).toFixed(2)); apply(); });
@@ -1073,6 +1354,7 @@ function init() {
   $('project-runtime').addEventListener('change', () => syncProjectForm({ resetValidation: true }));
   $('project-distro').addEventListener('change', () => syncProjectForm({ resetValidation: true }));
   $('project-path').addEventListener('input', () => syncProjectForm({ resetValidation: true }));
+  $('discovery-root').addEventListener('input', () => syncProjectForm());
   $('refresh-runtimes-btn').addEventListener('click', () => withBusy($('refresh-runtimes-btn'), '진단 중…', () => loadRuntimes({ force: true })).catch(error => toast(error.message, 'error')));
   $('copy-runtime-command').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText($('runtime-setup-command').textContent); toast('WSL 준비 명령을 복사했습니다.', 'success'); }
@@ -1082,10 +1364,10 @@ function init() {
   $('project-dialog').addEventListener('click', event => {
     const button = event.target.closest('[data-retry-management]');
     if (!button) return;
-    const loaders = { projects: loadProjects, runtimes: () => loadRuntimes({ force: true }), profiles: loadProfiles };
-    const loader = loaders[button.dataset.retryManagement];
-    if (loader) void withBusy(button, '다시 시도 중…', loader).catch(error => toast(error.message, 'error'));
+    const tab = button.dataset.retryManagement === 'profiles' ? 'roles' : button.dataset.retryManagement;
+    void withBusy(button, '다시 시도 중…', () => loadManagementTab(tab, { force: true }), `management:${tab}`).catch(error => setManagementFeedback(error.message, 'error'));
   });
+  $('project-dialog').addEventListener('close', () => setManagementFeedback());
   $('project-dialog').querySelector('.management-tabs').addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     const tabs = [...document.querySelectorAll('[data-management-tab]')];
@@ -1112,7 +1394,11 @@ function init() {
       state.selection = { type: 'overview', id: null }; renderTrace(); renderInspector({ force: true });
     }
   });
-  window.matchMedia('(max-width: 820px)').addEventListener('change', event => {
+  document.addEventListener('click', event => {
+    if (event.target.closest('[data-open-projects]')) openManagement('projects');
+    if (event.target.closest('[data-retry-board]')) void loadConsole();
+  });
+  window.matchMedia(NARROW_VIEW_QUERY).addEventListener('change', event => {
     if (!event.matches && document.body.classList.contains('inspector-open')) setInspectorOpen(false, null, false);
   });
   void loadConsole();
