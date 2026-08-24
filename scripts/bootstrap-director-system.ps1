@@ -160,6 +160,8 @@ function Set-ProfileConfig {
         'kanban.review_dispatch' = 'true'
         'kanban.auto_decompose' = 'false'
         'kanban.max_in_progress' = '12'
+        # Write workers share the project workspace. Keep one writer per
+        # profile until host-managed worktree integration is available.
         'kanban.max_in_progress_per_profile' = '1'
         'kanban.failure_limit' = '2'
         'kanban.dispatch_stale_timeout_seconds' = '14400'

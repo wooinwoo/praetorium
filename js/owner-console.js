@@ -32,6 +32,11 @@ const state = {
   inspectorOpener: null,
   interventionDraft: '',
   interventionComposing: false,
+  decisionDraft: '',
+  decisionOption: '',
+  decisionGoalId: null,
+  decisionError: null,
+  decisionComposing: false,
   rawLogOpen: null,
   runtimeGuideId: null,
   busyActions: new Set(),
@@ -44,9 +49,10 @@ const state = {
 const $ = id => document.getElementById(id);
 
 const FOCUS_KEYS = [
-  'data-director', 'data-select-trace', 'data-select-task', 'data-attention-task', 'data-profile', 'data-skill',
+  'data-director', 'data-trace-selection', 'data-select-trace', 'data-select-task', 'data-attention-task', 'data-profile', 'data-skill',
   'data-worker-control', 'data-send-intervention', 'data-raw-worker-log-summary', 'data-retry-board',
-  'data-retry-task', 'data-open-projects',
+  'data-retry-task', 'data-open-projects', 'data-goal-task', 'data-owner-decision-option',
+  'data-owner-decision-submit',
 ];
 
 function activeElementIdentity() {
@@ -156,7 +162,11 @@ function phaseLabel(phase) {
   return ({
     queued: '대기', preparing: '요청 분류', analyzing: '요구·위험 분석', analyzed: '분석 확정',
     directing: '실행 설계', retrying: '판단 재시도', materializing: '작업 생성', dispatching: 'Worker 배치',
-    delegated: 'Worker 실행', completed: '완료', failed: '실패',
+    delegated: 'Worker 실행', clarifying: '명세 확인', planning: '계획 수립', executing: 'Worker 실행',
+    evaluating: '결과 평가', remediating: '재작업', verifying: '완료 검증', awaiting_owner: 'Owner 판단 대기',
+    assessing_evidence: 'Worker 증거 평가', goal_completed: 'Goal 완료 판정', goal_blocked: 'Goal 중단 판정',
+    recovering: 'Goal 감독 복구', worker_progress: 'Worker 상태 감시', retry_scheduled: '자동 재시도 예약',
+    owner_answered: 'Owner 결정 반영', completed: '완료', blocked: '중단', failed: '실패',
   })[phase] || phase || '대기';
 }
 
@@ -164,7 +174,10 @@ function statusLabel(status) {
   return ({
     idle: '대기', running: '실행 중', unassigned: '미배정', error: '확인 필요',
     ready: '실행 대기', todo: '선행 작업 대기', review: '리뷰 중', blocked: 'Owner 판단',
-    done: '완료', archived: '보관', scheduled: '일시정지', failed: '실패', queued: '대기',
+    done: '완료', archived: '보관', scheduled: '일시정지', failed: '실패', queued: '대기', completed: '완료',
+    clarifying: '명세 확인', planning: '계획 수립', executing: 'Worker 실행', evaluating: '결과 평가',
+    remediating: '재작업', verifying: '완료 검증', awaiting_owner: 'Owner 판단 대기', materializing: '작업 생성',
+    cancelled: '취소됨',
   })[status] || status || '대기';
 }
 
@@ -176,7 +189,8 @@ function runtimeLabel(value) {
 
 function traceStatus(status) {
   if (['done', 'completed', 'archived', 'delegated'].includes(status)) return 'done';
-  if (['running', 'analyzing', 'directing', 'materializing', 'dispatching'].includes(status)) return 'running';
+  if (['running', 'analyzing', 'directing', 'materializing', 'dispatching', 'clarifying', 'planning', 'executing', 'evaluating', 'remediating', 'verifying'].includes(status)) return 'running';
+  if (status === 'awaiting_owner') return 'blocked';
   if (['blocked', 'review', 'failed', 'error'].includes(status)) return status === 'failed' || status === 'error' ? 'failed' : 'blocked';
   if (['ready', 'todo', 'scheduled'].includes(status)) return status === 'scheduled' ? 'blocked' : 'ready';
   return 'queued';
@@ -226,8 +240,65 @@ function selectedRuns() {
     : run.directorId === state.selectedId);
 }
 
+function goalMatchesDirector(goal, director = selectedDirector()) {
+  if (!goal || !director) return false;
+  return goal.directorId === director.id
+    || (director.kind === 'project' && Boolean(goal.projectId) && goal.projectId === director.projectId);
+}
+
+function goalTime(goal) {
+  return timeMs(goal?.updatedAt || goal?.completedAt || goal?.createdAt);
+}
+
+function selectedGoals() {
+  const all = [...(state.summary?.goals || [])];
+  for (const goal of state.summary?.activeGoals || []) {
+    if (typeof goal === 'object' && goal?.id && !all.some(candidate => candidate.id === goal.id)) all.push(goal);
+  }
+  return all.filter(goal => goalMatchesDirector(goal)).sort((left, right) => goalTime(right) - goalTime(left));
+}
+
+function activeGoalIds() {
+  return new Set((state.summary?.activeGoals || []).map(goal => typeof goal === 'string' ? goal : goal?.id).filter(Boolean));
+}
+
+function activeGoalForDirector(director) {
+  if (!director) return null;
+  const active = state.summary?.activeGoals || [];
+  const expanded = active.map(item => typeof item === 'string'
+    ? (state.summary?.goals || []).find(goal => goal.id === item)
+    : item).filter(Boolean);
+  return expanded.find(goal => goalMatchesDirector(goal, director))
+    || (state.summary?.goals || []).find(goal => goalMatchesDirector(goal, director) && !goalIsTerminal(goal))
+    || null;
+}
+
+function goalIsTerminal(goal) {
+  return ['completed', 'blocked', 'failed', 'cancelled'].includes(goal?.status);
+}
+
+function goalIsActive(goal) {
+  if (!goal) return false;
+  const ids = activeGoalIds();
+  return ids.size ? ids.has(goal.id) : !goalIsTerminal(goal) && goal.status !== 'blocked';
+}
+
+function selectedGoal() {
+  const goals = selectedGoals();
+  return activeGoalForDirector(selectedDirector()) || goals.find(goal => goalIsActive(goal)) || goals[0] || null;
+}
+
+function goalRuns(goal = selectedGoal()) {
+  if (!goal) return [];
+  return selectedRuns().filter(run => run.goalId === goal.id);
+}
+
+function goalLatestRun(goal = selectedGoal()) {
+  return goalRuns(goal)[0] || null;
+}
+
 function latestRun() {
-  return selectedRuns()[0] || null;
+  return goalLatestRun() || selectedRuns()[0] || null;
 }
 
 function workflowFor(id) {
@@ -235,7 +306,9 @@ function workflowFor(id) {
 }
 
 function actionForTask(taskId) {
-  for (const run of selectedRuns()) {
+  const primary = goalRuns();
+  const runs = [...primary, ...selectedRuns().filter(run => !primary.includes(run))];
+  for (const run of runs) {
     const action = (run.actions || []).find(item => item.taskId === taskId);
     if (action) return action;
   }
@@ -244,6 +317,84 @@ function actionForTask(taskId) {
 
 function taskForAction(action) {
   return state.board.find(task => task.id === action.taskId) || null;
+}
+
+function goalStatusLabel(status) {
+  return ({
+    clarifying: '명세 확인 중', planning: '계획 수립 중', executing: 'Worker 실행 중', evaluating: '결과 평가 중',
+    remediating: '재작업 중', verifying: '완료 검증 중', awaiting_owner: 'Owner 판단 대기', completed: '목표 완료',
+    blocked: '진행 중단', failed: '목표 실패', cancelled: '취소됨',
+  })[status] || phaseLabel(status);
+}
+
+function goalStatusTone(status) {
+  if (status === 'completed') return 'done';
+  if (['failed', 'cancelled'].includes(status)) return 'failed';
+  if (['blocked', 'awaiting_owner'].includes(status)) return 'blocked';
+  return ['clarifying', 'planning', 'executing', 'evaluating', 'remediating', 'verifying'].includes(status) ? 'running' : 'queued';
+}
+
+function currentWave(goal = selectedGoal()) {
+  const waves = goal?.waves || [];
+  const currentIds = new Set(goal?.currentWaveTaskIds || []);
+  return waves.find(wave => currentIds.size && (wave.taskIds || []).some(id => currentIds.has(id)))
+    || [...waves].reverse().find(wave => !['completed', 'failed', 'blocked'].includes(wave.status))
+    || waves.at(-1)
+    || null;
+}
+
+function goalTaskIds(goal = selectedGoal()) {
+  const ids = new Set(goal?.taskIds || []);
+  for (const wave of goal?.waves || []) for (const id of wave.taskIds || []) ids.add(id);
+  for (const run of goalRuns(goal)) for (const id of run.taskIds || []) ids.add(id);
+  return [...ids];
+}
+
+function goalTaskRecord(taskId, goal = selectedGoal()) {
+  return goal?.taskRecords?.find(record => record.taskId === taskId) || null;
+}
+
+function goalActions(goal = selectedGoal()) {
+  const seen = new Set();
+  const actions = [];
+  for (const run of [...goalRuns(goal)].reverse()) {
+    for (const action of run.actions || []) {
+      if (!action?.taskId || seen.has(action.taskId)) continue;
+      seen.add(action.taskId);
+      actions.push(action);
+    }
+  }
+  for (const record of goal?.taskRecords || []) {
+    if (!record?.taskId || seen.has(record.taskId)) continue;
+    seen.add(record.taskId);
+    actions.push({
+      taskId: record.taskId,
+      title: record.title || record.taskId,
+      target: record.profile || 'worker',
+      task: normaliseTextList(record.acceptance)[0] || '영속 Goal에 보존된 Worker 작업입니다.',
+      acceptance: record.acceptance || [],
+      parentTaskIds: record.parentTaskIds || [],
+      skills: record.skills || [],
+      status: record.status,
+    });
+  }
+  return actions;
+}
+
+function goalAnalysis(goal, run = goalLatestRun(goal)) {
+  return goal?.analysis || run?.analysis || null;
+}
+
+function goalCriteria(goal, run = goalLatestRun(goal)) {
+  return goal?.successCriteria || goalAnalysis(goal, run)?.successCriteria || [];
+}
+
+function normaliseTextList(value) {
+  if (!value) return [];
+  const text = item => typeof item === 'string' ? item
+    : item?.decision || item?.message || item?.summary || item?.answer || item?.label || item?.text || item?.title || JSON.stringify(item);
+  if (Array.isArray(value)) return value.map(text).filter(Boolean);
+  return [text(value)].filter(Boolean);
 }
 
 function sectionFromBody(body, name) {
@@ -269,9 +420,17 @@ function syncFocusDialog() {
   const rawLogOpen = content.querySelector('.raw-worker-log')?.open;
   const rawLogFocused = document.activeElement?.closest('#focus-dialog-content')?.hasAttribute('data-raw-worker-log-summary');
   const copy = $('owner-inspector').cloneNode(true);
-  copy.querySelectorAll('.worker-control').forEach(element => element.remove());
+  copy.querySelectorAll('.worker-control, .owner-decision-form').forEach(element => element.remove());
   copy.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
   content.replaceChildren(...copy.childNodes);
+  content.querySelectorAll('[data-goal-task]').forEach(button => button.addEventListener('click', () => {
+    $('focus-dialog').close();
+    void selectTask(button.dataset.goalTask);
+  }));
+  content.querySelectorAll('[data-select-trace]').forEach(button => button.addEventListener('click', () => {
+    $('focus-dialog').close();
+    selectTrace(button.dataset.selectTrace, button.dataset.traceId || null);
+  }));
   if (rawLogOpen != null && content.querySelector('.raw-worker-log')) content.querySelector('.raw-worker-log').open = rawLogOpen;
   content.scrollTop = previousTop;
   if (rawLogFocused) requestAnimationFrame(() => content.querySelector('[data-raw-worker-log-summary]')?.focus({ preventScroll: true }));
@@ -310,12 +469,14 @@ function renderDirectors() {
   ];
   $('owner-director-list').innerHTML = groups.filter(([, items]) => items.length).map(([label, items]) => `<section class="director-group"><h2>${label}</h2>${items.map(director => {
     const index = director.kind === 'skill' ? 'S' : director.id.split('-').at(-1);
-    const subtitle = director.kind === 'skill' ? '스킬·운영 플로우 관리' : (director.projectId ? `${runtimeLabel(director)} · ${statusLabel(director.status)}` : '프로젝트 연결 필요');
-    const accessibleName = `${director.name}, ${subtitle}, ${statusLabel(director.status)}`;
+    const goal = activeGoalForDirector(director);
+    const operationalStatus = goal?.status || director.status;
+    const subtitle = goal ? `${goalStatusLabel(goal.status)} · Cycle ${goal.cycleCount || 0}` : director.kind === 'skill' ? '스킬·운영 플로우 관리' : (director.projectId ? `${runtimeLabel(director)} · ${statusLabel(director.status)}` : '프로젝트 연결 필요');
+    const accessibleName = `${director.name}, ${subtitle}, ${goal ? goalStatusLabel(goal.status) : statusLabel(director.status)}`;
     return `<button class="director-row ${director.id === state.selectedId ? 'active' : ''}" data-director="${escapeHtml(director.id)}" type="button" aria-label="${escapeHtml(accessibleName)}" data-tooltip="${escapeHtml(accessibleName)}">
       <span class="director-index">${escapeHtml(index)}</span>
       <span class="director-copy"><strong>${escapeHtml(director.name)}</strong><small>${escapeHtml(subtitle)}</small></span>
-      <i class="status-dot ${traceStatus(director.status)}" title="${escapeHtml(statusLabel(director.status))}"></i>
+      <i class="status-dot ${traceStatus(operationalStatus)}" title="${escapeHtml(goal ? goalStatusLabel(goal.status) : statusLabel(director.status))}"></i>
     </button>`;
   }).join('')}</section>`).join('');
   document.querySelectorAll('[data-director]').forEach(button => {
@@ -326,22 +487,31 @@ function renderDirectors() {
 
 function renderMissionHeader() {
   const director = selectedDirector();
+  const goal = selectedGoal();
   const run = latestRun();
-  const workflow = workflowFor(run?.workflowId);
-  const activeTasks = state.board.filter(task => task.status === 'running').length;
-  const readyTasks = state.board.filter(task => ['ready', 'todo'].includes(task.status)).length;
+  const workflow = workflowFor(goal?.workflowId || run?.workflowId);
+  const taskIds = new Set(goal ? goalTaskIds(goal) : run?.taskIds || []);
+  const relevantTasks = goal ? state.board.filter(task => taskIds.has(task.id)) : taskIds.size ? state.board.filter(task => taskIds.has(task.id)) : state.board;
+  const activeTasks = relevantTasks.filter(task => task.status === 'running').length;
+  const readyTasks = relevantTasks.filter(task => ['ready', 'todo'].includes(task.status)).length;
   $('mission-board-name').textContent = director?.board || 'BOARD';
-  $('mission-run-time').textContent = run ? (run.status === 'running' ? `실행 ${elapsedLabel(run.startedAt)}` : clockLabel(run.completedAt || run.createdAt)) : '대기';
-  $('mission-title').textContent = run?.prompt || (director?.cwd ? '새 목표를 기다리고 있습니다' : '첫 프로젝트를 연결하세요');
-  $('mission-subtitle').textContent = run
-    ? `${workflow?.name || phaseLabel(run.phase)} · ${run.taskIds?.length || 0}개 작업 · ${activeTasks}개 Worker 실행 중`
+  $('mission-run-time').textContent = goal
+    ? (goalIsActive(goal) ? `목표 ${elapsedLabel(goal.createdAt)}` : clockLabel(goal.completedAt || goal.updatedAt || goal.createdAt))
+    : run ? (run.status === 'running' ? `판단 ${elapsedLabel(run.startedAt)}` : clockLabel(run.completedAt || run.createdAt)) : '대기';
+  $('mission-title').textContent = goal?.objective || run?.prompt || (director?.cwd ? '새 목표를 기다리고 있습니다' : '첫 프로젝트를 연결하세요');
+  $('mission-subtitle').textContent = goal
+    ? `${goalStatusLabel(goal.status)} · ${workflow?.name || goal.workflowId || '플로우 선택 중'} · ${goalTaskIds(goal).length}개 Worker 작업 · ${activeTasks}개 실행 중`
+    : run
+      ? `${phaseLabel(run.phase)} · Director 판단 턴 ${run.status === 'completed' ? '완료' : statusLabel(run.status)} · ${run.taskIds?.length || 0}개 작업`
     : director?.cwd
       ? '기능, 버그, API 명세나 완료 기준을 보내면 Director가 실행과 검증 흐름을 만듭니다.'
       : '운영 환경에서 로컬 프로젝트를 연결한 뒤 목표를 보내면 실행 흐름이 시작됩니다.';
-  const canMessage = Boolean(director?.cwd) && director?.status !== 'running' && !state.busyActions.has('send-message');
+  const goalOccupiesDirector = goal && goalIsActive(goal);
+  const conversationDuringGoal = goalOccupiesDirector && $('owner-message-mode').value === 'conversation';
+  const canMessage = Boolean(director?.cwd) && director?.status !== 'running' && (!goalOccupiesDirector || conversationDuringGoal) && !state.busyActions.has('send-message');
   $('owner-message-input').disabled = !canMessage;
   $('owner-message-input').placeholder = director?.cwd
-    ? (director.status === 'running' ? 'Director가 현재 목표를 분석하고 있습니다…' : '목표, 제약, 완료 기준을 입력하세요…')
+    ? (goal?.status === 'awaiting_owner' ? '결정은 위 카드에서 답하고, 질문은 “답변만 받기”로 보낼 수 있습니다.' : goalOccupiesDirector && !conversationDuringGoal ? '현재 Goal 질문은 처리 방식을 “답변만 받기”로 바꾸세요.' : goalOccupiesDirector ? '현재 Goal의 상태·근거를 Director에게 질문하세요…' : director.status === 'running' ? 'Director가 현재 목표를 분석하고 있습니다…' : '목표, 제약, 완료 기준을 입력하세요…')
     : '먼저 프로젝트를 배정하세요.';
   $('owner-send-btn').disabled = !canMessage;
   $('owner-send-btn').textContent = state.busyActions.has('send-message') ? '전송 중…' : '보내기';
@@ -351,9 +521,42 @@ function renderMissionHeader() {
   dispatch.title = !director?.cwd ? '프로젝트를 먼저 연결하세요.' : !readyTasks ? '지금 수동으로 시작할 대기 작업이 없습니다.' : `${director.name}의 대기 작업 ${readyTasks}개를 지금 실행합니다.`;
 }
 
+function renderGoalProgress() {
+  const root = $('goal-progress');
+  if (!root) return;
+  const goal = selectedGoal();
+  if (!goal) {
+    root.hidden = true;
+    root.innerHTML = '';
+    return;
+  }
+  const wave = currentWave(goal);
+  const run = goalLatestRun(goal);
+  const cycle = Number(goal.cycleCount || 0);
+  const cycleLimit = Number(goal.maxCycles || 0);
+  const remediation = Number(goal.remediationCount || 0);
+  const remediationLimit = Number(goal.maxRemediationLoops || 0);
+  const turnCopy = run
+    ? run.status === 'running' ? `Director 판단 턴 실행 중 · ${phaseLabel(run.phase)}` : `최근 Director 판단 턴 ${statusLabel(run.status)} · 목표는 ${goalStatusLabel(goal.status)}`
+    : 'Director 판단 기록을 기다리는 중';
+  root.hidden = false;
+  root.className = `goal-progress ${goalStatusTone(goal.status)}`;
+  root.innerHTML = `<button type="button" class="goal-progress-main" data-select-trace="goal" aria-label="목표 감독 상세 열기">
+      <span class="goal-state"><i></i><b>${escapeHtml(goalStatusLabel(goal.status))}</b></span>
+      <span class="goal-turn">${escapeHtml(turnCopy)}</span>
+    </button>
+    <dl aria-label="목표 진행 한도">
+      <div><dt>WAVE</dt><dd>${escapeHtml(wave ? `${wave.index ?? (goal.waves || []).indexOf(wave) + 1} / ${(goal.waves || []).length}` : `0 / ${(goal.waves || []).length}`)}</dd></div>
+      <div><dt>CYCLE</dt><dd>${escapeHtml(cycleLimit ? `${cycle} / ${cycleLimit}` : String(cycle))}</dd></div>
+      <div><dt>REWORK</dt><dd>${escapeHtml(remediationLimit ? `${remediation} / ${remediationLimit}` : String(remediation))}</dd></div>
+    </dl>`;
+  root.querySelector('[data-select-trace]')?.addEventListener('click', event => selectTrace(event.currentTarget.dataset.selectTrace));
+}
+
 function currentOperationalTask() {
-  const currentIds = new Set(latestRun()?.taskIds || []);
-  const tasks = currentIds.size ? state.board.filter(task => currentIds.has(task.id)) : state.board;
+  const goal = selectedGoal();
+  const currentIds = new Set(goal?.currentWaveTaskIds?.length ? goal.currentWaveTaskIds : goal ? goalTaskIds(goal) : latestRun()?.taskIds || []);
+  const tasks = goal ? state.board.filter(task => currentIds.has(task.id)) : currentIds.size ? state.board.filter(task => currentIds.has(task.id)) : state.board;
   return tasks.find(task => task.status === 'running')
     || tasks.find(task => task.status === 'failed')
     || tasks.find(task => ['blocked', 'review', 'scheduled'].includes(task.status))
@@ -363,6 +566,7 @@ function currentOperationalTask() {
 
 function renderCurrentFocus() {
   const director = selectedDirector();
+  const goal = selectedGoal();
   const run = latestRun();
   const task = currentOperationalTask();
   let status = 'queued';
@@ -385,8 +589,15 @@ function renderCurrentFocus() {
     description = 'Windows 또는 WSL의 로컬 경로를 연결하면 목표 입력과 Worker 실행이 열립니다.';
     meta = '1 / 3 단계';
     action = '<button type="button" class="primary-button" data-open-projects>프로젝트 연결</button>';
+  } else if (goal?.status === 'awaiting_owner' || goal?.ownerDecision?.required) {
+    status = 'blocked';
+    kicker = 'OWNER DECISION';
+    title = goal.ownerDecision?.question || 'Director가 중요한 결정을 기다리고 있습니다';
+    description = goal.ownerDecision?.evidence || '선택에 따라 구현 범위나 외부 영향이 달라져 Owner 확인 전까지 목표를 안전하게 멈췄습니다.';
+    meta = `Cycle ${goal.cycleCount || 0}${goal.maxCycles ? ` / ${goal.maxCycles}` : ''}`;
+    action = '<button type="button" class="primary-button" data-select-trace="owner-decision">판단하기</button>';
   } else if (task) {
-    const action = actionForTask(task.id);
+    const taskAction = actionForTask(task.id);
     status = traceStatus(task.status);
     kicker = statusLabel(task.status).toUpperCase();
     title = task.status === 'running'
@@ -396,14 +607,38 @@ function renderCurrentFocus() {
         ? `“${task.title}”에 Owner 판단이 필요함`
         : task.status === 'review' ? `“${task.title}” 리뷰 결과 확인 중`
           : task.status === 'todo' ? `“${task.title}” 선행 작업 완료 대기` : `“${task.title}” 실행 대기`;
-    description = action?.task || sectionFromBody(task.body, 'ACTION') || task.result || '작업 세부 정보를 열어 실행 근거를 확인하세요.';
+    description = taskAction?.task || sectionFromBody(task.body, 'ACTION') || task.result || '작업 세부 정보를 열어 실행 근거를 확인하세요.';
     meta = `${task.assignee || '미배정'}${task.started_at ? ` · ${elapsedLabel(task.started_at, task.completed_at || Date.now())}` : ''}`;
+  } else if (goal && goalIsActive(goal)) {
+    status = 'running';
+    kicker = goalStatusLabel(goal.status).toUpperCase();
+    title = run?.status === 'running'
+      ? run.progressEvents?.at(-1)?.message || `Director가 ${goalStatusLabel(goal.status)}`
+      : goal.events?.at(-1)?.message || `Director가 다음 ${goalStatusLabel(goal.status)} 단계를 감독하는 중`;
+    description = run?.status === 'completed'
+      ? 'Director의 최근 판단 턴은 끝났지만 Goal은 계속 살아 있습니다. Worker 결과가 모이면 새 판단 턴으로 평가·재작업·검증을 이어갑니다.'
+      : goalAnalysis(goal, run)?.requestSummary || '공개 근거를 바탕으로 다음 Worker 배치 또는 완료 판정을 준비합니다.';
+    meta = run?.status === 'running' ? `Director turn · ${elapsedLabel(run.startedAt)}` : `Goal · ${elapsedLabel(goal.createdAt)}`;
+  } else if (goal?.status === 'completed') {
+    status = 'done';
+    kicker = 'GOAL COMPLETE';
+    title = '완료 기준과 품질 게이트를 통과했습니다';
+    description = typeof goal.finalReport === 'string' ? goal.finalReport : goal.finalReport?.summary || 'Director가 전체 목표의 완료를 판정했습니다. 상세 보고와 근거를 열어 확인하세요.';
+    meta = clockLabel(goal.completedAt || goal.updatedAt);
+    action = '<button type="button" class="secondary-button" data-select-trace="final">완료 보고 보기</button>';
+  } else if (goal && ['failed', 'blocked', 'cancelled'].includes(goal.status)) {
+    status = goal.status === 'blocked' ? 'blocked' : 'failed';
+    kicker = goalStatusLabel(goal.status).toUpperCase();
+    title = goal.error || '목표를 더 진행할 수 없습니다';
+    description = typeof goal.finalReport === 'string' ? goal.finalReport : goal.finalReport?.summary || 'Inspector에서 중단 근거와 마지막 증거를 확인하세요.';
+    meta = clockLabel(goal.updatedAt || goal.completedAt);
+    action = '<button type="button" class="secondary-button" data-select-trace="final">중단 근거 보기</button>';
   } else if (run?.status === 'running') {
     status = 'running';
     kicker = phaseLabel(run.phase).toUpperCase();
     title = run.progressEvents?.at(-1)?.message || 'Director가 목표를 분석하는 중';
     description = run.analysis?.requestSummary || '요구, 위험, 플로우 후보와 Worker 분할을 판단하고 있습니다.';
-    meta = `Director · ${elapsedLabel(run.startedAt)}`;
+    meta = `Director 판단 턴 · ${elapsedLabel(run.startedAt)}`;
   } else if (run?.taskIds?.length && run.taskIds.every(id => ['done', 'archived'].includes(state.board.find(taskItem => taskItem.id === id)?.status))) {
     status = 'done';
     kicker = '이번 작업 묶음 완료';
@@ -412,35 +647,161 @@ function renderCurrentFocus() {
     meta = clockLabel(run.completedAt);
   }
   updateHtml($('current-focus'), `<i class="focus-pulse ${status}"></i><div class="focus-copy"><span>${escapeHtml(kicker)}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></div><div class="focus-meta"><b>${escapeHtml(meta)}</b>${action}</div>`);
+  $('current-focus').querySelector('[data-select-trace]')?.addEventListener('click', event => selectTrace(event.currentTarget.dataset.selectTrace));
   const announcement = `${statusLabel(status)}. ${title}`;
   if ($('status-announcer') && $('status-announcer').textContent !== announcement) $('status-announcer').textContent = announcement;
 }
 
 function ownerAttentionTasks() {
-  return state.board.filter(task => ['failed', 'blocked', 'review', 'scheduled'].includes(task.status));
+  const goal = selectedGoal();
+  const ids = new Set(goal ? goalTaskIds(goal) : []);
+  return state.board.filter(task => (!goal || ids.has(task.id)) && ['failed', 'blocked', 'review', 'scheduled'].includes(task.status));
+}
+
+function decisionOptionValue(option) {
+  return String(typeof option === 'string' ? option : option?.value || option?.id || option?.label || option?.title || '');
+}
+
+function decisionOptionLabel(option) {
+  return String(typeof option === 'string' ? option : option?.label || option?.title || option?.value || option?.id || '선택');
+}
+
+function decisionOptionDescription(option) {
+  return typeof option === 'object' ? option?.description || option?.impact || option?.tradeoff || '' : '';
+}
+
+function ownerDecisionForm(goal, { compact = false } = {}) {
+  const decision = goal?.ownerDecision || {};
+  const options = decision.options || [];
+  const busy = state.busyActions.has(`decision:${goal.id}`);
+  const error = state.decisionGoalId === goal.id ? state.decisionError : null;
+  return `<form class="owner-decision-form ${compact ? 'compact' : ''}" data-owner-decision-form data-goal-id="${escapeHtml(goal.id)}">
+    ${options.length ? `<fieldset><legend>선택지</legend><div class="decision-options">${options.map(option => {
+      const value = decisionOptionValue(option);
+      const selected = state.decisionGoalId === goal.id && state.decisionOption === value;
+      return `<button type="button" class="decision-option ${selected ? 'selected' : ''}" data-owner-decision-option="${escapeHtml(value)}" aria-pressed="${selected}"><b>${escapeHtml(decisionOptionLabel(option))}</b>${decisionOptionDescription(option) ? `<small>${escapeHtml(decisionOptionDescription(option))}</small>` : ''}</button>`;
+    }).join('')}</div></fieldset>` : ''}
+    <label><span>${options.length ? '선택 이유 또는 추가 지시' : 'Owner 답변'}</span><textarea rows="${compact ? 2 : 3}" data-owner-decision-input placeholder="결정과 필요한 제약을 구체적으로 남기세요." ${busy ? 'disabled' : ''}>${escapeHtml(state.decisionGoalId === goal.id ? state.decisionDraft : '')}</textarea></label>
+    ${error ? `<p class="decision-error" role="alert">${escapeHtml(friendlyErrorMessage(error))}</p>` : ''}
+    <div class="decision-submit"><small>답변을 보내면 Director가 새 판단 턴을 열어 목표를 계속 감독합니다.</small><button type="submit" data-owner-decision-submit ${busy ? 'disabled' : ''}>${busy ? '전달 중…' : '결정 전달'}</button></div>
+  </form>`;
 }
 
 function renderOwnerGate() {
+  const goal = selectedGoal();
   const tasks = ownerAttentionTasks();
   const gate = $('owner-gate');
-  gate.hidden = !tasks.length;
-  if (!tasks.length) {
-    $('attention-section').hidden = true;
-    return;
+  const decisionRequired = Boolean(goal && (goal.status === 'awaiting_owner' || goal.ownerDecision?.required));
+  if (decisionRequired) {
+    gate.hidden = false;
+    gate.className = 'owner-gate decision-gate';
+    if (!state.decisionComposing || state.decisionGoalId !== goal.id) {
+      if (state.decisionGoalId !== goal.id) {
+        state.decisionGoalId = goal.id;
+        state.decisionDraft = '';
+        state.decisionOption = '';
+        state.decisionError = null;
+      }
+      gate.innerHTML = `<header><div><span>OWNER DECISION · 목표 일시정지</span><strong>${escapeHtml(goal.ownerDecision?.question || 'Director가 중요한 판단을 기다리고 있습니다')}</strong></div><button type="button" class="quiet-button" data-select-trace="owner-decision">근거 크게 보기</button></header>
+        ${goal.ownerDecision?.evidence ? `<p class="decision-evidence">${formatText(normaliseTextList(goal.ownerDecision.evidence).join('\n'))}</p>` : ''}
+        ${ownerDecisionForm(goal, { compact: true })}`;
+      bindDecisionActions(gate);
+      gate.querySelector('[data-select-trace]')?.addEventListener('click', event => selectTrace(event.currentTarget.dataset.selectTrace));
+    }
+  } else if (tasks.length) {
+    gate.hidden = false;
+    gate.className = 'owner-gate';
+    gate.innerHTML = `<div><span>OWNER 확인</span><strong>${escapeHtml(tasks.length === 1 ? tasks[0].title : `${tasks.length}개 작업에 판단이 필요합니다`)}</strong></div><button type="button" id="owner-gate-open">확인</button>`;
+    $('owner-gate-open').onclick = () => selectTask(tasks[0].id);
+  } else {
+    gate.hidden = true;
+    gate.innerHTML = '';
   }
-  gate.querySelector('strong').textContent = tasks.length === 1 ? tasks[0].title : `${tasks.length}개 작업에 판단이 필요합니다`;
-  $('owner-gate-open').onclick = () => selectTask(tasks[0].id);
-  $('attention-section').hidden = false;
+  $('attention-section').hidden = !tasks.length;
+  if (!tasks.length) return;
   $('owner-attention-list').innerHTML = tasks.map(task => `<button type="button" class="attention-row" data-attention-task="${escapeHtml(task.id)}"><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(statusLabel(task.status))} · ${escapeHtml(task.assignee || '미배정')}</span></button>`).join('');
   document.querySelectorAll('[data-attention-task]').forEach(button => button.addEventListener('click', () => selectTask(button.dataset.attentionTask)));
 }
 
-function traceNode({ key, kind, title, description, status = 'queued', side = '', tags = [], marker = '·', depth = 0 }) {
-  const selected = state.selection.type === key || (key === 'task' && state.selection.type === 'task' && state.selection.id === marker);
-  const data = key === 'task' ? `data-select-task="${escapeHtml(marker)}"` : `data-select-trace="${escapeHtml(key)}"`;
+function bindDecisionActions(root) {
+  root.querySelectorAll('[data-owner-decision-form]').forEach(form => {
+    const goalId = form.dataset.goalId;
+    const input = form.querySelector('[data-owner-decision-input]');
+    input?.addEventListener('input', event => {
+      state.decisionGoalId = goalId;
+      state.decisionDraft = event.currentTarget.value;
+      state.decisionError = null;
+    });
+    input?.addEventListener('compositionstart', () => { state.decisionComposing = true; });
+    input?.addEventListener('compositionend', event => {
+      state.decisionComposing = false;
+      state.decisionGoalId = goalId;
+      state.decisionDraft = event.currentTarget.value;
+    });
+    form.querySelectorAll('[data-owner-decision-option]').forEach(button => button.addEventListener('click', () => {
+      state.decisionGoalId = goalId;
+      state.decisionOption = button.dataset.ownerDecisionOption;
+      state.decisionError = null;
+      renderOwnerGate();
+      if (state.selection.type === 'owner-decision') renderInspector({ force: true });
+    }));
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      void sendOwnerDecision(goalId, form);
+    });
+  });
+}
+
+async function sendOwnerDecision(goalId, form) {
+  const selectedOption = state.decisionGoalId === goalId ? state.decisionOption.trim() : '';
+  const typed = form.querySelector('[data-owner-decision-input]')?.value.trim() || '';
+  const answer = typed || selectedOption;
+  if (!answer) {
+    state.decisionGoalId = goalId;
+    state.decisionError = '선택지를 고르거나 답변을 입력하세요.';
+    renderOwnerGate();
+    if (state.selection.type === 'owner-decision') renderInspector({ force: true });
+    return;
+  }
+  const key = `decision:${goalId}`;
+  if (state.busyActions.has(key)) return;
+  state.busyActions.add(key);
+  state.decisionError = null;
+  renderOwnerGate();
+  if (state.selection.type === 'owner-decision') renderInspector({ force: true });
+  try {
+    await api(`/api/directors/${encodeURIComponent(state.selectedId)}/goals/${encodeURIComponent(goalId)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ answer, ...(selectedOption ? { selectedOption } : {}) }),
+      timeoutMs: 30000,
+    });
+    state.decisionDraft = '';
+    state.decisionOption = '';
+    state.decisionGoalId = null;
+    state.decisionError = null;
+    state.selection = { type: 'goal', id: goalId };
+    toast('Owner 결정을 전달했습니다. Director가 목표 감독을 재개합니다.', 'success');
+    await loadConsole({ quiet: true });
+  } catch (error) {
+    state.decisionGoalId = goalId;
+    state.decisionError = error.message;
+    toast(error.message, 'error');
+  } finally {
+    state.busyActions.delete(key);
+    renderOwnerGate();
+    renderInspector({ force: true });
+  }
+}
+
+function traceNode({ key, id = null, kind, title, description, status = 'queued', side = '', tags = [], marker = '·', depth = 0 }) {
+  const selectionId = id ?? (key === 'task' ? marker : null);
+  const selected = state.selection.type === key && (selectionId == null || state.selection.id === selectionId);
+  const data = key === 'task'
+    ? `data-select-task="${escapeHtml(selectionId)}" data-trace-selection="task:${escapeHtml(selectionId)}"`
+    : `data-select-trace="${escapeHtml(key)}" ${selectionId != null ? `data-trace-id="${escapeHtml(selectionId)}"` : ''} data-trace-selection="${escapeHtml(key)}:${escapeHtml(selectionId || '')}"`;
   const accessibleName = [title, kind, statusLabel(status), side, description].filter(Boolean).join(', ');
   return `<article class="trace-node ${traceStatus(status)} depth-${Math.min(2, depth)} ${selected ? 'selected' : ''}">
-    <span class="trace-marker">${key === 'task' ? 'W' : escapeHtml(marker)}</span>
+    <span class="trace-marker">${escapeHtml(key === 'task' ? 'W' : marker)}</span>
     <div class="trace-body"><button class="trace-button" type="button" ${data} aria-label="${escapeHtml(accessibleName)}" ${selected ? 'aria-current="step"' : ''}>
       <span class="trace-title-row"><strong class="trace-title">${escapeHtml(title)}</strong><small class="trace-kind">${escapeHtml(kind)}</small></span>
       <span class="trace-description">${escapeHtml(description || '세부 정보를 준비하는 중입니다.')}</span>
@@ -450,22 +811,69 @@ function traceNode({ key, kind, title, description, status = 'queued', side = ''
   </article>`;
 }
 
-function renderTrace() {
-  const run = latestRun();
-  const root = $('owner-trace-list');
-  if (state.boardStatus?.error) {
-    root.innerHTML = `<div class="trace-empty" role="alert"><strong>작업 보드를 불러오지 못했습니다</strong><span>${escapeHtml(friendlyErrorMessage(state.boardStatus.error))}</span><button class="secondary-button" type="button" data-retry-board>다시 시도</button></div>`;
-    $('trace-summary').innerHTML = '<span class="blocked"><i></i>보드 오류</span>';
-    return;
+function goalEventEntries(goal) {
+  return (goal?.events || []).map((event, index) => ({
+    event,
+    id: String(event?.id || `${event?.at || event?.createdAt || 'event'}-${index}`),
+    index,
+  }));
+}
+
+function directorTurnEntries(goal) {
+  const entries = [];
+  for (const run of goalRuns(goal)) {
+    for (const [index, event] of (run.progressEvents || []).entries()) {
+      if (!event?.message || event.phase === 'queued') continue;
+      entries.push({ run, event, index, id: `${run.id}:${index}` });
+    }
   }
-  if (!run) {
-    const director = selectedDirector();
-    root.innerHTML = director?.kind === 'project' && !director.cwd
-      ? '<div class="trace-empty onboarding-empty"><strong>목표를 맡길 준비를 시작하세요</strong><span>프로젝트 연결 → 목표·완료 기준 입력 → 실행·검증 추적 순서로 진행됩니다.</span><ol><li class="current"><b>1</b>로컬 프로젝트 연결</li><li><b>2</b>목표와 완료 기준 입력</li><li><b>3</b>Worker 실행과 검증 확인</li></ol></div>'
-      : '<div class="trace-empty"><strong>실행 흐름이 아직 없습니다</strong><span>오른쪽 입력창에 기능, 버그, API 명세나 완료 기준을 보내면 분석·계획·Worker 실행·검증이 시간순으로 표시됩니다.</span></div>';
-    $('trace-summary').innerHTML = '<span><i></i>단계 0개</span>';
-    return;
-  }
+  return entries;
+}
+
+function directorTurnStatus(run, event, index) {
+  if (event.phase === 'failed' || run.status === 'failed' && index === (run.progressEvents || []).length - 1) return 'failed';
+  if (run.status === 'running' && index === (run.progressEvents || []).length - 1) return 'running';
+  if (['awaiting_owner', 'goal_blocked'].includes(event.phase)) return 'blocked';
+  return 'completed';
+}
+
+function goalEventPresentation(event) {
+  const kind = String(event?.kind || 'update').toLowerCase();
+  const details = event?.details || {};
+  const labels = {
+    created: ['Goal 생성', 'OWNER'], goal_created: ['Goal 생성', 'OWNER'], owner: [event?.phase === 'owner_answered' ? 'Owner 결정 반영' : 'Goal 생성', 'OWNER'], clarified: ['명세 확인', 'DIRECTOR'],
+    analysis: ['요구 분석 갱신', 'DIRECTOR'], analyzed: ['요구 분석 확정', 'DIRECTOR'], planned: ['실행 계획 확정', 'DIRECTOR'],
+    director: [event?.phase === 'assessing_evidence' ? 'Worker 결과 평가 시작' : 'Director 판단 기록', 'DIRECTOR'],
+    wave: [event?.phase === 'materializing' ? 'Worker Wave 생성' : 'Worker Wave 감시 시작', 'DIRECTOR WAVE'],
+    task: ['Worker 작업 배정', 'DIRECTOR'], monitor: ['Worker 상태 감시', 'SUPERVISOR'], recovery: ['Goal 감독 복구', 'SUPERVISOR'],
+    terminal: [event?.phase === 'completed' ? 'Goal 완료 판정' : 'Goal 중단 판정', 'DIRECTOR'], error: ['감독 오류·재시도', 'SUPERVISOR'],
+    wave_started: ['새 Worker wave 시작', 'DIRECTOR'], wave_completed: ['Worker wave 종료', 'SUPERVISOR'],
+    evaluating: ['결과 평가 시작', 'SUPERVISOR'], evaluated: ['결과 평가', 'SUPERVISOR'], assessment: ['결과 평가', 'SUPERVISOR'],
+    remediation: ['재작업 결정', 'DIRECTOR'], remediating: ['재작업 시작', 'DIRECTOR'],
+    verification: ['완료 검증', 'QUALITY GATE'], verifying: ['완료 검증 시작', 'QUALITY GATE'],
+    owner_decision_requested: ['Owner 판단 요청', 'OWNER GATE'], awaiting_owner: ['Owner 판단 대기', 'OWNER GATE'],
+    owner_decision: ['Owner 결정 반영', 'OWNER'], owner_answered: ['Owner 결정 반영', 'OWNER'],
+    completed: ['Goal 완료 판정', 'DIRECTOR'], blocked: ['Goal 중단', 'DIRECTOR'], failed: ['Goal 실패', 'DIRECTOR'],
+  };
+  const [title, category] = labels[kind] || [kind.replaceAll('_', ' '), 'GOAL EVENT'];
+  const status = event?.status || details.status || (kind === 'owner_decision' && event?.phase === 'awaiting_owner' ? 'awaiting_owner'
+    : kind === 'error' || kind.includes('fail') ? 'failed'
+      : kind === 'terminal' ? event?.phase || 'completed'
+        : kind.includes('block') ? 'blocked'
+          : ['assessing_evidence', 'recovering', 'worker_progress', 'retry_scheduled'].includes(event?.phase) ? 'running' : 'completed');
+  return { title, category, status };
+}
+
+function waveLabel(wave, index) {
+  const number = Number.isFinite(Number(wave?.index)) ? Number(wave.index) : index + 1;
+  const kind = String(wave?.kind || '').toLowerCase();
+  if (kind.includes('remedi')) return `Wave ${number} · 재작업`;
+  if (kind.includes('review')) return `Wave ${number} · 전문 리뷰`;
+  if (kind.includes('verif') || kind.includes('gate')) return `Wave ${number} · 완료 검증`;
+  return `Wave ${number} · Worker 실행`;
+}
+
+function renderLegacyTrace(run, root) {
   const nodes = [];
   nodes.push(traceNode({ key: 'objective', marker: '1', kind: 'OWNER', title: '목표 접수', description: run.prompt, status: 'done', side: clockLabel(run.createdAt) }));
   const analysisStatus = run.analysis ? 'done' : run.status === 'running' && ['preparing', 'analyzing', 'retrying'].includes(run.phase) ? 'running' : run.status === 'failed' ? 'failed' : 'queued';
@@ -495,41 +903,169 @@ function renderTrace() {
     }));
   }
   root.innerHTML = nodes.join('');
-  root.querySelectorAll('[data-select-trace]').forEach(button => button.addEventListener('click', () => selectTrace(button.dataset.selectTrace)));
-  root.querySelectorAll('[data-select-task]').forEach(button => button.addEventListener('click', () => selectTask(button.dataset.selectTask)));
   const statuses = (run.actions || []).map(action => taskForAction(action)?.status || action.status || 'queued');
+  return statuses;
+}
+
+function renderGoalTrace(goal, root) {
+  const run = goalLatestRun(goal);
+  const analysis = goalAnalysis(goal, run);
+  const workflow = workflowFor(goal.workflowId || run?.workflowId);
+  const nodes = [
+    traceNode({ key: 'objective', marker: '1', kind: 'OWNER', title: 'Goal 접수', description: goal.objective, status: 'done', side: clockLabel(goal.createdAt), tags: [goal.id] }),
+    traceNode({ key: 'analysis', marker: '2', kind: 'DIRECTOR', title: '명세·성공 조건·위험 분석', description: analysis?.requestSummary || 'Director가 공개 판단 근거를 구성하고 있습니다.', status: analysis ? 'done' : goal.status === 'clarifying' ? 'running' : 'queued', side: `${goalCriteria(goal, run).length}개 성공 조건`, tags: [`제약 ${normaliseTextList(goal.constraints || analysis?.constraints).length}`, `위험 ${analysis?.risks?.length || 0}`] }),
+    traceNode({ key: 'plan', marker: '3', kind: 'DIRECTOR', title: workflow ? `${workflow.name} 감독 계획` : '실행·검증 계획', description: normaliseTextList(goal.publicDecisions || run?.publicDecisions)[0] || 'Worker wave와 품질 게이트를 설계합니다.', status: goal.workflowId || run?.workflowId ? 'done' : ['planning', 'clarifying'].includes(goal.status) ? 'running' : 'queued', side: `${(goal.waves || []).length}개 wave`, tags: [goal.workflowId || run?.workflowId].filter(Boolean) }),
+  ];
+  const timeline = [];
+  const seenTasks = new Set();
+  for (const [index, wave] of (goal.waves || []).entries()) {
+    const waveId = String(wave.id || index);
+    timeline.push({
+      time: timeMs(wave.startedAt) || timeMs(goal.createdAt) + index + 1,
+      order: index * 100,
+      html: traceNode({ key: 'wave', id: waveId, marker: `W${Number.isFinite(Number(wave.index)) ? wave.index : index + 1}`, kind: 'DIRECTOR WAVE', title: waveLabel(wave, index), description: `${(wave.taskIds || []).length}개 Worker 작업을 배치·감시합니다.`, status: wave.status || ((goal.currentWaveTaskIds || []).some(id => (wave.taskIds || []).includes(id)) ? goal.status : 'completed'), side: wave.startedAt ? elapsedLabel(wave.startedAt, wave.completedAt || Date.now()) : '', tags: [wave.kind, wave.id].filter(Boolean) }),
+    });
+    for (const [taskIndex, taskId] of (wave.taskIds || []).entries()) {
+      if (seenTasks.has(taskId)) continue;
+      seenTasks.add(taskId);
+      const action = actionForTask(taskId);
+      const task = state.board.find(candidate => candidate.id === taskId);
+      const record = goalTaskRecord(taskId, goal);
+      const status = task?.status || record?.status || action?.status || (wave.status === 'completed' ? 'done' : 'queued');
+      const started = task?.started_at || task?.startedAt;
+      const ended = task?.completed_at || task?.completedAt;
+      timeline.push({
+        time: timeMs(started) || timeMs(wave.startedAt) || timeMs(goal.createdAt) + index + 1,
+        order: index * 100 + taskIndex + 1,
+        html: traceNode({ key: 'task', marker: taskId, kind: state.summary?.workerProfiles?.[action?.target || record?.profile || task?.assignee]?.label || action?.target || record?.profile || task?.assignee || 'WORKER', title: action?.title || record?.title || task?.title || taskId, description: action?.task || sectionFromBody(task?.body, 'ACTION') || task?.result || normaliseTextList(record?.acceptance)[0] || 'Worker 작업 상세를 열어 공개 실행 근거를 확인하세요.', status, side: started ? elapsedLabel(started, ended || Date.now()) : action?.target || record?.profile || task?.assignee || '', tags: [taskId, ...(action?.skills || []), ...((action?.parentTaskIds || record?.parentTaskIds)?.length ? [`선행 ${(action?.parentTaskIds || record?.parentTaskIds).length}`] : [])], depth: 1 }),
+      });
+    }
+    if (wave.assessment) timeline.push({
+      time: timeMs(wave.completedAt) || timeMs(wave.startedAt) || timeMs(goal.createdAt) + index + 1,
+      order: index * 100 + 90,
+      html: traceNode({ key: 'assessment', id: waveId, marker: 'A', kind: 'SUPERVISOR', title: `${waveLabel(wave, index)} 평가`, description: typeof wave.assessment === 'string' ? wave.assessment : wave.assessment.summary || wave.assessment.decision || '평가 근거가 기록되었습니다.', status: wave.assessment.status || wave.status || 'completed', side: clockLabel(wave.completedAt), tags: normaliseTextList(wave.assessment.missingGates || wave.assessment.missingCriteria).slice(0, 3) }),
+    });
+  }
+  for (const { event, id, index } of goalEventEntries(goal)) {
+    if ((event.kind === 'owner' && event.phase === 'queued') || (event.kind === 'director' && event.phase === 'analyzed')) continue;
+    const presentation = goalEventPresentation(event);
+    timeline.push({
+      time: timeMs(event.at || event.createdAt) || timeMs(goal.createdAt) + index,
+      order: 10000 + index,
+      html: traceNode({ key: 'goal-event', id, marker: 'D', kind: presentation.category, title: presentation.title, description: event.message || 'Director 감독 이벤트가 기록되었습니다.', status: presentation.status, side: clockLabel(event.at || event.createdAt), tags: [event.phase, event.kind].filter(Boolean) }),
+    });
+  }
+  for (const { run: turn, event, index, id } of directorTurnEntries(goal)) {
+    timeline.push({
+      time: timeMs(event.at) || timeMs(turn.startedAt || turn.createdAt),
+      order: 20000 + timeMs(turn.createdAt) + index,
+      html: traceNode({ key: 'director-turn', id, marker: 'D', kind: 'DIRECTOR TURN', title: phaseLabel(event.phase), description: event.message, status: directorTurnStatus(turn, event, index), side: clockLabel(event.at), tags: [`turn ${turn.id.slice(0, 8)}`, turn.status === 'completed' && goalIsActive(goal) ? 'Goal 계속 감독' : ''] .filter(Boolean) }),
+    });
+  }
+  timeline.sort((left, right) => left.time - right.time || left.order - right.order);
+  nodes.push(...timeline.map(item => item.html));
+  if (goal.status === 'awaiting_owner' || goal.ownerDecision?.required) nodes.push(traceNode({ key: 'owner-decision', marker: '!', kind: 'OWNER GATE', title: goal.ownerDecision?.question || 'Owner 판단 필요', description: normaliseTextList(goal.ownerDecision?.evidence)[0] || 'Director가 중요한 선택 전 목표를 일시정지했습니다.', status: 'awaiting_owner', side: goal.ownerDecision?.askedAt ? clockLabel(goal.ownerDecision.askedAt) : '응답 대기', tags: (goal.ownerDecision?.options || []).map(decisionOptionLabel).slice(0, 3) }));
+  if (goalIsTerminal(goal) || goal.finalReport || goal.error) nodes.push(traceNode({ key: 'final', marker: '✓', kind: 'DIRECTOR', title: goal.status === 'completed' ? 'Goal 완료 판정' : `${goalStatusLabel(goal.status)} 보고`, description: typeof goal.finalReport === 'string' ? goal.finalReport : goal.finalReport?.summary || goal.error || '최종 보고와 검증 근거를 확인하세요.', status: goal.status, side: clockLabel(goal.completedAt || goal.updatedAt), tags: [`Cycle ${goal.cycleCount || 0}`, `재작업 ${goal.remediationCount || 0}`] }));
+  root.innerHTML = nodes.join('');
+  return goalTaskIds(goal).map(id => state.board.find(task => task.id === id)?.status || goalTaskRecord(id, goal)?.status || actionForTask(id)?.status || 'queued');
+}
+
+function renderTrace() {
+  const run = latestRun();
+  const goal = selectedGoal();
+  const root = $('owner-trace-list');
+  if (state.boardStatus?.error) {
+    root.innerHTML = `<div class="trace-empty" role="alert"><strong>작업 보드를 불러오지 못했습니다</strong><span>${escapeHtml(friendlyErrorMessage(state.boardStatus.error))}</span><button class="secondary-button" type="button" data-retry-board>다시 시도</button></div>`;
+    $('trace-summary').innerHTML = '<span class="blocked"><i></i>보드 오류</span>';
+    return;
+  }
+  if (!run && !goal) {
+    const director = selectedDirector();
+    root.innerHTML = director?.kind === 'project' && !director.cwd
+      ? '<div class="trace-empty onboarding-empty"><strong>목표를 맡길 준비를 시작하세요</strong><span>프로젝트 연결 → 목표·완료 기준 입력 → 실행·검증 추적 순서로 진행됩니다.</span><ol><li class="current"><b>1</b>로컬 프로젝트 연결</li><li><b>2</b>목표와 완료 기준 입력</li><li><b>3</b>Worker 실행과 검증 확인</li></ol></div>'
+      : '<div class="trace-empty"><strong>실행 흐름이 아직 없습니다</strong><span>오른쪽 입력창에 기능, 버그, API 명세나 완료 기준을 보내면 분석·계획·Worker 실행·검증이 시간순으로 표시됩니다.</span></div>';
+    $('trace-summary').innerHTML = '<span><i></i>단계 0개</span>';
+    return;
+  }
+  const statuses = goal ? renderGoalTrace(goal, root) : renderLegacyTrace(run, root);
+  root.querySelectorAll('[data-select-trace]').forEach(button => button.addEventListener('click', () => selectTrace(button.dataset.selectTrace, button.dataset.traceId || null)));
+  root.querySelectorAll('[data-select-task]').forEach(button => button.addEventListener('click', () => selectTask(button.dataset.selectTask)));
   const running = statuses.filter(status => status === 'running').length;
   const blocked = statuses.filter(status => ['blocked', 'review', 'scheduled', 'failed'].includes(status)).length;
   const done = statuses.filter(status => ['done', 'archived'].includes(status)).length;
-  $('trace-summary').innerHTML = `<span class="running"><i></i>${running} 실행</span><span><i></i>${done} 완료</span><span class="blocked"><i></i>${blocked} 확인</span>`;
+  $('trace-summary').innerHTML = `${goal ? `<span class="${goalStatusTone(goal.status)}"><i></i>${escapeHtml(goalStatusLabel(goal.status))}</span>` : ''}<span class="running"><i></i>${running} 실행</span><span><i></i>${done} 완료</span><span class="blocked"><i></i>${blocked} 확인</span>`;
+}
+
+function goalTaskLinks(taskIds) {
+  if (!taskIds?.length) return '<p class="detail-empty">아직 배치된 Worker가 없습니다.</p>';
+  return `<div class="goal-task-links">${taskIds.map(taskId => {
+    const action = actionForTask(taskId);
+    const task = state.board.find(candidate => candidate.id === taskId);
+    const record = goalTaskRecord(taskId);
+    const title = action?.title || record?.title || task?.title || taskId;
+    const status = task?.status || record?.status || action?.status || 'queued';
+    return `<button type="button" data-goal-task="${escapeHtml(taskId)}"><span><b>${escapeHtml(title)}</b><small>${escapeHtml(action?.target || record?.profile || task?.assignee || taskId)}</small></span><em class="${traceStatus(status)}">${escapeHtml(statusLabel(status))}</em></button>`;
+  }).join('')}</div>`;
+}
+
+function structuredDetailsHtml(value) {
+  if (value == null || value === '') return '<p class="detail-empty">기록 없음</p>';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return `<p>${formatText(String(value))}</p>`;
+  if (Array.isArray(value)) return listHtml(normaliseTextList(value));
+  const rows = Object.entries(value).map(([key, item]) => {
+    const content = item && typeof item === 'object'
+      ? (Array.isArray(item) ? listHtml(normaliseTextList(item)) : `<pre>${escapeHtml(JSON.stringify(item, null, 2))}</pre>`)
+      : `<p>${formatText(String(item ?? ''))}</p>`;
+    return `<div><dt>${escapeHtml(key.replaceAll('_', ' '))}</dt><dd>${content}</dd></div>`;
+  }).join('');
+  return rows ? `<dl class="structured-details">${rows}</dl>` : '<p class="detail-empty">기록 없음</p>';
+}
+
+function renderGoalOverviewInspector(goal, run) {
+  const wave = currentWave(goal);
+  const analysis = goalAnalysis(goal, run);
+  const latestEvent = goal.events?.at(-1);
+  $('inspector-title').textContent = 'Goal 감독 현황';
+  return `<div class="inspector-hero goal-hero"><span class="goal-state ${goalStatusTone(goal.status)}"><i></i>${escapeHtml(goalStatusLabel(goal.status))}</span><h3>${escapeHtml(goal.objective)}</h3><p>${escapeHtml(latestEvent?.message || analysis?.requestSummary || 'Director가 완료 기준을 향해 목표를 감독합니다.')}</p><div class="inspector-meta"><code>${escapeHtml(goal.id)}</code><span>${escapeHtml(goal.workflowId || run?.workflowId || '플로우 선택 중')}</span><span>Cycle ${escapeHtml(goal.cycleCount || 0)}${goal.maxCycles ? ` / ${escapeHtml(goal.maxCycles)}` : ''}</span><span>재작업 ${escapeHtml(goal.remediationCount || 0)}${goal.maxRemediationLoops ? ` / ${escapeHtml(goal.maxRemediationLoops)}` : ''}</span></div></div>
+    ${detailGroup('완료 기준', listHtml(normaliseTextList(goalCriteria(goal, run)), 'Director가 성공 조건을 정리하는 중입니다.'))}
+    ${detailGroup('현재 감독 단계', `<div class="supervision-state"><strong>${escapeHtml(wave ? waveLabel(wave, (goal.waves || []).indexOf(wave)) : goalStatusLabel(goal.status))}</strong><p>${escapeHtml(run?.status === 'completed' && goalIsActive(goal) ? '최근 Director 판단 턴은 완료됐습니다. Goal은 종료되지 않았으며 Worker 결과 뒤 새 평가 턴이 자동으로 이어집니다.' : run?.status === 'running' ? `Director 판단 턴 실행 중 · ${phaseLabel(run.phase)}` : latestEvent?.message || '다음 상태 전환을 기다리는 중입니다.')}</p></div>`)}
+    ${wave ? detailGroup('현재 Wave Worker', goalTaskLinks(wave.taskIds || goal.currentWaveTaskIds)) : ''}
+    ${detailGroup('공개 운영 결정', listHtml(normaliseTextList(goal.publicDecisions || run?.publicDecisions), '아직 공개된 운영 결정이 없습니다.'))}
+    ${detailGroup('누적 증거', structuredDetailsHtml(goal.evidence))}
+    ${goal.ownerAnswers?.length ? detailGroup('Owner 결정 이력', structuredDetailsHtml(goal.ownerAnswers)) : ''}
+    ${goal.finalReport || goal.error ? detailGroup(goal.status === 'completed' ? '완료 보고' : '중단 보고', structuredDetailsHtml(goal.finalReport || goal.error)) : ''}`;
 }
 
 function renderOverviewInspector() {
   const director = selectedDirector();
+  const goal = selectedGoal();
   const run = latestRun();
   $('inspector-title').textContent = 'Director 개요';
   if (director?.kind === 'project' && !director.cwd) {
     return `<div class="inspector-hero setup-hero"><span class="setup-kicker">시작 준비</span><h3>${escapeHtml(director.name)}</h3><p>이 슬롯에 Windows 또는 WSL 프로젝트를 연결하면 목표 입력과 Worker 실행이 열립니다.</p><button type="button" class="primary-button" data-open-projects>프로젝트 연결</button></div>
       ${detailGroup('연결 후 할 수 있는 일', listHtml(['기능·버그·API 명세를 목표로 전달', 'Director의 분석과 작업 분할 확인', 'Worker 실행·검증 근거와 Owner 판단 추적']))}`;
   }
+  if (goal) return renderGoalOverviewInspector(goal, run);
   return `<div class="inspector-hero"><h3>${escapeHtml(director?.name || 'Director')}</h3><p>${escapeHtml(director?.cwd || '프로젝트가 배정되지 않았습니다.')}</p><div class="inspector-meta"><span>${escapeHtml(director?.kind === 'skill' ? 'Skill Director' : 'Project Director')}</span><span>${escapeHtml(runtimeLabel(director))}</span><span>${escapeHtml(statusLabel(director?.status))}</span><code>${escapeHtml(director?.board || '')}</code></div></div>
     ${detailGroup('현재 목표', run ? `<p>${formatText(run.prompt)}</p>` : '<p class="detail-empty">새 목표를 기다리는 중입니다.</p>')}
     ${run ? detailGroup('현재 운영 상태', `<p>${escapeHtml(phaseLabel(run.phase))} · 작업 ${run.taskIds?.length || 0}개 · ${elapsedLabel(run.startedAt, run.completedAt || Date.now())}</p>`) : ''}
     ${detailGroup('Owner 개입', '<p>Director 분석·계획과 모든 Worker 실행을 같은 trace에서 선택할 수 있습니다. 실행 중 Worker를 열면 추가 지시와 일시정지 제어가 나타납니다.</p>')}`;
 }
 
-function renderObjectiveInspector(run) {
+function renderObjectiveInspector(run, goal = selectedGoal()) {
   $('inspector-title').textContent = 'Owner 목표';
-  return `<div class="inspector-hero"><h3>${escapeHtml(run?.prompt || '목표 없음')}</h3><p>Director가 이 목표를 성공 조건과 Worker 작업으로 변환합니다.</p><div class="inspector-meta"><span>Owner 목표</span><code>${escapeHtml(run?.id || '')}</code><span>${escapeHtml(clockLabel(run?.createdAt))}</span></div></div>`;
+  return `<div class="inspector-hero"><h3>${escapeHtml(goal?.objective || run?.prompt || '목표 없음')}</h3><p>이 문장이 여러 Director 판단 턴과 Worker wave를 묶는 지속형 Goal의 기준점입니다.</p><div class="inspector-meta"><span>Owner Goal</span><code>${escapeHtml(goal?.id || run?.id || '')}</code><span>${escapeHtml(clockLabel(goal?.createdAt || run?.createdAt))}</span>${goal ? `<span>${escapeHtml(goalStatusLabel(goal.status))}</span>` : ''}</div></div>
+    ${goal ? detailGroup('완료 기준', listHtml(normaliseTextList(goalCriteria(goal, run)), 'Director가 성공 조건을 확정하는 중입니다.')) : ''}
+    ${goal ? detailGroup('Owner가 준 제약', listHtml(normaliseTextList(goal.constraints || goalAnalysis(goal, run)?.constraints))) : ''}`;
 }
 
-function renderAnalysisInspector(run) {
+function renderAnalysisInspector(run, goal = selectedGoal()) {
   $('inspector-title').textContent = 'Director 분석';
-  const analysis = run?.analysis;
+  const analysis = goalAnalysis(goal, run);
   if (!analysis) return `<div class="inspector-hero"><h3>판단 근거를 구성하는 중</h3><p>요구, 성공 조건, 확인된 근거, 위험과 대안을 공개 체크포인트로 정리합니다.</p><div class="inspector-meta"><span>Director 분석</span></div></div><div class="inspector-loading">${escapeHtml(run?.progressEvents?.at(-1)?.message || '대기 중…')}</div>`;
   const candidates = (analysis.workflowCandidates || []).map(candidate => `<div class="candidate-row ${candidate.id === analysis.recommendedWorkflow ? 'recommended' : ''}"><b>${escapeHtml(workflowFor(candidate.id)?.name || candidate.id)}</b><span>${escapeHtml(candidate.fit)}<small>${escapeHtml(candidate.tradeoff)}</small></span></div>`).join('');
   return `<div class="inspector-hero"><h3>${escapeHtml(analysis.requestSummary)}</h3><p>내부 사고문장이 아닌 검증 가능한 판단 근거와 운영 결정을 공개합니다.</p><div class="inspector-meta"><span>공개 판단 기록</span><span>${escapeHtml(workflowFor(analysis.recommendedWorkflow)?.name || analysis.recommendedWorkflow)}</span><code>analysis.v1</code></div></div>
-    ${detailGroup('성공 조건', listHtml(analysis.successCriteria))}
+    ${detailGroup('성공 조건', listHtml(normaliseTextList(goalCriteria(goal, run))))}
     ${detailGroup('확인된 근거', listHtml(analysis.evidence))}
     ${detailGroup('제약', listHtml(analysis.constraints))}
     ${detailGroup('위험', listHtml(analysis.risks))}
@@ -540,14 +1076,85 @@ function renderAnalysisInspector(run) {
     ${detailGroup('중단·Owner 호출 조건', listHtml(analysis.stopConditions))}`;
 }
 
-function renderPlanInspector(run) {
+function renderPlanInspector(run, goal = selectedGoal()) {
   $('inspector-title').textContent = '실행 계획';
-  if (!run?.workflowId && !run?.actions?.length) return `<div class="inspector-hero"><h3>Worker 구성과 의존성을 설계하는 중</h3><p>${escapeHtml(run?.progressEvents?.at(-1)?.message || '분석 결과를 실행 가능한 작업 그래프로 변환합니다.')}</p><div class="inspector-meta"><span>Director 계획</span></div></div>`;
-  const workflow = workflowFor(run.workflowId);
-  const actions = (run.actions || []).map((action, index) => `<article class="plan-action"><span>${index + 1}</span><div><strong>${escapeHtml(action.title)}</strong><p>${escapeHtml(action.task)}</p><small>${escapeHtml(action.target)}${action.parentTaskIds?.length ? ` · 선행 ${escapeHtml(action.parentTaskIds.join(', '))}` : ' · 즉시 실행 가능'}</small></div></article>`).join('');
-  return `<div class="inspector-hero"><h3>${escapeHtml(workflow?.name || run.workflowId || '대화')}</h3><p>${escapeHtml(workflow?.description || 'Director 응답')}</p><div class="inspector-meta"><span>실행 계획</span><span>작업 ${run.actions?.length || 0}개</span><code>${escapeHtml(run.workflowId || 'conversation')}</code></div></div>
-    ${detailGroup('운영 판단', listHtml(run.publicDecisions))}
-    ${detailGroup('작업 그래프', `<div class="plan-actions">${actions || '<p class="detail-empty">Worker 작업 없음</p>'}</div>`)}`;
+  const actionsList = goal ? goalActions(goal) : run?.actions || [];
+  const workflowId = goal?.workflowId || run?.workflowId;
+  if (!workflowId && !actionsList.length) return `<div class="inspector-hero"><h3>Worker 구성과 의존성을 설계하는 중</h3><p>${escapeHtml(run?.progressEvents?.at(-1)?.message || '분석 결과를 실행 가능한 작업 그래프로 변환합니다.')}</p><div class="inspector-meta"><span>Director 계획</span></div></div>`;
+  const workflow = workflowFor(workflowId);
+  const actions = actionsList.map((action, index) => `<article class="plan-action"><span>${index + 1}</span><div><strong>${escapeHtml(action.title)}</strong><p>${escapeHtml(action.task)}</p><small>${escapeHtml(action.target)}${action.parentTaskIds?.length ? ` · 선행 ${escapeHtml(action.parentTaskIds.join(', '))}` : ' · 즉시 실행 가능'}</small><button type="button" data-goal-task="${escapeHtml(action.taskId)}">Worker 상세</button></div></article>`).join('');
+  const waves = (goal?.waves || []).map((wave, index) => `<button class="wave-link" type="button" data-select-trace="wave" data-trace-id="${escapeHtml(String(wave.id || index))}"><span>${escapeHtml(waveLabel(wave, index))}</span><b>${escapeHtml(statusLabel(wave.status || 'queued'))}</b><small>${(wave.taskIds || []).length}개 작업</small></button>`).join('');
+  return `<div class="inspector-hero"><h3>${escapeHtml(workflow?.name || workflowId || '대화')}</h3><p>${escapeHtml(workflow?.description || 'Director 응답')}</p><div class="inspector-meta"><span>지속형 감독 계획</span><span>누적 작업 ${actionsList.length}개</span><span>Wave ${goal?.waves?.length || 0}개</span><code>${escapeHtml(workflowId || 'conversation')}</code></div></div>
+    ${detailGroup('운영 판단', listHtml(normaliseTextList(goal?.publicDecisions || run?.publicDecisions)))}
+    ${waves ? detailGroup('실행 Wave', `<div class="wave-links">${waves}</div>`) : ''}
+    ${detailGroup('누적 작업 그래프', `<div class="plan-actions">${actions || '<p class="detail-empty">Worker 작업 없음</p>'}</div>`)}`;
+}
+
+function selectedWave(goal, id) {
+  return (goal?.waves || []).find((wave, index) => String(wave.id || index) === String(id));
+}
+
+function renderWaveInspector(goal, id) {
+  const wave = selectedWave(goal, id);
+  $('inspector-title').textContent = 'Worker Wave';
+  if (!wave) return '<div class="inspector-loading">선택한 Wave 기록을 찾지 못했습니다.</div>';
+  const index = (goal.waves || []).indexOf(wave);
+  return `<div class="inspector-hero"><span class="goal-state ${traceStatus(wave.status)}"><i></i>${escapeHtml(statusLabel(wave.status || 'running'))}</span><h3>${escapeHtml(waveLabel(wave, index))}</h3><p>Director가 이 묶음의 Worker들을 배치하고 모두 끝날 때까지 감시한 뒤 새 평가 턴을 엽니다.</p><div class="inspector-meta"><code>${escapeHtml(wave.id || String(index))}</code><span>Worker ${(wave.taskIds || []).length}개</span><span>${escapeHtml(elapsedLabel(wave.startedAt, wave.completedAt || Date.now()))}</span></div></div>
+    ${detailGroup('Worker 작업', goalTaskLinks(wave.taskIds))}
+    ${wave.assessment ? detailGroup('Wave 평가', structuredDetailsHtml(wave.assessment)) : detailGroup('다음 전환', '<p>모든 Worker가 종료되면 Director가 성공 조건과 품질 게이트를 평가합니다. 부족하면 재작업 Wave가 만들어집니다.</p>')}`;
+}
+
+function renderAssessmentInspector(goal, id) {
+  const wave = selectedWave(goal, id);
+  $('inspector-title').textContent = 'Director 평가';
+  if (!wave?.assessment) return '<div class="inspector-loading">평가 기록을 기다리는 중입니다.</div>';
+  const index = (goal.waves || []).indexOf(wave);
+  return `<div class="inspector-hero"><h3>${escapeHtml(waveLabel(wave, index))} 평가</h3><p>Worker의 완료 선언이 아니라 Director가 성공 조건·검증 근거·누락 게이트를 다시 판정한 기록입니다.</p><div class="inspector-meta"><span>Supervisor checkpoint</span><code>${escapeHtml(wave.id || String(index))}</code><span>${escapeHtml(clockLabel(wave.completedAt))}</span></div></div>
+    ${detailGroup('평가 결과', structuredDetailsHtml(wave.assessment))}
+    ${detailGroup('후속 상태', `<p>${escapeHtml(goalStatusLabel(goal.status))}${goal.remediationCount ? ` · 누적 재작업 ${escapeHtml(goal.remediationCount)}회` : ''}</p>`)}`;
+}
+
+function renderGoalEventInspector(goal, id) {
+  const entry = goalEventEntries(goal).find(candidate => candidate.id === String(id));
+  $('inspector-title').textContent = 'Director 감독 이벤트';
+  if (!entry) return '<div class="inspector-loading">선택한 감독 이벤트를 찾지 못했습니다.</div>';
+  const { event } = entry;
+  const presentation = goalEventPresentation(event);
+  return `<div class="inspector-hero"><span class="goal-state ${traceStatus(presentation.status)}"><i></i>${escapeHtml(statusLabel(presentation.status))}</span><h3>${escapeHtml(presentation.title)}</h3><p>${escapeHtml(event.message || 'Director의 공개 운영 판단입니다.')}</p><div class="inspector-meta"><span>${escapeHtml(presentation.category)}</span><span>${escapeHtml(event.phase || goal.phase || '')}</span><code>${escapeHtml(event.kind || 'event')}</code><span>${escapeHtml(clockLabel(event.at || event.createdAt))}</span></div></div>
+    ${detailGroup('판단 근거와 상태 변경', structuredDetailsHtml(event.details))}`;
+}
+
+function renderDirectorTurnInspector(goal, id) {
+  const entry = directorTurnEntries(goal).find(candidate => candidate.id === String(id));
+  $('inspector-title').textContent = 'Director 판단 턴';
+  if (!entry) return '<div class="inspector-loading">선택한 Director 판단 기록을 찾지 못했습니다.</div>';
+  const { run, event, index } = entry;
+  const progress = (run.progressEvents || []).filter(item => item?.message).map((item, itemIndex) => `<li class="${itemIndex === index ? 'selected' : ''}"><i></i><span><b>${escapeHtml(phaseLabel(item.phase))}</b>${escapeHtml(item.message)}</span><time>${escapeHtml(clockLabel(item.at))}</time></li>`).join('');
+  return `<div class="inspector-hero"><span class="goal-state ${traceStatus(directorTurnStatus(run, event, index))}"><i></i>${escapeHtml(run.status === 'running' ? 'LIVE TURN' : `TURN ${statusLabel(run.status)}`)}</span><h3>${escapeHtml(phaseLabel(event.phase))}</h3><p>${escapeHtml(event.message)}</p><div class="inspector-meta"><code>${escapeHtml(run.id)}</code><span>${escapeHtml(statusLabel(run.status))}</span><span>${escapeHtml(elapsedLabel(run.startedAt, run.completedAt || Date.now()))}</span><span>Goal ${escapeHtml(goal.id.slice(0, 12))}</span></div></div>
+    ${detailGroup('공개 진행 체크포인트', `<ol class="turn-event-list">${progress}</ol>`)}
+    ${detailGroup('이 체크포인트의 근거', structuredDetailsHtml(event.details))}
+    ${run.publicDecisions?.length ? detailGroup('이번 턴의 운영 결정', listHtml(normaliseTextList(run.publicDecisions))) : ''}
+    ${run.output ? detailGroup('Director 공개 보고', `<p>${formatText(run.output)}</p>`) : ''}
+    ${run.error ? detailGroup('오류와 재시도 근거', `<p class="decision-error">${formatText(run.error)}</p>`) : ''}`;
+}
+
+function renderOwnerDecisionInspector(goal) {
+  $('inspector-title').textContent = 'Owner 판단';
+  const decision = goal?.ownerDecision;
+  if (!decision) return '<div class="inspector-loading">현재 대기 중인 Owner 판단이 없습니다.</div>';
+  return `<div class="inspector-hero decision-hero"><span class="goal-state blocked"><i></i>GOAL PAUSED</span><h3>${escapeHtml(decision.question || 'Director가 Owner 결정을 기다립니다')}</h3><p>권한·범위·외부 영향처럼 Director가 임의로 정하면 안 되는 지점입니다. 답변 뒤 새 판단 턴이 열립니다.</p><div class="inspector-meta"><code>${escapeHtml(goal.id)}</code><span>${escapeHtml(clockLabel(decision.askedAt))}</span><span>Cycle ${escapeHtml(goal.cycleCount || 0)}</span></div></div>
+    ${detailGroup('왜 지금 물어보는가', structuredDetailsHtml(decision.evidence))}
+    ${ownerDecisionForm(goal)}`;
+}
+
+function renderFinalInspector(goal) {
+  $('inspector-title').textContent = goal?.status === 'completed' ? 'Goal 완료 보고' : 'Goal 중단 보고';
+  if (!goal) return '<div class="inspector-loading">Goal 기록이 없습니다.</div>';
+  const complete = goal.status === 'completed';
+  return `<div class="inspector-hero"><span class="goal-state ${goalStatusTone(goal.status)}"><i></i>${escapeHtml(goalStatusLabel(goal.status))}</span><h3>${escapeHtml(complete ? '완료 기준과 품질 게이트 판정' : '진행 중단과 남은 위험')}</h3><p>${escapeHtml(typeof goal.finalReport === 'string' ? goal.finalReport : goal.finalReport?.summary || goal.error || (complete ? 'Director가 전체 목표 완료를 판정했습니다.' : 'Director가 더 진행할 수 없는 이유를 기록했습니다.'))}</p><div class="inspector-meta"><code>${escapeHtml(goal.id)}</code><span>Cycle ${escapeHtml(goal.cycleCount || 0)}</span><span>재작업 ${escapeHtml(goal.remediationCount || 0)}</span><span>${escapeHtml(clockLabel(goal.completedAt || goal.updatedAt))}</span></div></div>
+    ${detailGroup('최종 보고', structuredDetailsHtml(goal.finalReport || goal.error))}
+    ${detailGroup('누적 검증 증거', structuredDetailsHtml(goal.evidence))}
+    ${detailGroup('완료 기준', listHtml(normaliseTextList(goalCriteria(goal))))}`;
 }
 
 function eventDescription(event) {
@@ -595,9 +1202,10 @@ function renderTaskInspector() {
   if (!details?.task) return '<div class="inspector-loading">Worker 상세 정보를 기다리는 중…</div>';
   const { task, latest_summary: summary, runs = [] } = details;
   const action = actionForTask(task.id);
+  const record = goalTaskRecord(task.id);
   const lastRun = runs.at(-1);
-  const taskAction = action?.task || sectionFromBody(task.body, 'ACTION') || task.body;
-  const acceptance = action?.acceptance || sectionFromBody(task.body, 'ACCEPTANCE').split(/\r?\n/).map(line => line.replace(/^[-*]\s*/, '')).filter(Boolean);
+  const taskAction = action?.task || sectionFromBody(task.body, 'ACTION') || task.body || '영속 Goal Worker 작업';
+  const acceptance = action?.acceptance || record?.acceptance || sectionFromBody(task.body, 'ACCEPTANCE').split(/\r?\n/).map(line => line.replace(/^[-*]\s*/, '')).filter(Boolean);
   const statusUncertain = Boolean(state.taskError || state.taskLoading);
   const staleNotice = state.taskError ? inlineErrorHtml('최신 Worker 상태를 확인하지 못했습니다', state.taskError, 'data-retry-task') : '';
   const canIntervene = !statusUncertain && ['running', 'ready', 'todo', 'blocked', 'scheduled', 'review'].includes(task.status);
@@ -629,10 +1237,13 @@ function bindInspectorActions() {
   $('owner-inspector').querySelector('[data-send-intervention]')?.addEventListener('click', sendIntervention);
   $('owner-inspector').querySelectorAll('[data-worker-control]').forEach(button => button.addEventListener('click', () => controlWorker(button.dataset.workerControl)));
   $('owner-inspector').querySelectorAll('[data-retry-task]').forEach(button => button.addEventListener('click', () => refreshSelectedTask({ force: true })));
+  $('owner-inspector').querySelectorAll('[data-goal-task]').forEach(button => button.addEventListener('click', () => selectTask(button.dataset.goalTask)));
+  $('owner-inspector').querySelectorAll('[data-select-trace]').forEach(button => button.addEventListener('click', () => selectTrace(button.dataset.selectTrace, button.dataset.traceId || null)));
+  bindDecisionActions($('owner-inspector'));
 }
 
 function renderInspector({ force = false } = {}) {
-  if (!force && state.interventionComposing) return;
+  if (!force && (state.interventionComposing || state.decisionComposing)) return;
   const focusedInput = document.activeElement?.id === 'worker-intervention-input' ? document.activeElement : null;
   const inputSelection = focusedInput ? {
     start: focusedInput.selectionStart,
@@ -647,11 +1258,18 @@ function renderInspector({ force = false } = {}) {
   const preserve = state.inspectorRenderKey === renderKey;
   const previousTop = scroller?.scrollTop || 0;
   const stickToBottom = Boolean(scroller && scroller.scrollHeight - scroller.clientHeight - previousTop < 32);
+  const goal = selectedGoal();
   const run = latestRun();
   let html;
-  if (state.selection.type === 'objective') html = renderObjectiveInspector(run);
-  else if (state.selection.type === 'analysis') html = renderAnalysisInspector(run);
-  else if (state.selection.type === 'plan') html = renderPlanInspector(run);
+  if (state.selection.type === 'objective') html = renderObjectiveInspector(run, goal);
+  else if (state.selection.type === 'analysis') html = renderAnalysisInspector(run, goal);
+  else if (state.selection.type === 'plan') html = renderPlanInspector(run, goal);
+  else if (state.selection.type === 'wave') html = renderWaveInspector(goal, state.selection.id);
+  else if (state.selection.type === 'assessment') html = renderAssessmentInspector(goal, state.selection.id);
+  else if (state.selection.type === 'goal-event') html = renderGoalEventInspector(goal, state.selection.id);
+  else if (state.selection.type === 'director-turn') html = renderDirectorTurnInspector(goal, state.selection.id);
+  else if (state.selection.type === 'owner-decision') html = renderOwnerDecisionInspector(goal);
+  else if (state.selection.type === 'final') html = renderFinalInspector(goal);
   else if (state.selection.type === 'task') html = renderTaskInspector();
   else html = renderOverviewInspector();
   $('owner-inspector').innerHTML = html;
@@ -672,9 +1290,16 @@ function renderInspector({ force = false } = {}) {
 }
 
 function renderConversation() {
-  const runs = selectedRuns().slice(0, 6).reverse();
-  $('conversation-count').textContent = `메시지 ${runs.length * 2}개`;
-  $('owner-chat-stream').innerHTML = runs.length ? runs.map(run => `<article class="chat-message owner"><div class="chat-label">OWNER</div>${formatText(run.prompt)}</article><article class="chat-message director ${run.status === 'failed' ? 'failed' : ''}"><div class="chat-label">DIRECTOR · ${escapeHtml(phaseLabel(run.phase || run.status))}</div>${run.output ? formatText(run.output) : run.error ? formatText(run.error) : '<span class="thinking">판단 중…</span>'}</article>`).join('') : '<div class="chat-empty">아직 대화가 없습니다.</div>';
+  const runs = selectedRuns().slice(0, 10).reverse();
+  const goal = selectedGoal();
+  const firstGoalRun = runs.find(run => goal && run.goalId === goal.id);
+  const items = [];
+  for (const run of runs) {
+    if (!run.goalId || run === firstGoalRun) items.push(`<article class="chat-message owner"><div class="chat-label">OWNER${run.goalId ? ' · GOAL' : ''}</div>${formatText(run.goalId && goal?.id === run.goalId ? goal.objective : run.prompt)}</article>`);
+    items.push(`<article class="chat-message director ${run.status === 'failed' ? 'failed' : ''}"><div class="chat-label">DIRECTOR TURN · ${escapeHtml(phaseLabel(run.phase || run.status))}${run.goalId ? ' · Goal 계속 감독' : ''}</div>${run.output ? formatText(run.output) : run.error ? formatText(run.error) : '<span class="thinking">판단 중…</span>'}</article>`);
+  }
+  $('conversation-count').textContent = `기록 ${items.length}개`;
+  $('owner-chat-stream').innerHTML = items.length ? items.join('') : '<div class="chat-empty">아직 대화가 없습니다.</div>';
 }
 
 function renderWorkflowCatalog() {
@@ -687,6 +1312,7 @@ function renderAll() {
   renderDirectors();
   renderMissionHeader();
   renderCurrentFocus();
+  renderGoalProgress();
   renderOwnerGate();
   renderTrace();
   renderInspector();
@@ -787,15 +1413,19 @@ async function selectDirector(id) {
   state.taskTraceError = null;
   state.taskLoadedAt = 0;
   state.interventionDraft = '';
+  state.decisionDraft = '';
+  state.decisionOption = '';
+  state.decisionGoalId = null;
+  state.decisionError = null;
   state.rawLogOpen = null;
   renderAll();
   await loadBoard();
   renderAll();
 }
 
-function selectTrace(type) {
+function selectTrace(type, id = null) {
   const opener = activeElementIdentity();
-  state.selection = { type, id: null };
+  state.selection = { type, id };
   renderTrace();
   renderInspector({ force: true });
   restoreActiveElement(opener);
@@ -1338,6 +1968,7 @@ function init() {
   initTheme();
   initScale();
   $('owner-send-btn').addEventListener('click', sendMessage);
+  $('owner-message-mode').addEventListener('change', renderMissionHeader);
   $('owner-message-input').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); }
   });

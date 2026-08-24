@@ -160,6 +160,7 @@ button:disabled, textarea:disabled { opacity: .4; cursor: not-allowed; }
 .trace-summary span { display: inline-flex; align-items: center; gap: 5px; }
 .trace-summary i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
 .trace-summary .running i { background: var(--green); }
+.trace-summary .done i { background: var(--green); }
 .trace-summary .blocked i { background: var(--red); }
 .trace-list { padding: 10px 0; }
 .trace-empty { padding: 54px 20px; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--faint); text-align: center; }
@@ -767,4 +768,171 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 
 @media (prefers-reduced-motion: reduce) {
   html, .mission-pane { scroll-behavior: auto !important; }
+}
+
+/* Durable Goal supervision: one objective, many Director turns and Worker waves. */
+.goal-progress {
+  margin: -3px 0 14px;
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.goal-progress-main {
+  min-width: 0;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+.goal-progress-main:hover { background: var(--surface-hover); }
+.goal-state { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font: 650 .67rem var(--mono); letter-spacing: .025em; text-transform: uppercase; }
+.goal-state i { width: 8px; height: 8px; flex: 0 0 auto; background: currentColor; border-radius: 50%; box-shadow: 0 0 0 4px var(--green-soft); }
+.goal-state.blocked, .goal-progress.blocked .goal-state { color: var(--amber); }
+.goal-state.blocked i, .goal-progress.blocked .goal-state i { box-shadow: 0 0 0 4px var(--amber-soft); }
+.goal-state.failed { color: var(--red); }
+.goal-state.failed i { box-shadow: 0 0 0 4px var(--red-soft); }
+.goal-state.done { color: var(--green); }
+.goal-turn { min-width: 0; overflow: hidden; color: var(--muted); font-size: .73rem; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.goal-progress dl { margin: 0; display: grid; grid-auto-flow: column; background: var(--surface-2); border-left: 1px solid var(--line); }
+.goal-progress dl > div { min-width: 76px; padding: 9px 11px; display: flex; flex-direction: column; justify-content: center; gap: 3px; border-left: 1px solid var(--line); }
+.goal-progress dl > div:first-child { border-left: 0; }
+.goal-progress dt { color: var(--faint); font: .57rem var(--mono); letter-spacing: .05em; }
+.goal-progress dd { margin: 0; color: var(--text-2); font: 650 .68rem var(--mono); font-variant-numeric: tabular-nums; }
+
+.decision-gate {
+  margin: 16px 0 18px;
+  padding: 17px;
+  display: block;
+  background: linear-gradient(135deg, var(--amber-soft), transparent 72%), var(--surface);
+  border: 1px solid rgba(231,184,90,.34);
+  border-left-width: 3px;
+  border-radius: 10px;
+}
+.decision-gate > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.decision-gate > header > div { display: flex; flex-direction: column; gap: 5px; }
+.decision-gate > header span { letter-spacing: .055em; }
+.decision-gate > header strong { max-width: 72ch; font-size: .9rem; line-height: 1.45; }
+.decision-gate > header .quiet-button { flex: 0 0 auto; color: var(--amber); }
+.decision-evidence { max-width: 80ch; margin: 10px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.55; }
+.owner-decision-form { margin-top: 16px; display: flex; flex-direction: column; gap: 13px; }
+.owner-decision-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.owner-decision-form legend, .owner-decision-form label > span { display: block; margin-bottom: 7px; color: var(--text-2); font: 650 .67rem var(--sans); letter-spacing: 0; text-transform: none; }
+.decision-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.decision-options .decision-option {
+  min-height: 52px;
+  padding: 9px 11px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  color: var(--text-2);
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+}
+.decision-options .decision-option:hover { color: var(--text); border-color: rgba(231,184,90,.42); }
+.decision-options .decision-option.selected { color: var(--text); background: var(--amber-soft); border-color: var(--amber); box-shadow: inset 0 0 0 1px rgba(231,184,90,.16); }
+.decision-option b { font-size: .74rem; font-weight: 650; line-height: 1.35; }
+.decision-option small { color: var(--muted); font-size: .66rem; line-height: 1.4; }
+.owner-decision-form textarea {
+  width: 100%;
+  min-height: 78px;
+  padding: 10px 11px;
+  resize: vertical;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  font-size: .76rem;
+  line-height: 1.55;
+}
+.owner-decision-form textarea:focus { border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); outline: 0; }
+.decision-submit { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.decision-submit small { color: var(--muted); font-size: .66rem; line-height: 1.45; }
+.decision-submit button { min-height: 36px; flex: 0 0 auto; padding: 0 14px; color: #16130b; background: var(--amber); border-color: transparent; font-size: .72rem; font-weight: 700; }
+.decision-submit button:hover { color: #16130b; filter: brightness(1.05); }
+.decision-error { margin: -3px 0 0; color: var(--red); font-size: .7rem; line-height: 1.45; }
+.decision-hero { padding: 14px; background: var(--amber-soft); border: 1px solid rgba(231,184,90,.25); border-radius: 9px; }
+
+.goal-hero .goal-state, .inspector-hero > .goal-state { margin-bottom: 10px; }
+.supervision-state { padding: 11px 12px; background: var(--surface-2); border-left: 2px solid var(--green); border-radius: 7px; }
+.supervision-state strong { font-size: .78rem; }
+.supervision-state p { margin-top: 5px; }
+.goal-task-links, .wave-links { display: flex; flex-direction: column; gap: 7px; }
+.goal-task-links button, .wave-link {
+  width: 100%;
+  min-height: 50px;
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--text-2);
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.goal-task-links button:hover, .wave-link:hover { color: var(--text); background: var(--surface-hover); border-color: var(--line-strong); }
+.goal-task-links button > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.goal-task-links b, .wave-link span { overflow: hidden; font-size: .74rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.goal-task-links small, .wave-link small { color: var(--faint); font: .6rem var(--mono); }
+.goal-task-links em { padding: 3px 6px; color: var(--faint); background: var(--bg); border-radius: 5px; font: 600 .6rem var(--mono); font-style: normal; }
+.goal-task-links em.running { color: var(--green); }
+.goal-task-links em.blocked, .goal-task-links em.failed { color: var(--red); }
+.goal-task-links em.done { color: var(--green); }
+.wave-link { grid-template-columns: minmax(0, 1fr) auto; }
+.wave-link b { color: var(--muted); font-size: .66rem; font-weight: 500; }
+.wave-link small { grid-column: 1 / -1; }
+.structured-details { margin: 0; display: flex; flex-direction: column; }
+.structured-details > div { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.structured-details > div:last-child { border-bottom: 0; }
+.structured-details dt { margin-bottom: 5px; color: var(--faint); font: .62rem var(--mono); text-transform: uppercase; }
+.structured-details dd { margin: 0; }
+.structured-details pre { max-height: 320px; margin: 0; padding: 9px; overflow: auto; color: var(--text-2); background: var(--bg); border-radius: 6px; font: .63rem/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.turn-event-list { margin: 0; padding: 0; display: flex; flex-direction: column; list-style: none; }
+.turn-event-list li { min-height: 42px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+.turn-event-list li.selected { background: var(--accent-soft); border-radius: 6px; }
+.turn-event-list li > i { width: 6px; height: 6px; margin-top: 5px; background: var(--green); border-radius: 50%; }
+.turn-event-list li > span { display: flex; flex-direction: column; gap: 3px; color: var(--text-2); font-size: .72rem; line-height: 1.45; }
+.turn-event-list li b { color: var(--faint); font: .6rem var(--mono); }
+.turn-event-list time { color: var(--faint); font: .59rem var(--mono); white-space: nowrap; }
+.plan-action button { margin-top: 7px; padding: 4px 7px; color: var(--accent-text); background: transparent; border: 1px solid var(--line); border-radius: 5px; font-size: .62rem; }
+
+/* Goal supervision is dense, but body copy must stay readable without zoom. */
+.trace-title { font-size: .86rem; line-height: 1.35; }
+.trace-description { font-size: .76rem; line-height: 1.58; }
+.trace-kind { font-size: .63rem; }
+.trace-side { font-size: .65rem; }
+.inspector-hero p, .detail-group p { font-size: .78rem; }
+.detail-group ul { font-size: .75rem; line-height: 1.7; }
+
+@media (max-width: 1040px) {
+  .goal-progress { grid-template-columns: 1fr; }
+  .goal-progress dl { border-top: 1px solid var(--line); border-left: 0; }
+  .goal-progress dl > div { min-width: 0; }
+}
+
+@media (max-width: 560px) {
+  .goal-progress-main { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .goal-turn { overflow: visible; white-space: normal; }
+  .goal-progress dl { grid-auto-flow: column; }
+  .goal-progress dl > div { padding: 8px; }
+  .decision-gate { padding: 14px; }
+  .decision-gate > header { flex-direction: column; }
+  .decision-options { grid-template-columns: 1fr; }
+  .decision-submit { align-items: stretch; flex-direction: column; }
+  .decision-submit button { width: 100%; }
+  .trace-description { display: -webkit-box; overflow: hidden; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 }

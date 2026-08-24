@@ -62,6 +62,8 @@
       "../css/owner-console.css": "./css/owner-console.css",
       "../lib/director-service.js": "./lib/director-service.js",
       "../lib/director-actions.js": "./lib/director-actions.js",
+      "../lib/candidate-snapshot.js": "./lib/candidate-snapshot.js",
+      "../lib/goal-supervisor.js": "./lib/goal-supervisor.js",
       "../lib/hermes-runtime.js": "./lib/hermes-runtime.js",
       "../lib/local-only.js": "./lib/local-only.js",
       "../lib/praetorium-config.js": "./lib/praetorium-config.js",

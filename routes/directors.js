@@ -15,6 +15,23 @@ export function register(ctx) {
     json(res, run);
   });
 
+  addRoute('GET', '/api/directors/:id/goals/:goalId', (req, res) => {
+    const goal = directorService.getGoal(req.params.goalId);
+    if (!goal || goal.directorId !== req.params.id) return json(res, { error: 'Goal not found' }, 404);
+    json(res, goal);
+  });
+
+  addRoute('POST', '/api/directors/:id/goals/:goalId/decision', async (req, res) => {
+    try {
+      const body = await readBody(req);
+      json(res, await directorService.answerGoalDecision(req.params.id, req.params.goalId, body), 202);
+    } catch (err) {
+      const status = /not found/i.test(err.message) ? 404
+        : /already running|not awaiting/i.test(err.message) ? 409 : 400;
+      json(res, { error: err.message }, status);
+    }
+  });
+
   addRoute('GET', '/api/directors/:id/board', (req, res) => {
     try {
       json(res, {
@@ -46,7 +63,11 @@ export function register(ctx) {
     try {
       const body = await readBody(req);
       json(res, await directorService.controlTask(req.params.id, req.params.taskId, body.action, body.reason), 202);
-    } catch (err) { json(res, { error: err.message }, /not found/i.test(err.message) ? 404 : 400); }
+    } catch (err) {
+      const status = /not found/i.test(err.message) ? 404
+        : /already running|terminal task|reached terminal state/i.test(err.message) ? 409 : 400;
+      json(res, { error: err.message }, status);
+    }
   });
 
   addRoute('POST', '/api/directors/:id/messages', async (req, res) => {
@@ -54,7 +75,7 @@ export function register(ctx) {
       const body = await readBody(req);
       json(res, directorService.submitMessage(req.params.id, body.prompt, { mode: body.mode }), 202);
     } catch (err) {
-      const status = /not found/i.test(err.message) ? 404 : /already running/i.test(err.message) ? 409 : 400;
+      const status = /not found/i.test(err.message) ? 404 : /already running|already supervises active Goal/i.test(err.message) ? 409 : 400;
       json(res, { error: err.message }, status);
     }
   });

@@ -5,8 +5,9 @@ Praetorium is a local-only Owner Console for directing several real Codex workst
 - One Owner Console
 - Three project Directors
 - One Skill Director
+- Durable Goal supervision across disposable Director and Worker sessions
 - Per-project native Windows or WSL2 execution
-- Dynamically sized, isolated implementation and review workers
+- Dynamically sized fresh Worker sessions; writes in one project cwd are serialized
 - Hermes profiles and Kanban state
 - Codex app-server inference over child-process stdio
 
@@ -41,15 +42,19 @@ Praetorium is a standalone product and repository. Its durable project and Direc
 ```text
 Owner
 └─ Praetorium Owner Console (127.0.0.1:3848)
-   ├─ Project Director 1 → isolated implementer/review/fix workers
+   ├─ Project Director 1 → fresh implementer/review/fix sessions
    ├─ Project Director 2 → independent worker pool and quality loop
    ├─ Project Director 3 → independent worker pool and quality loop
    └─ Skill Director     → evaluated skill lifecycle
 ```
 
-Each Owner message starts a fresh Director Codex app-server session. Praetorium injects only a bounded handoff of the last eight completed turns, capped at 24,000 characters. This avoids unbounded Director context growth and Hermes `v0.20.5` resume stalls.
+Each delegated Owner request creates one durable Goal. Initial analysis, planning, and every later evidence assessment use fresh Director Codex app-server turns; a completed Director turn is only a checkpoint and does not complete the Goal. Conversation-only messages remain disposable turns. Praetorium injects a bounded handoff for conversation context and a bounded durable Goal snapshot for supervision, avoiding unbounded context growth and Hermes `v0.20.5` resume stalls.
 
-Hermes stores durable profiles, boards, tasks, results, and worker lifecycle state. The scheduler evaluates all three project boards independently every ten seconds, so a slow or broken project does not stall the others. Parallelism is selected from ready work, running work, CPU, and memory, capped at 12 workers.
+The Director emits a validated `executing`, `awaiting_owner`, `complete`, or `blocked` control decision. The host materializes `executing` actions as a bounded Worker wave. When every card in that wave reaches a terminal task state, a fresh Director turn reads its results and public evidence, then starts remediation or fresh review, asks one material Owner question, or proposes completion. Persisted Goal status makes planning, execution, evaluation, remediation, verification, waiting, and terminal state visible.
+
+Hermes stores durable profiles, boards, tasks, results, and Worker lifecycle state; Praetorium stores the Goal, workflow, action journal, waves, decisions, evidence, and completion report. The scheduler evaluates all three project boards independently every ten seconds, so a slow or broken project does not stall the others. Parallelism is selected from ready work, running work, CPU, and memory, capped at 12 workers across the app. Workers use `dir:<project cwd>`, not per-task worktrees: the host dependency-serializes every write action in a project, even when declared paths differ, and places write and review/gate work in separate waves. Read-only reviews and separate projects can still run in parallel. A declared `write_scope` is a task contract, not a narrower filesystem sandbox than the project root. Supervision and remediation loops are bounded; reaching a limit produces an explicit Owner decision instead of retrying forever.
+
+After a restart, an interrupted Director turn is marked failed while its non-terminal Goal remains active. Praetorium resumes initial planning, idempotent wave materialization, approved exact-plan execution, or evidence evaluation from persisted state and the Hermes board rather than relying on the old model session or duplicating cards. Persisted Owner pause/resume intent is reconciled before dispatch; an `awaiting_owner` Goal remains parked.
 
 ## Owner Console
 
@@ -61,12 +66,14 @@ The central trace is ordered as:
 
 ```text
 Owner objective
-→ Director requirement/risk analysis
-→ Director workflow and worker plan
-→ Worker execution, review, remediation, and gates
+→ Director requirement/risk analysis and workflow choice
+→ Worker wave
+→ fresh Director evidence assessment
+→ remediation / fresh review / quality gate (repeat as needed)
+→ Owner decision or verified terminal report
 ```
 
-Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, and stop conditions. Selecting a Worker exposes the full task contract, live public reasoning checkpoints, observed commands, raw worker log, lifecycle events, acceptance criteria, and final evidence.
+Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, gate freshness, and stop conditions. Wave boundaries distinguish task dispatch from later Director judgment. Selecting a Worker exposes the full task contract, live public operational checkpoints, observed commands, raw worker log, lifecycle events, acceptance criteria, and final evidence. This is an evidence trace, not private model chain-of-thought.
 
 New Worker tasks are required to publish concise `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` comments at meaningful checkpoints. These are public operational artifacts, not private chain-of-thought. Historical tasks still expose their raw Hermes log even when they predate the structured checkpoint contract.
 
@@ -76,7 +83,19 @@ The Owner can intervene without opening a Worker tab:
 - steer a running Worker in-place through Hermes' live comment bridge (normally observed within about six seconds);
 - immediately pause a running Worker, which terminates its current local process and parks the task for Owner input;
 - resume a paused task and return it to automatic dispatch;
+- answer a pending Goal decision with a listed option or a written answer, which records the decision and resumes supervision;
 - enlarge the Inspector or change global text scale for long traces.
+
+The local Goal API used by this screen is:
+
+```text
+GET  /api/directors                         summary including goals and activeGoals
+GET  /api/directors/:id/goals/:goalId      one durable Goal with waves, evidence, events, and decision state
+POST /api/directors/:id/goals/:goalId/decision
+     { "selectedOption": "..." } or { "answer": "..." }
+```
+
+The decision endpoint returns `202 Accepted` and resumes supervision asynchronously. It accepts answers only while that Goal is `awaiting_owner`. These are loopback-only, same-host application routes, not remote-control APIs.
 
 Project slots are populated from existing configuration. On a fresh install, Praetorium discovers up to three immediate Git repositories under `PRAETORIUM_PROJECTS_ROOT` (default `C:\projects`). Environment Management can validate, discover, and connect either a Windows absolute path or a Linux path inside a selected WSL2 distribution.
 
@@ -106,6 +125,8 @@ Skills:
 
 Specialist reviews are fresh-context, read-only, and bound to an exact revision or artifact digest. Implementers do not review their own work, fixers are separate from reviewers, and relevant reviews become stale after remediation changes the candidate revision.
 
+The Skill Director uses the same durable supervisor and its semantic contract stages observed evidence → scoped `skill-proposal.v1` → Worker implementation → independent forward evaluation → canary/rollout decision. The host enforces the skill-development implementer, adversarial review, quality gate, and Owner completion approval; `skill-proposal.v1` remains a governance artifact rather than the outer control envelope. Drafting or editing inside the Skill Director workspace uses `workspace_write` and does not activate anything. A proposed activation, install, or publication action uses `skill_activation` and parks before task creation for exact plan-bound Owner approval. Skill activation and external mutation cannot share an approval wave.
+
 ## Approval and sandbox policy
 
 Praetorium is designed for background operation without approval popups inside the authority already granted by the Owner:
@@ -116,9 +137,12 @@ Praetorium is designed for background operation without approval popups inside t
 - sandboxed shell network access is disabled for Director and worker runs;
 - inherited gateway, relay, webhook, and messaging environment variables are stripped;
 - external actions, new authority, irreversible operations, and material product decisions remain Owner decisions;
+- an action wave cannot combine `external_mutation` with `skill_activation`; either effect parks for its own exact-plan Owner approval;
+- `external_mutation` and `skill_activation` action approvals bind the exact action plan and wave; high-risk/release and skill-development completion approvals additionally bind the verified candidate digest, which is rechecked before completion;
+- approval is a control-plane decision, not a privilege switch: the exact plan resumes without model regeneration but retains the same project-root `workspace-write`, no-network sandbox and receives no credentials or out-of-root access;
 - unattended escalation without a local decision path fails closed.
 
-Worker intervention does not broaden authority. A mid-run Owner note may narrow or redirect work inside the existing project objective, but new external authority, destructive operations, remote access, or publication still requires an explicit Owner decision.
+Worker intervention does not broaden authority. A mid-run Owner note may narrow or redirect work inside the existing project objective, but new external authority, destructive operations, remote access, or publication still requires an explicit Owner decision. If the approved action cannot run within the already configured local sandbox, it must block for Owner/manual handling; Praetorium does not silently grant network, secrets, system privilege, or global skill-directory writes.
 
 Praetorium exit and update are session-safe. Tray Quit asks the backend for a fresh Director/Worker activity check and refuses to exit while execution is active. The NSIS updater aborts when Praetorium or its loopback server is still running; it never uses force-kill or child-tree termination.
 
@@ -146,7 +170,7 @@ npm test
 git diff --check
 ```
 
-The test suite covers Director control-envelope validation, stable project-to-Director assignment, bounded handoff, durable task materialization, board caching, worker concurrency, local-only policy, WSL launch boundaries, live task evidence, Owner intervention, pause/resume commands, and route behavior.
+The test suite covers Director control-envelope validation, durable Goal/wave supervision, workflow gate freshness, Owner decisions, restart and materialization recovery, stable project-to-Director assignment, bounded handoff, board caching, Worker concurrency, local-only policy, WSL launch boundaries, live task evidence, Owner intervention, pause/resume commands, and route behavior.
 
 Bootstrap profiles and skills:
 
@@ -168,7 +192,7 @@ npm run tauri build -- --bundles nsis
 - No LAN discovery, remote-connect route, login token, proxy, or remote bridge is registered.
 - State-changing requests require a same-host Origin when an Origin or Referer is present.
 - Hermes child processes use argument arrays with `shell: false`.
-- Director state and project assignment are written atomically; interrupted runs recover as failed on restart.
+- Director state, project assignment, Goals, action journals, and waves are written atomically. Interrupted disposable runs recover as failed while non-terminal Goals resume from persisted evidence and idempotent task materialization.
 - Project identities are unique and Director slots are stable, so deleting and later reconnecting a same-named repository cannot inherit another project's board or execution history.
 - Project removal refreshes Hermes state and fails closed while any non-terminal task remains.
 - App exit and update never force-terminate the Node/Hermes/Codex process tree.
@@ -178,12 +202,13 @@ npm run tauri build -- --bundles nsis
 ## Source map
 
 - `index.html`, `css/owner-console.css`, `js/owner-console.js`: trace-first Owner Console
-- `lib/director-service.js`: Director lifecycle, public analysis checkpoint, task graph materialization, board scheduler, Worker intervention
+- `lib/director-service.js`: Director turns, durable Goal lifecycle, wave materialization, board scheduler, restart recovery, Owner decisions, Worker intervention
+- `lib/goal-supervisor.js`: Goal normalization, task/wave synchronization, evidence snapshots, acceptance checks, and supervision prompts
 - `lib/director-actions.js`: strict Director analysis and action-envelope extraction/validation
 - `lib/workflow-catalog.js`: six built-in workflows, twelve operating skills, approved Worker profiles
 - `lib/hermes-runtime.js`: local Hermes process adapter, task evidence/logs, comments, pause/resume primitives
 - `lib/wsl-runtime.js`: WSL2 distribution discovery, project validation, readiness diagnostics, and injection-safe native launch bridge
-- `routes/directors.js`: local Director, board, trace, intervention, and control HTTP API
+- `routes/directors.js`: local Director, Goal/decision, board, trace, intervention, and control HTTP API
 - `.agents/skills/`: Director, reviewer, remediation, release, and quality-gate skills
 - `.agents/hermes-profiles/`: Director and Worker role profiles
 - `scripts/bootstrap-director-system.ps1`: deterministic local profile, skill, and board setup

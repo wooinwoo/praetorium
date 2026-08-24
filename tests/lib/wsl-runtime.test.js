@@ -66,4 +66,23 @@ describe('WSL runtime boundary', () => {
       '/home/owner/projects', '-mindepth', '2', '-maxdepth', '3', '-name', '.git', '-print0',
     ]);
   });
+
+  it('captures WSL candidate metadata before and after hashing', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    let command = null;
+    runtime._run = async args => {
+      command = args;
+      return { stdout: Buffer.from(`revision-one\nsha256:${'a'.repeat(64)}\n1\n`) };
+    };
+
+    const snapshot = await runtime.candidateSnapshot({ distro: 'Ubuntu', path: '/home/owner/app' });
+    const script = command[command.indexOf('-c') + 1];
+    assert.equal(snapshot.digest, `sha256:${'a'.repeat(64)}`);
+    assert.match(script, /before_metadata="\$\(git_metadata\)"/);
+    assert.match(script, /after_metadata="\$\(git_metadata\)"/);
+    assert.match(script, /candidate-metadata-changed/);
+    assert.match(script, /dirty-submodule-candidate/);
+    assert.ok(script.includes('status --porcelain=v2'));
+    assert.ok(script.includes('fallback_manifest() { find . \\( -type f -o -type l \\)'));
+  });
 });
