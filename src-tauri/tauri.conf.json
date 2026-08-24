@@ -61,9 +61,11 @@
       "../js/owner-console.js": "./js/owner-console.js",
       "../css/owner-console.css": "./css/owner-console.css",
       "../lib/director-service.js": "./lib/director-service.js",
+      "../lib/director-actions.js": "./lib/director-actions.js",
       "../lib/hermes-runtime.js": "./lib/hermes-runtime.js",
       "../lib/local-only.js": "./lib/local-only.js",
       "../lib/praetorium-config.js": "./lib/praetorium-config.js",
+      "../lib/workflow-catalog.js": "./lib/workflow-catalog.js",
       "../routes/directors.js": "./routes/directors.js"
     }
   }
