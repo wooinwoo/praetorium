@@ -154,8 +154,8 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 ### Secondary
 
 - **Runtime Blue:** Distinguishes WSL runtime badges, read-only access, plan evidence, and observed command markers. Blue is categorical or evidentiary; it is not a second CTA color.
-- **Waiting Amber:** Marks queued/ready-to-start work, setup required, pending Owner decisions, warnings, and write-capable authority.
-- **Failure Red:** Marks failed, blocked, offline, dangerous, destructive, or Owner-authored intervention states. Use text, a dot, or a single hairline edge before using a filled region.
+- **Waiting Amber:** Marks queued/ready-to-start work, setup required, pending Owner decisions, intervention delivery in progress, warnings, and write-capable authority.
+- **Failure Red:** Marks failed, blocked, cancelled, offline, dangerous, destructive, or failed intervention delivery. Use text, a dot, or a single hairline edge before using a filled region.
 
 ### Neutral
 
@@ -167,7 +167,7 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 
 ### Named Rules
 
-**The Green Is Runtime State Rule.** Green means an observed runtime or execution fact is affirmative: connected, active, running, ready, observed, or complete. Never use green for a recommendation, generic button, promotion, selection, or decorative accent.
+**The Green Is Runtime State Rule.** Green means an observed runtime or execution fact is affirmative: connected, active, running, ready, accepted, observed, or complete. An accepted intervention receipt confirms only Hermes delivery; its copy must not imply Worker acknowledgement. Never use green for a recommendation, generic button, promotion, selection, or decorative accent.
 
 **The Violet Is Authority Rule.** Violet means the Owner can focus, select, steer, or commit. It must remain rarer than neutral structure and must not replace status semantics.
 
@@ -197,6 +197,8 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 
 **The No Hero Type Rule.** Operational hierarchy tops out at the mission headline. Do not introduce oversized display copy, promotional subheads, or centered hero text.
 
+**The Owner Language Rule.** Match public operational prose to the Owner's language. Korean Owner input yields Korean Director summaries and questions and Korean Worker task text, checkpoints, and reports. Machine-shaped contracts never change locale: JSON keys, schema names, enum values, IDs, and the literal `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` markers remain English and keep their monospace treatment.
+
 ## Layout
 
 The desktop shell is a fixed-height three-column grid beneath a 68px top bar. Its default columns are a 248px Director rail, a central trace with a 520px minimum, and an Inspector clamped between 390px and 470px at roughly 30vw. The shell itself never scrolls; the Director list, mission trace, Inspector, conversation stream, dialog bodies, profile browser, and raw logs own their relevant scroll surfaces. Stable scrollbar gutters and contained overscroll prevent adjacent panes from jumping or chaining unexpectedly.
@@ -208,6 +210,8 @@ At 1280px and below, the sidebar reduces to 210px and the Inspector to 390px. At
 The supported 900×640 operating window must retain independent scrolling and access to the composer, Inspector, and management controls. At narrow widths, interactive controls have a minimum 44px touch target. Text scale is user-controlled from 90% to 125% and persisted; layouts must tolerate the full range without hiding evidence or creating page-level horizontal scrolling.
 
 ### Named Rules
+
+**The Splitters Stay Put Rule.** On wide layouts, a vertical splitter on the Inspector boundary changes Inspector width continuously while dragged, and a horizontal splitter on the activity boundary changes activity-region height. Both separators are keyboard-focusable and accept Arrow keys for the matching dimension. Values are clamped to preserve usable adjacent panes, saved in `localStorage`, and restored without rerender jitter. Double-click restores the documented default. At overlay breakpoints, the Inspector splitter is inactive because width is governed by the responsive overlay.
 
 **The Trace Owns the Center Rule.** Summaries may orient the Owner, but chronological evidence remains the main canvas and the stable return point.
 
@@ -244,9 +248,11 @@ The trace is the signature component and primary navigation. Each node combines 
 
 ### Inspector
 
-The Inspector is a structured evidence surface with a header, independently scrolling content, optional Owner–Director conversation, and a fixed composer. Its groups use hairline separators, uppercase mono labels, readable prose, code blocks, event lists, reasoning entries, and collapsible raw logs. Owner controls sit inside a violet-soft intervention region; destructive controls remain outlined red. “Large view” opens the current Inspector content in a native modal dialog.
+The Inspector is a structured evidence surface with a header, independently scrolling content, optional Owner–Director conversation, and a fixed composer. Its groups use hairline separators, uppercase mono labels, readable prose, code blocks, event lists, reasoning entries, and collapsible raw logs. Owner controls sit inside a violet-soft intervention region; destructive controls remain outlined red. Intervention receipts expose four non-interchangeable states: delivery pending is amber, delivery failed is red, accepted/queued is a confirmed Hermes receipt, and Worker observed is later Worker-authored evidence. “Large view” opens the current Inspector content in a native modal dialog.
 
 On wide screens the Inspector is the third column and is always available. At 820px and below it is hidden until opened as a right overlay, the toggle exposes `aria-expanded`, focus moves to the pane, and Escape closes it. Do not change the overlay into a bottom sheet: command composition and evidence logs need vertical continuity and predictable width.
+
+The Inspector-width splitter sits on the pane boundary rather than inside the content controls. It exposes separator semantics, the current clamped value, and a visible keyboard focus state. The activity-height splitter follows the same contract above the activity region; neither handle may move content merely because trace data refreshed.
 
 ### Buttons
 
@@ -268,7 +274,7 @@ State dots always accompany plain-language state in the surrounding row, label, 
 
 ### Navigation and Management
 
-The Director rail uses full text rows on wide screens and index marks with focusable tooltips when compressed. Active selection uses violet-soft fill and border, while its runtime state dot retains its semantic color. The management dialog uses native `dialog`, a fixed header, horizontal tabs with a two-pixel violet active indicator, and one independently scrolling body. Arrow Left/Right moves and activates tabs. Project, runtime, and role panes favor rows, dividers, and split views over collections of feature cards.
+The Director rail uses full text rows on wide screens and index marks with focusable tooltips when compressed. Active selection uses violet-soft fill and border, while its runtime state dot retains its semantic color. Each Director exposes a compact active/queued/recent Goal switcher: queue position and status remain visible, a queued Goal does not look like an inference turn, and cancelled Goals retain explicit cancelled language. Queue controls disclose their result in an adjacent receipt rather than relying on a transient toast alone. The management dialog uses native `dialog`, a fixed header, horizontal tabs with a two-pixel violet active indicator, and one independently scrolling body. Arrow Left/Right moves and activates tabs. Project, runtime, and role panes favor rows, dividers, and split views over collections of feature cards.
 
 ### Feedback and Motion
 

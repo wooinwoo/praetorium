@@ -65,6 +65,114 @@ describe('Windows candidate snapshot', () => {
     assert.equal(changed.revision, first.revision);
   });
 
+  it('binds recursively declared ignored deliverables and deduplicates tracked paths', async t => {
+    const { repo } = await initializeRepository(t, 'declared-ignored');
+    await writeFile(join(repo, '.gitignore'), 'dist/\n');
+    await git(repo, 'add', '--', '.gitignore');
+    await git(repo, 'commit', '--quiet', '-m', 'ignore generated deliverables');
+    await mkdir(join(repo, 'dist', 'nested'), { recursive: true });
+    const artifact = join(repo, 'dist', 'nested', 'artifact.js');
+    await writeFile(artifact, 'generated-v1\n');
+
+    const ordinary = await snapshot(repo);
+    await writeFile(artifact, 'generated-v2\n');
+    const ordinaryAfterMutation = await snapshot(repo);
+    assert.equal(ordinaryAfterMutation.digest, ordinary.digest, 'gitignored bytes are not implicitly part of the candidate');
+
+    const declared = await snapshotWindowsCandidate({
+      cwd: repo, spawnImpl: spawn, declaredPaths: ['tracked.txt', 'dist', 'dist/'],
+    });
+    assert.deepEqual(declared.declaredPaths, ['dist', 'tracked.txt']);
+    assert.equal(declared.declaredPathCount, 2);
+    assert.equal(declared.bindingMode, 'declared-paths.v1');
+    assert.deepEqual(
+      declared.declaredBindings.map(binding => [binding.path, binding.state]),
+      [['dist', 'directory'], ['tracked.txt', 'file']],
+    );
+    assert.equal(declared.fileCount, ordinary.fileCount + 1, 'the tracked declaration must not be hashed twice');
+
+    await writeFile(artifact, 'generated-v3\n');
+    const changed = await snapshotWindowsCandidate({
+      cwd: repo, spawnImpl: spawn, declaredPaths: ['dist', 'tracked.txt'],
+    });
+    assert.notEqual(changed.digest, declared.digest, 'declared ignored artifact bytes must be bound');
+  });
+
+  it('binds a declared missing path so appearance changes the digest and binding metadata', async t => {
+    const { repo } = await initializeRepository(t, 'declared-missing');
+    const first = await snapshotWindowsCandidate({
+      cwd: repo, spawnImpl: spawn, declaredPaths: ['dist/future.bin'],
+    });
+    assert.deepEqual(first.declaredBindings, [
+      { path: 'dist/future.bin', state: 'missing', entryCount: 1 },
+    ]);
+
+    await mkdir(join(repo, 'dist'), { recursive: true });
+    await writeFile(join(repo, 'dist', 'future.bin'), 'now present\n');
+    const appeared = await snapshotWindowsCandidate({
+      cwd: repo, spawnImpl: spawn, declaredPaths: ['dist/future.bin'],
+    });
+    assert.notEqual(appeared.digest, first.digest);
+    assert.deepEqual(appeared.declaredBindings, [
+      { path: 'dist/future.bin', state: 'file', entryCount: 1 },
+    ]);
+  });
+
+  it('normalizes literal declarations and rejects traversal or excluded roots before hashing', () => {
+    assert.deepEqual(_test.normalizeDeclaredPaths(['dist\\nested\\file.js', './dist/nested/file.js']), [
+      'dist/nested/file.js',
+    ]);
+    assert.throws(() => _test.normalizeDeclaredPaths(['../outside.bin']), /must not traverse/);
+    assert.throws(() => _test.normalizeDeclaredPaths(['dist/../../outside.bin']), /must not traverse/);
+    assert.throws(() => _test.normalizeDeclaredPaths(['C:\\outside.bin']), /repository-relative/);
+    assert.throws(() => _test.normalizeDeclaredPaths(['.git/config']), /must not enter/);
+    assert.throws(() => _test.normalizeDeclaredPaths(['dist/node_modules/pkg/index.js']), /must not enter/);
+  });
+
+  it('applies runtime-specific path case sensitivity without restricting literal filenames', () => {
+    const caseVariants = ['dist/Foo.bin', 'dist/foo.bin'];
+    assert.deepEqual(
+      _test.normalizeDeclaredPaths(caseVariants, { caseSensitive: false }),
+      ['dist/Foo.bin'],
+      'Windows declarations must deduplicate case-insensitively',
+    );
+    assert.deepEqual(
+      _test.normalizeDeclaredPaths(caseVariants, { caseSensitive: true }),
+      caseVariants,
+      'Linux declarations must preserve distinct case-sensitive paths',
+    );
+    assert.deepEqual(
+      _test.normalizeDeclaredPaths(['dist/file $\'" name.bin'], { caseSensitive: true }),
+      ['dist/file $\'" name.bin'],
+    );
+    assert.throws(
+      () => _test.normalizeDeclaredPaths(['.'], { caseSensitive: true }),
+      /must name a repository entry/,
+    );
+  });
+
+  it('fails closed when a declared symlink resolves outside the candidate root', async t => {
+    const { root, repo } = await initializeRepository(t, 'declared-external-symlink');
+    const outside = join(root, 'outside-deliverable');
+    const link = join(repo, 'dist-link');
+    await mkdir(outside);
+    await writeFile(join(outside, 'mutable.bin'), 'outside mutable bytes\n');
+    try {
+      await symlink(outside, link, 'junction');
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP', 'UNKNOWN'].includes(error.code)) {
+        t.skip(`filesystem symlinks are unavailable in this Windows environment (${error.code})`);
+        return;
+      }
+      throw error;
+    }
+
+    await assert.rejects(
+      snapshotWindowsCandidate({ cwd: repo, spawnImpl: spawn, declaredPaths: ['dist-link'] }),
+      /symlink resolves outside the candidate root/,
+    );
+  });
+
   it('hashes a symlink target string without reading the external target file', async t => {
     const { root, repo } = await initializeRepository(t, 'symlink');
     const outsideOne = join(root, 'outside-one.txt');

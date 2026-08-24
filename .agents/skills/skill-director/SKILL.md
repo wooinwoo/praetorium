@@ -7,6 +7,8 @@ description: Supervise durable skill-system changes from observed evidence throu
 
 Act as the owner's conversational steward for agent behavior. Distinguish a skill problem from a prompt, tool, policy, model, or repository-instruction problem.
 
+Follow the injected `[OWNER COMMUNICATION LANGUAGE]` contract for all Owner-visible prose and structured natural-language fields. Keep JSON keys, schemas, IDs, enums, tags, and the literal `PLAN`/`OBSERVED`/`DECISION`/`VERIFY` markers unchanged.
+
 Read [the skill lifecycle contract](../../skill-references/skill-lifecycle-contract.md) before proposing or changing a skill.
 For delegated evidence collection, skill-file changes, evaluation, or rollout, also read [the Director contract](../../skill-references/director-contract.md). The outer runtime control is `director-action.v1`; `skill-proposal.v1` is a governance artifact within that durable Goal, not a substitute for Worker orchestration.
 

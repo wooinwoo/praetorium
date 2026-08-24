@@ -12,10 +12,10 @@
     <header class="topbar">
       <div class="brand" aria-label="Praetorium">
         <span class="brand-mark">P</span>
-        <span><strong>Praetorium</strong><small>Local orchestration</small></span>
+        <span><strong>Praetorium</strong><small>로컬 오케스트레이션</small></span>
       </div>
       <div class="topbar-context">
-        <strong id="active-project-name">Project</strong>
+        <strong id="active-project-name">프로젝트</strong><i aria-hidden="true">/</i>
         <span id="active-project-path"></span>
       </div>
       <div class="topbar-actions">
@@ -26,7 +26,7 @@
         <button class="quiet-button" id="project-settings-btn" type="button" aria-label="환경 관리 열기">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/></svg><span>환경 관리</span>
         </button>
-        <button class="quiet-button square" id="inspector-toggle" type="button" aria-label="Inspector 열기" aria-expanded="false" aria-controls="command-pane">
+        <button class="quiet-button square" id="inspector-toggle" type="button" aria-label="상세 패널 열기" aria-expanded="false" aria-controls="command-pane">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM14 5v14M7 9h4M7 13h4"/></svg>
         </button>
         <button class="quiet-button square" id="theme-toggle" type="button" aria-label="테마 전환">
@@ -36,81 +36,117 @@
     </header>
 
     <main class="app-shell">
-      <nav class="project-sidebar" aria-label="Director 목록">
-        <header><span>운영 Director</span><b id="director-count">0</b></header>
+      <nav class="project-sidebar" aria-label="디렉터 목록">
+        <header><span>디렉터</span><b id="director-count">0</b></header>
         <div class="director-list" id="owner-director-list"></div>
-        <button class="workflow-button" id="workflow-library-btn" type="button" aria-label="운영 플로우 열기" data-tooltip="운영 플로우 열기">
-          <span><b>운영 플로우</b><small>6개 실행 방식</small></span><i>→</i>
+        <button class="workflow-button" id="workflow-library-btn" type="button" aria-label="작업 플로우 열기" data-tooltip="작업 플로우 열기">
+          <span><b>작업 플로우</b><small>실행·검증 절차</small></span><i>→</i>
         </button>
         <div class="sidebar-footer">
           <span class="local-lock"><i></i>로컬 전용</span>
-          <small>외부 게이트웨이와 원격 접속이 꺼져 있습니다.</small>
+          <small>원격 접속과 외부 게이트웨이 없음</small>
         </div>
       </nav>
 
       <section class="mission-pane">
-        <header class="mission-header">
-          <div class="mission-copy">
-            <div class="mission-context"><span id="mission-board-name">BOARD</span><i aria-hidden="true"></i><span id="mission-run-time">대기</span><span id="mission-runtime-badge" class="runtime-badge">WINDOWS</span></div>
-            <h1 id="mission-title" tabindex="-1">새 목표를 기다리고 있습니다</h1>
-            <p id="mission-subtitle">Owner가 목표를 주면 Director가 분석·계획·위임·검증 흐름을 구성합니다.</p>
+        <div class="mission-sticky" id="active-goal-panel" data-panel-section="active-goal" aria-label="선택한 디렉터와 목표 현황">
+          <header class="mission-header">
+            <div class="mission-copy">
+              <div class="mission-context"><span id="mission-board-name">보드</span><i aria-hidden="true"></i><span id="mission-run-time">대기</span><span id="mission-runtime-badge" class="runtime-badge">윈도우</span></div>
+              <h1 id="mission-title" tabindex="-1">새 목표를 기다리고 있습니다</h1>
+              <button class="objective-toggle" id="mission-objective-toggle" type="button" aria-expanded="false" hidden>목표 전체 보기</button>
+              <p id="mission-subtitle">오너가 목표를 주면 디렉터가 분석·계획·위임·검증 흐름을 구성합니다.</p>
+            </div>
+            <div class="mission-actions">
+              <button class="secondary-button" id="owner-dispatch-btn" type="button">대기 워커 없음</button>
+              <button class="secondary-button icon-only" id="owner-refresh-btn" type="button" aria-label="새로고침">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+              </button>
+              <button class="panel-toggle icon" type="button" data-panel-toggle="active-goal" aria-expanded="true" aria-label="현재 목표 현황 접기"><i aria-hidden="true"></i></button>
+            </div>
+          </header>
+
+          <div class="panel-content">
+            <span id="status-announcer" class="visually-hidden" aria-live="polite"></span>
+            <section class="sync-banner" id="sync-banner" role="status" aria-live="polite" hidden></section>
+            <section class="goal-progress" id="goal-progress" aria-label="목표 6단계 진행 상태" hidden></section>
           </div>
-          <div class="mission-actions">
-            <button class="secondary-button" id="owner-dispatch-btn" type="button">대기 Worker 없음</button>
-            <button class="secondary-button icon-only" id="owner-refresh-btn" type="button" aria-label="새로고침">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
-            </button>
-          </div>
-        </header>
+        </div>
 
-        <section class="current-focus" id="current-focus"></section>
-        <span id="status-announcer" class="visually-hidden" aria-live="polite"></span>
-
-        <section class="sync-banner" id="sync-banner" role="status" aria-live="polite" hidden></section>
-
-        <section class="goal-progress" id="goal-progress" aria-label="지속형 Goal 진행 상태" hidden></section>
-
-        <section class="owner-gate" id="owner-gate" hidden>
-          <div><span>OWNER 확인</span><strong>판단이 필요한 작업이 있습니다</strong></div>
+        <section class="owner-gate" id="owner-gate" data-panel-section="owner-gate" hidden>
+          <div><span>오너 확인</span><strong>판단이 필요한 작업이 있습니다</strong></div>
           <button type="button" id="owner-gate-open">확인</button>
         </section>
 
-        <section class="trace-section">
+        <section class="primary-section director-brief-section" aria-labelledby="director-brief-title">
+          <header class="primary-section-header"><div><h2 id="director-brief-title">디렉터 공개 판단</h2><span id="director-brief-updated">공개 체크포인트</span></div><button type="button" class="section-link" data-select-trace="analysis">판단 근거 보기</button></header>
+          <section class="current-focus" id="current-focus" aria-label="확인한 사실, 지금 판단, 다음 완료 조건"></section>
+        </section>
+
+        <section class="primary-section current-wave-section" id="current-wave" aria-labelledby="current-wave-title">
+          <header class="primary-section-header"><div><h2 id="current-wave-title">현재 작업 묶음</h2><span id="current-wave-summary">워커 배치를 기다리는 중</span></div><button type="button" class="section-link" data-select-trace="wave">배정 근거 보기</button></header>
+          <div class="current-wave-grid" id="current-wave-list" aria-live="polite"></div>
+        </section>
+
+        <section class="primary-section gate-runway-section" id="gate-runway" aria-labelledby="gate-runway-title">
+          <header class="primary-section-header"><div><h2 id="gate-runway-title">완료 게이트</h2><span id="gate-runway-summary">현재 후보 기준</span></div><button type="button" class="section-link" data-select-trace="final">전체 증거 보기</button></header>
+          <div class="gate-runway" id="gate-runway-list"></div>
+        </section>
+
+        <section class="goal-switcher" id="goal-switcher" data-panel-section="goal-queue" aria-label="현재, 대기 및 최근 목표" hidden>
+          <header>
+            <div><span>목표 대기열</span><strong>현재 · 대기 · 최근 목표</strong></div>
+            <div class="panel-header-actions"><small id="goal-switcher-summary"></small><button class="panel-toggle" type="button" data-panel-toggle="goal-queue" aria-expanded="false"><span>목표 목록 펼치기</span><i aria-hidden="true"></i></button></div>
+          </header>
+          <div class="panel-content">
+            <div class="goal-switcher-list" id="goal-switcher-list" role="list"></div>
+            <p class="goal-submit-receipt" id="goal-submit-receipt" role="status" aria-live="polite" hidden></p>
+          </div>
+        </section>
+
+        <section class="trace-section" data-panel-section="activity" aria-label="실행 활동">
+          <div class="panel-splitter trace-splitter" id="trace-splitter" role="separator" aria-orientation="horizontal" aria-label="활동 패널 높이 조절" aria-valuemin="140" aria-valuemax="495" tabindex="0" title="위아래로 드래그 · 더블클릭으로 기본 높이"></div>
           <header class="section-header">
-            <div><h2>실행 흐름</h2><p>요구사항부터 구현과 검증까지 시간순으로 추적합니다.</p></div>
+            <div class="activity-title"><span class="eyebrow-label">실행 활동</span><h2>공개 이벤트와 도구 결과</h2></div>
             <div class="trace-toolbar">
               <div class="trace-summary" id="trace-summary"></div>
               <div class="trace-filters" role="group" aria-label="실행 흐름 필터">
-                <button type="button" data-trace-filter="decision" aria-pressed="true">결정</button>
-                <button type="button" data-trace-filter="worker" aria-pressed="true">Worker</button>
-                <button type="button" data-trace-filter="gate" aria-pressed="true">Gate</button>
+                <button type="button" data-trace-filter="decision" aria-pressed="true">판단</button>
+                <button type="button" data-trace-filter="worker" aria-pressed="true">워커</button>
+                <button type="button" data-trace-filter="gate" aria-pressed="true">검증</button>
                 <button type="button" data-trace-filter="failure" aria-pressed="true">실패</button>
               </div>
+              <button class="panel-toggle icon" type="button" data-panel-toggle="activity" aria-expanded="true" aria-label="실행 활동 접기"><i aria-hidden="true"></i></button>
             </div>
           </header>
-          <div class="trace-list" id="owner-trace-list"></div>
+          <div class="panel-content"><div class="trace-list" id="owner-trace-list" aria-label="목표 실행 타임라인"></div></div>
         </section>
 
-        <section class="attention-section" id="attention-section" hidden>
-          <header class="section-header"><div><h2>내 확인 필요</h2><p>멈춰 있거나 결정이 필요한 작업입니다.</p></div></header>
-          <div id="owner-attention-list"></div>
+        <section class="attention-section" id="attention-section" data-panel-section="attention" hidden>
+          <header class="section-header"><div><h2>내 확인 필요</h2><p>멈춰 있거나 결정이 필요한 작업입니다.</p></div><button class="panel-toggle icon" type="button" data-panel-toggle="attention" aria-expanded="true" aria-label="내 확인 필요 접기"><i aria-hidden="true"></i></button></header>
+          <div class="panel-content"><div id="owner-attention-list"></div></div>
         </section>
       </section>
 
-      <aside class="command-pane" id="command-pane" tabindex="-1">
+      <aside class="command-pane" id="command-pane" tabindex="-1" aria-labelledby="inspector-title" aria-describedby="inspector-subtitle">
+        <div class="panel-splitter inspector-splitter" id="inspector-splitter" role="separator" aria-orientation="vertical" aria-label="상세 패널 너비 조절" aria-valuemin="360" aria-valuemax="640" tabindex="0" title="좌우로 드래그 · 더블클릭으로 기본 너비"></div>
         <header class="command-header">
-          <div><h2 id="inspector-title">Director 개요</h2><p>근거, 결과, 다음 제어</p></div>
-          <div class="command-header-actions"><button class="quiet-button" id="inspector-expand" type="button">크게 보기</button><button class="quiet-button square" id="inspector-close" type="button" aria-label="Inspector 닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></div>
+          <div><span>선택한 항목</span><h2 id="inspector-title">디렉터 개요</h2><p id="inspector-subtitle">근거, 결과, 다음 제어</p></div>
+          <div class="command-header-actions">
+            <button class="quiet-button" id="inspector-expand" type="button" aria-pressed="false">전체 화면</button>
+            <button class="quiet-button square" id="inspector-close" type="button" aria-label="상세 패널 접기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
+          </div>
         </header>
         <div class="inspector-scroll">
           <section class="inspector-content" id="owner-inspector"></section>
           <details class="conversation" id="conversation-panel">
-            <summary><span>Owner ↔ Director</span><small id="conversation-count">메시지 0개</small></summary>
+            <summary><span>오너 ↔ 디렉터</span><small id="conversation-count">메시지 0개</small></summary>
             <div class="conversation-stream" id="owner-chat-stream"></div>
           </details>
         </div>
         <div class="composer">
-          <label class="visually-hidden" for="owner-message-input">Owner 요청</label>
+          <div class="composer-scope" id="composer-scope"><span>받는 곳</span><strong id="composer-target">디렉터</strong><small id="composer-scope-note">새 목표 · 질문</small></div>
+          <label class="visually-hidden" for="owner-message-input">오너 요청</label>
           <textarea id="owner-message-input" rows="3" placeholder="목표, 제약, 완료 기준을 입력하세요…"></textarea>
           <div class="composer-footer">
             <select id="owner-message-mode" aria-label="요청 처리 방식">
@@ -127,7 +163,7 @@
 
     <dialog id="workflow-dialog" class="sheet-dialog" aria-labelledby="workflow-dialog-title">
       <form method="dialog" class="sheet-card wide-sheet">
-        <header><div><h2 id="workflow-dialog-title">운영 플로우</h2><p>Director가 작업 유형과 위험에 맞는 실행·검증 흐름을 선택합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
+        <header><div><h2 id="workflow-dialog-title">운영 플로우</h2><p>디렉터가 작업 유형과 위험에 맞는 실행·검증 흐름을 선택합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
         <div class="workflow-grid" id="owner-workflow-list"></div>
       </form>
     </dialog>
@@ -144,7 +180,7 @@
         <div id="management-feedback" class="management-feedback" role="status" aria-live="polite" hidden></div>
         <div class="management-body">
           <section id="management-panel-projects" class="management-panel active" role="tabpanel" data-management-panel="projects" aria-labelledby="management-tab-projects">
-            <header class="panel-heading"><div><h3 id="projects-heading">Project Director 배정</h3><p>각 프로젝트가 실제로 실행될 운영체제와 경로를 함께 저장합니다.</p></div></header>
+            <header class="panel-heading"><div><h3 id="projects-heading">프로젝트 디렉터 배정</h3><p>각 프로젝트가 실제로 실행될 운영체제와 경로를 함께 저장합니다.</p></div></header>
             <div id="project-list" class="project-list"></div>
             <fieldset class="project-editor">
               <legend>새 프로젝트 연결</legend>
@@ -152,9 +188,9 @@
               <label id="project-distro-field" hidden><span>WSL 배포판</span><select id="project-distro"></select></label>
               <label><span>표시 이름</span><input id="project-name" type="text" maxlength="80" autocomplete="off" placeholder="예: Praetorium" /></label>
               <label class="path-field"><span>프로젝트 절대 경로</span><input id="project-path" type="text" autocomplete="off" placeholder="C:\projects\praetorium" aria-describedby="project-path-help" /><small id="project-path-help" aria-live="polite">Windows에서 존재하는 폴더를 입력하세요.</small></label>
-              <div class="project-editor-actions"><button type="button" class="secondary-button" id="validate-project-btn">경로 확인</button><button type="button" class="primary-button" id="add-project-btn">Director에 연결</button></div>
+              <div class="project-editor-actions"><button type="button" class="secondary-button" id="validate-project-btn">경로 확인</button><button type="button" class="primary-button" id="add-project-btn">디렉터에 연결</button></div>
             </fieldset>
-            <section class="project-discovery"><div><h4>로컬 Git 프로젝트 자동 연결</h4><p>선택한 실행 환경에서 Git 저장소를 찾아 빈 Director 슬롯에 바로 연결합니다. GitHub 계정은 조회하지 않습니다.</p><small id="discovery-target">검색 대상 확인 중</small></div><label><span>검색 루트</span><input id="discovery-root" type="text" placeholder="C:\projects" aria-describedby="discovery-target" /></label><button type="button" class="secondary-button" id="discover-projects-btn">찾아서 빈 슬롯에 연결</button></section>
+            <section class="project-discovery"><div><h4>로컬 Git 프로젝트 자동 연결</h4><p>선택한 실행 환경에서 Git 저장소를 찾아 빈 디렉터 슬롯에 바로 연결합니다. GitHub 계정은 조회하지 않습니다.</p><small id="discovery-target">검색 대상 확인 중</small></div><label><span>검색 루트</span><input id="discovery-root" type="text" placeholder="C:\projects" aria-describedby="discovery-target" /></label><button type="button" class="secondary-button" id="discover-projects-btn">찾아서 빈 슬롯에 연결</button></section>
           </section>
 
           <section id="management-panel-runtimes" class="management-panel" role="tabpanel" data-management-panel="runtimes" aria-labelledby="management-tab-runtimes" hidden>
@@ -165,12 +201,12 @@
 
           <section id="management-panel-roles" class="management-panel" role="tabpanel" data-management-panel="roles" aria-labelledby="management-tab-roles" hidden>
             <header class="panel-heading"><div><h3 id="roles-heading">누가 어떤 책임으로 일하는가</h3><p>프로필은 모델 이름이 아니라 권한과 책임, 호출 시점을 고정하는 역할 계약입니다.</p></div></header>
-            <div class="role-flow" aria-label="역할 실행 순서"><span>Director 지휘</span><i>→</i><span>Worker 구현</span><i>→</i><span>전문 검토</span><i>→</i><span>수정</span><i>→</i><span>품질 판정</span></div>
+            <div class="role-flow" aria-label="역할 실행 순서"><span>디렉터 지휘</span><i>→</i><span>워커 구현</span><i>→</i><span>전문 검토</span><i>→</i><span>수정</span><i>→</i><span>품질 판정</span></div>
             <div class="role-browser"><div id="profile-list" class="profile-list"></div><article id="profile-detail" class="profile-detail"></article></div>
           </section>
 
           <section id="management-panel-skills" class="management-panel" role="tabpanel" data-management-panel="skills" aria-labelledby="management-tab-skills" hidden>
-            <header class="panel-heading"><div><h3 id="skills-heading">어떻게 일할 것인가</h3><p>스킬은 역할 프로필이 작업을 분해하고 검토하고 인계하는 재사용 절차입니다. Director가 목표와 위험에 따라 필요한 것만 붙입니다.</p></div></header>
+            <header class="panel-heading"><div><h3 id="skills-heading">어떻게 일할 것인가</h3><p>스킬은 역할 프로필이 작업을 분해하고 검토하고 인계하는 재사용 절차입니다. 디렉터가 목표와 위험에 따라 필요한 것만 붙입니다.</p></div></header>
             <div class="skill-browser"><div id="skill-list" class="skill-list"></div><article id="skill-detail" class="skill-detail"></article></div>
           </section>
         </div>

@@ -72,7 +72,7 @@ describe('WSL runtime boundary', () => {
     let command = null;
     runtime._run = async args => {
       command = args;
-      return { stdout: Buffer.from(`revision-one\nsha256:${'a'.repeat(64)}\n1\n`) };
+      return { stdout: Buffer.from(`revision-one\nsha256:${'a'.repeat(64)}\n1\n0\n`) };
     };
 
     const snapshot = await runtime.candidateSnapshot({ distro: 'Ubuntu', path: '/home/owner/app' });
@@ -83,6 +83,79 @@ describe('WSL runtime boundary', () => {
     assert.match(script, /candidate-metadata-changed/);
     assert.match(script, /dirty-submodule-candidate/);
     assert.ok(script.includes('status --porcelain=v2'));
-    assert.ok(script.includes('fallback_manifest() { find . \\( -type f -o -type l \\)'));
+    assert.ok(script.includes('fallback_manifest() { find . \\( -iname .git -o -iname node_modules \\) -prune'));
+    assert.equal(
+      script.match(/stat -c "%s:%y:%z:%i:%d"/g)?.length,
+      4,
+      'both Git and fallback snapshots must compare nanosecond mtime/ctime plus inode/device',
+    );
+    assert.ok(!script.includes('stat -c "%s:%Y:%Z:%i:%d"'));
+  });
+
+  it('preserves case-distinct WSL declarations instead of applying Windows deduplication', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    let command = null;
+    runtime._run = async args => {
+      command = args;
+      return { stdout: Buffer.from(`revision-case\nsha256:${'c'.repeat(64)}\n0\n2\n`) };
+    };
+
+    const snapshot = await runtime.candidateSnapshot({
+      distro: 'Ubuntu', path: '/home/owner/app',
+      declaredPaths: ['dist/Foo.bin', 'dist/foo.bin'],
+    });
+    assert.deepEqual(command.slice(-3), [
+      '/home/owner/app', 'dist/Foo.bin', 'dist/foo.bin',
+    ]);
+    assert.deepEqual(snapshot.declaredPaths, ['dist/Foo.bin', 'dist/foo.bin']);
+    assert.equal(snapshot.declaredPathCount, 2);
+  });
+
+  it('binds normalized declared paths as literal argv and fails closed on unsafe WSL symlinks', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    let command = null;
+    runtime._run = async args => {
+      command = args;
+      return { stdout: Buffer.from(`revision-two\nsha256:${'b'.repeat(64)}\n0\n2\n`) };
+    };
+    const literal = 'dist/artifact $(touch should-not-run).js';
+    const snapshot = await runtime.candidateSnapshot({
+      distro: 'Ubuntu', path: '/home/owner/app',
+      declaredPaths: ['reports\\review.json', literal],
+    });
+
+    assert.deepEqual(command.slice(-3), [
+      '/home/owner/app', literal, 'reports/review.json',
+    ]);
+    const script = command[command.indexOf('-c') + 1];
+    assert.ok(!script.includes('should-not-run'), 'declared literals must never be interpolated into shell source');
+    assert.match(script, /before_declared="\$\(declared_manifest "\$@"/);
+    assert.match(script, /after_declared="\$\(declared_manifest "\$@"/);
+    assert.match(script, /declared-path-outside-root/);
+    assert.match(script, /declared-symlink-candidate/);
+    assert.match(script, /sort -zu/);
+    assert.deepEqual(snapshot.declaredPaths, [literal, 'reports/review.json']);
+    assert.equal(snapshot.declaredPathCount, 2);
+    assert.equal(snapshot.bindingMode, 'declared-paths.v1');
+    assert.deepEqual(snapshot.declaredBindings, [
+      { path: literal, state: 'bound' },
+      { path: 'reports/review.json', state: 'bound' },
+    ]);
+  });
+
+  it('rejects declared WSL traversal and protected paths before launching the distro', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    let calls = 0;
+    runtime._run = async () => { calls += 1; return { stdout: Buffer.alloc(0) }; };
+
+    await assert.rejects(
+      runtime.candidateSnapshot({ distro: 'Ubuntu', path: '/home/owner/app', declaredPaths: ['../outside.bin'] }),
+      /must not traverse/,
+    );
+    await assert.rejects(
+      runtime.candidateSnapshot({ distro: 'Ubuntu', path: '/home/owner/app', declaredPaths: ['node_modules/pkg'] }),
+      /must not enter/,
+    );
+    assert.equal(calls, 0);
   });
 });

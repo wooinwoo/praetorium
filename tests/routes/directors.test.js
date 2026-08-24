@@ -6,7 +6,17 @@ let routes;
 let service;
 
 function response() {
-  return { status: 0, body: null, writeHead(status) { this.status = status; }, end(data) { this.body = JSON.parse(data); } };
+  return {
+    status: 0,
+    body: null,
+    headers: {},
+    setHeader(name, value) { this.headers[String(name).toLowerCase()] = value; },
+    writeHead(status, headers = {}) {
+      this.status = status;
+      for (const [name, value] of Object.entries(headers)) this.headers[String(name).toLowerCase()] = value;
+    },
+    end(data) { this.body = data == null || data === '' ? null : JSON.parse(data); },
+  };
 }
 
 function setup() {
@@ -17,10 +27,15 @@ function setup() {
   };
   service = {
     summary: () => ({ localOnly: true, directors: [], goals: [activeGoal], activeGoals: [activeGoal] }),
+    consoleSummary: ({ directorId } = {}) => ({
+      schema: 'director-console.v1', revision: 'sha256:console-test', selectedDirectorId: directorId || null,
+      localOnly: true, directors: [], goals: [activeGoal], activeGoals: [activeGoal.id], queuedGoals: [],
+    }),
     syncProjects: () => [],
     getRun: id => id === 'run-1' ? { id } : null,
     getGoal: id => id === activeGoal.id ? activeGoal : null,
     answerGoalDecision: async (directorId, goalId, payload) => ({ directorId, goalId, ...payload }),
+    controlGoal: async (directorId, goalId, action, options) => ({ directorId, goalId, action, ...options }),
     getBoard: () => [],
     getBoardStatus: () => ({ refreshing: true }),
     getTaskDetails: async (_id, taskId) => ({ task: { id: taskId }, latest_summary: 'done' }),
@@ -51,6 +66,26 @@ describe('director routes', () => {
     assert.equal(res.body.localOnly, true);
     assert.equal(res.body.activeGoals.length, 1);
     assert.equal(res.body.activeGoals[0].id, 'goal-1');
+  });
+
+  it('serves a compact conditional console snapshot without changing the default response', () => {
+    const first = response();
+    routes['GET /api/directors']({
+      query: { view: 'compact', directorId: 'project-director-1' }, headers: {},
+    }, first);
+    assert.equal(first.status, 200);
+    assert.equal(first.body.schema, 'director-console.v1');
+    assert.equal(first.body.selectedDirectorId, 'project-director-1');
+    assert.deepEqual(first.body.activeGoals, ['goal-1']);
+    assert.equal(first.headers.etag, '"sha256:console-test"');
+
+    const unchanged = response();
+    routes['GET /api/directors']({
+      query: { view: 'compact', revision: 'sha256:console-test' }, headers: {},
+    }, unchanged);
+    assert.equal(unchanged.status, 304);
+    assert.equal(unchanged.body, null);
+    assert.equal(unchanged.headers.etag, '"sha256:console-test"');
   });
 
   it('serves the durable Goal independently from Director turns', () => {
@@ -99,6 +134,39 @@ describe('director routes', () => {
     assert.match(duplicate.body.error, /not awaiting/i);
   });
 
+  it('passes queue and lifecycle controls to the durable Goal service', async () => {
+    let captured = null;
+    service.controlGoal = async (directorId, goalId, action, options) => {
+      captured = { directorId, goalId, action, options };
+      return { id: goalId, status: 'queued', queuePosition: 1, controlAction: action };
+    };
+    const res = response();
+    await routes['POST /api/directors/:id/goals/:goalId/control']({
+      params: { id: 'project-director-1', goalId: 'goal-queued' },
+      body: { action: 'reorder', position: 'front', reason: 'urgent' },
+    }, res);
+    assert.equal(res.status, 202);
+    assert.deepEqual(captured, {
+      directorId: 'project-director-1', goalId: 'goal-queued', action: 'reorder',
+      options: { position: 'front', reason: 'urgent' },
+    });
+  });
+
+  it('returns explicit Goal-control 4xx responses', async () => {
+    service.controlGoal = async () => {
+      throw Object.assign(new Error('Cannot control Goal while 1 Worker is running'), {
+        statusCode: 409, code: 'GOAL_CONTROL_CONFLICT',
+      });
+    };
+    const res = response();
+    await routes['POST /api/directors/:id/goals/:goalId/control']({
+      params: { id: 'project-director-1', goalId: 'goal-1' }, body: { action: 'cancel' },
+    }, res);
+    assert.equal(res.status, 409);
+    assert.equal(res.body.code, 'GOAL_CONTROL_CONFLICT');
+    assert.match(res.body.error, /Worker is running/);
+  });
+
   it('queues a message instead of blocking the HTTP request', async () => {
     const res = response();
     await routes['POST /api/directors/:id/messages']({ params: { id: 'project-director-1' }, body: { prompt: 'go' } }, res);
@@ -135,6 +203,22 @@ describe('director routes', () => {
     assert.equal(res.status, 202);
     assert.equal(res.body.accepted, true);
     assert.equal(res.body.workerObserved, false);
+  });
+
+  it('preserves the durable-intervention conflict code for orphan or legacy cards', async () => {
+    service.interveneTask = async () => {
+      throw Object.assign(new Error('Worker intervention requires a durable Goal task record.'), {
+        statusCode: 409,
+        code: 'INTERVENTION_NOT_DURABLE',
+      });
+    };
+    const res = response();
+    await routes['POST /api/directors/:id/tasks/:taskId/interventions']({
+      params: { id: 'project-director-1', taskId: 't_legacy_orphan' },
+      body: { message: 'change direction' },
+    }, res);
+    assert.equal(res.status, 409);
+    assert.equal(res.body.code, 'INTERVENTION_NOT_DURABLE');
   });
 
   it('controls worker execution lifecycle', async () => {

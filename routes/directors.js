@@ -2,7 +2,20 @@ export function register(ctx) {
   const { addRoute, json, readBody, directorService } = ctx;
   if (!directorService) return;
 
-  addRoute('GET', '/api/directors', (_req, res) => json(res, directorService.summary()));
+  addRoute('GET', '/api/directors', (req, res) => {
+    if (req.query?.view !== 'compact') return json(res, directorService.summary());
+    const snapshot = directorService.consoleSummary({ directorId: req.query?.directorId });
+    const etag = `"${snapshot.revision}"`;
+    const conditional = String(req.query?.revision || req.headers?.['if-none-match'] || '')
+      .trim().replace(/^W\//, '').replace(/^"|"$/g, '');
+    if (conditional && conditional === snapshot.revision) {
+      res.writeHead(304, { 'Cache-Control': 'no-store', ETag: etag });
+      res.end();
+      return;
+    }
+    res.setHeader?.('ETag', etag);
+    json(res, snapshot);
+  });
 
   addRoute('POST', '/api/directors/sync', (_req, res) => {
     try { json(res, { directors: directorService.syncProjects() }); }
@@ -32,6 +45,22 @@ export function register(ctx) {
     }
   });
 
+  addRoute('POST', '/api/directors/:id/goals/:goalId/control', async (req, res) => {
+    try {
+      const body = await readBody(req);
+      json(res, await directorService.controlGoal(
+        req.params.id,
+        req.params.goalId,
+        body.action,
+        { position: body.position, reason: body.reason },
+      ), 202);
+    } catch (err) {
+      const status = Number(err.statusCode) || (/not found/i.test(err.message) ? 404
+        : /unsupported|position/i.test(err.message) ? 400 : 409);
+      json(res, { error: err.message, code: err.code || null }, status);
+    }
+  });
+
   addRoute('GET', '/api/directors/:id/board', (req, res) => {
     try {
       json(res, {
@@ -56,7 +85,10 @@ export function register(ctx) {
     try {
       const body = await readBody(req);
       json(res, await directorService.interveneTask(req.params.id, req.params.taskId, body.message), 202);
-    } catch (err) { json(res, { error: err.message }, /not found/i.test(err.message) ? 404 : 400); }
+    } catch (err) {
+      const status = Number(err.statusCode) || (/not found/i.test(err.message) ? 404 : 400);
+      json(res, { error: err.message, ...(err.code ? { code: err.code } : {}) }, status);
+    }
   });
 
   addRoute('POST', '/api/directors/:id/tasks/:taskId/control', async (req, res) => {

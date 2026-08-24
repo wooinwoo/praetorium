@@ -24,6 +24,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify release version parity
+        shell: pwsh
+        env:
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+          RELEASE_REF_NAME: ${{ github.ref_name }}
+        run: |
+          function Read-MatchedVersion {
+            param(
+              [Parameter(Mandatory)][string]$Path,
+              [Parameter(Mandatory)][string]$Pattern
+            )
+            $match = [regex]::Match((Get-Content -Raw -LiteralPath $Path), $Pattern)
+            if (-not $match.Success) { throw "Could not read a version from $Path." }
+            $match.Groups[1].Value
+          }
+
+          $package = Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json
+          $versions = [ordered]@{
+            'package.json' = [string]$package.version
+            'package-lock.json' = Read-MatchedVersion 'package-lock.json' '(?m)^\s{2}"version"\s*:\s*"([^"]+)"'
+            'package-lock.json root package' = Read-MatchedVersion 'package-lock.json' '(?ms)^\s{4}""\s*:\s*\{\s*"name"\s*:\s*"praetorium",\s*"version"\s*:\s*"([^"]+)"'
+            'src-tauri/Cargo.toml' = Read-MatchedVersion 'src-tauri/Cargo.toml' '(?m)^version\s*=\s*"([^"]+)"\s*$'
+            'src-tauri/Cargo.lock' = Read-MatchedVersion 'src-tauri/Cargo.lock' '(?ms)^\[\[package\]\]\s*name\s*=\s*"praetorium"\s*version\s*=\s*"([^"]+)"'
+            'src-tauri/tauri.conf.json' = [string](Get-Content -Raw -LiteralPath src-tauri/tauri.conf.json | ConvertFrom-Json).version
+            'scripts/install-praetorium.ps1' = Read-MatchedVersion 'scripts/install-praetorium.ps1' '(?m)^\s*\[string\]\$Version\s*=\s*''v([^'']+)'''
+          }
+
+          $expected = [string]$package.version
+          $mismatches = @($versions.GetEnumerator() | Where-Object { $_.Value -ne $expected })
+          if (-not $expected -or $mismatches.Count -gt 0) {
+            $detail = ($versions.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
+            throw "Praetorium version mismatch: $detail"
+          }
+          if ($env:RELEASE_REF_TYPE -eq 'tag' -and $env:RELEASE_REF_NAME -ne "v$expected") {
+            throw "Release tag $($env:RELEASE_REF_NAME) does not match manifest version v$expected."
+          }
+          Write-Host "Praetorium version parity verified: v$expected"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24

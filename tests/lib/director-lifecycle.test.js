@@ -202,8 +202,16 @@ class FakeRuntime {
       },
       latest_summary: task.summary || '',
       validation: task.report || null,
-      comments: [],
+      comments: [{ author: task.assignee || 'worker', body: 'OBSERVED: bounded task evidence recorded.' }],
+      events: [{ type: 'task_observed', status: task.status }],
+      runs: [{ id: `run-${task.id}`, status: task.status }],
     };
+  }
+
+  async taskLog({ taskId }) {
+    const task = this.tasks.get(taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    return `task=${taskId} status=${task.status}\n${task.summary || ''}`;
   }
 
   async candidateSnapshot() {

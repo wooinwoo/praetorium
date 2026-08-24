@@ -15,7 +15,7 @@ Praetorium never starts a remote-control service. Its small HTTP server is force
 
 ## Install on the company Windows PC
 
-`v2.0.0` is the last published binary baseline. The current `v2.2.0` source adds native WSL2 projects, environment management, durable Goal queues, runtime hardening, and decision-grade supervision UI; build it locally until the Owner publishes a signed release tag. The only expected interactive step is `codex login` when the machine has not already been authenticated.
+`v2.0.0` is the last published binary baseline. The current `v2.3.0` source adds Owner-controlled durable Goal queues, restart-safe autonomous supervision, durable Worker interventions with delivery receipts and acknowledgements, fair cross-project dispatch, exact candidate binding, and fail-closed high-risk workflows; build it locally until the Owner publishes a reviewed release tag whose tag and packaged versions match. The only expected interactive step is `codex login` when the machine has not already been authenticated.
 
 ```powershell
 git clone https://github.com/wooinwoo/praetorium.git
@@ -23,6 +23,12 @@ cd praetorium
 npm ci
 npm test
 npm run tauri build -- --bundles nsis
+```
+
+After that reviewed, matching tag and its checksummed release assets exist, run the company-PC installer from the checked-out repository:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-praetorium.ps1 -Version v2.3.0 -ProjectsRoot C:\projects
 ```
 
 The versioned bootstrap script (`scripts/install-praetorium.ps1`) used for published releases:
@@ -37,6 +43,11 @@ The versioned bootstrap script (`scripts/install-praetorium.ps1`) used for publi
 
 Praetorium is a standalone product and repository. Its durable project and Director state lives in `%LOCALAPPDATA%\PraetoriumData`, outside the desktop shell installation, so reinstalling or uninstalling the shell does not erase orchestration state.
 
+Choose the company PC's initial state explicitly:
+
+- **Start fresh:** run the installer and do not copy either state directory. Praetorium creates new Director/Goal state and Hermes creates new local boards.
+- **Continue the current machine:** close Praetorium on both PCs, confirm no process is listening on port `3848`, back up any target-PC copies, then copy `%LOCALAPPDATA%\PraetoriumData` and Hermes' durable board state at `%LOCALAPPDATA%\hermes\kanban` from the source PC to the same locations on the company PC. Rerun the same reviewed-tag installer command to re-pin the runtime and profiles for the target `-ProjectsRoot`, then reconnect or correct project paths before resuming Goals. For a WSL runtime, transfer that distribution's `~/.hermes/kanban` separately. Do not merge live state or copy `.env`, session, or Codex credential files; complete `codex login` on the company PC.
+
 ## How it works
 
 ```text
@@ -50,21 +61,21 @@ Owner
 
 Each delegated Owner request creates one durable Goal. A clear request first uses a combined read-only analysis-and-plan turn; if either envelope is invalid or times out, Praetorium falls back to separate analysis and planning checkpoints. Every later evidence assessment uses a fresh Director Codex app-server turn. A completed Director turn is only a checkpoint and does not complete the Goal. Conversation-only messages remain disposable turns. Praetorium injects a bounded handoff for conversation context and a bounded durable Goal snapshot for supervision, avoiding unbounded context growth and Hermes `v0.20.5` resume stalls.
 
-Each Director supervises one active Goal at a time because all writers for that project share one working directory. Additional delegated requests are accepted into a durable FIFO Goal queue instead of being rejected; terminal completion automatically promotes the next Goal. Different project Directors still run independently in parallel.
+Each Director supervises one active Goal at a time because all writers for that project share one working directory. Additional delegated requests enter a durable ordered Goal queue instead of being rejected. The Owner can reorder, defer, or cancel queued Goals; terminal completion automatically promotes the next eligible Goal. A stopped blocked or failed Goal can be retried through a fresh planning generation, while an `awaiting_owner` Goal must continue through its exact pending decision. Different project Directors still run independently in parallel.
 
 The Director emits a validated `executing`, `awaiting_owner`, `complete`, or `blocked` control decision. The host materializes `executing` actions as a bounded Worker wave. When every card in that wave reaches a terminal task state, a fresh Director turn reads its results and public evidence, then starts remediation or fresh review, asks one material Owner question, or proposes completion. Persisted Goal status makes planning, execution, evaluation, remediation, verification, waiting, and terminal state visible.
 
 Hermes stores durable profiles, boards, tasks, results, and Worker lifecycle state; Praetorium stores the Goal, workflow, action journal, waves, decisions, evidence, and completion report. Terminal history is compacted to bounded retention windows while active, queued, approval-bound, and referenced audit state is preserved. Every credited task receives a host-observation receipt containing hashes of the Hermes task record, validation, events, runs, comments, raw log when available, and the exact evidence object credited by the gate. That receipt proves which local bytes Praetorium observed; it is explicitly not an independent attestation that a Worker-authored command-exit claim is true.
 
-The scheduler evaluates project boards independently, so a slow or broken project does not stall the others. It checks active work promptly and exponentially backs idle boards off to a 60-second ceiling; a bounded zero-spawn pass still reconciles orphaned Worker processes every minute. Parallelism is selected from ready work, running work, CPU, and memory, capped at 12 workers across the app. Workers use `dir:<project cwd>`, not per-task worktrees: the host dependency-serializes every write action in a project, rejects mixed write/review waves, and also applies a fail-closed board-wide writer cap to legacy or manually created cards. Read-only review/gate-only waves and separate projects can still run in parallel. A declared `write_scope` is a task contract, not a narrower filesystem sandbox than the project root. Supervision and remediation loops are bounded; reaching a limit produces an explicit Owner decision instead of retrying forever.
+The scheduler evaluates project boards independently, so a slow or broken project does not stall the others. It checks active work promptly and exponentially backs idle boards off to a 60-second ceiling; repeated board or dispatch failures use a persisted per-project infrastructure breaker, and a bounded zero-spawn pass still reconciles orphaned Worker processes every minute. Parallelism is selected from ready work, running work, CPU, and memory, capped at 12 workers across the app. Capacity is assigned to ready project Directors before asynchronous board reads and rotates fairly across ticks, so a fast project cannot repeatedly consume every slot while another board is slow. Workers use `dir:<project cwd>`, not per-task worktrees: the host dependency-serializes every write action in a project, rejects mixed write/review waves, and also applies a fail-closed board-wide writer cap to legacy or manually created cards. Read-only review/gate-only waves and separate projects can still run in parallel. A declared `write_scope` is a task contract, not a narrower filesystem sandbox than the project root. Supervision and remediation loops are bounded; reaching a limit produces an explicit Owner decision instead of retrying forever.
 
-After a restart, an interrupted Director turn is marked failed while its non-terminal Goal remains active. Praetorium resumes initial planning, idempotent wave materialization, approved exact-plan execution, or evidence evaluation from persisted state and the Hermes board rather than relying on the old model session or duplicating cards. Persisted Owner pause/resume intent is reconciled before dispatch; an `awaiting_owner` Goal remains parked.
+After a restart, an interrupted Director turn is marked failed while its non-terminal Goal remains active. Praetorium resumes initial planning through a fresh planning generation, idempotent wave materialization, approved exact-plan execution, or evidence evaluation from persisted state and the Hermes board rather than relying on the old model session or duplicating cards. Persisted Owner pause/resume intent is reconciled before dispatch; materializing, authority-bound, and `awaiting_owner` Goals remain dispatch-quiescent until their saved contract has been recovered and revalidated.
 
 ## Owner Console
 
 Open the desktop app or browse locally to `http://127.0.0.1:3848`.
 
-The single product screen contains the three project Directors, Skill Director, current objective, execution trace, Owner decision queue, detail inspector, and Director conversation. There are no worker tabs to manage.
+The single product screen contains the three project Directors, Skill Director, active/queued/recent Goal switcher, current objective, execution trace, Owner decision queue, detail inspector, and Director conversation. There are no worker tabs to manage. Queue receipts distinguish accepted work from a Director turn that is actually running, and Owner cancellation is rendered as a separate terminal meaning rather than as an unexplained failure.
 
 The central trace is ordered as:
 
@@ -79,6 +90,8 @@ Owner objective
 
 Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, gate freshness, and stop conditions. Wave boundaries distinguish task dispatch from later Director judgment. Selecting a Worker exposes the full task contract, live public operational checkpoints, observed commands, raw worker log, lifecycle events, acceptance criteria, and final evidence. This is an evidence trace, not private model chain-of-thought.
 
+Owner communication follows the Owner's language. When an Owner request contains Korean, public Director summaries and questions plus Worker task text, checkpoints, and final reports are written in Korean. Machine contracts remain stable English: JSON keys, schema names, enum values, identifiers, and the `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` markers are never translated.
+
 New Worker tasks are required to publish concise `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` comments at meaningful checkpoints. These are public operational artifacts, not private chain-of-thought. Historical tasks still expose their raw Hermes log even when they predate the structured checkpoint contract.
 
 The Owner can intervene without opening a Worker tab:
@@ -87,8 +100,12 @@ The Owner can intervene without opening a Worker tab:
 - steer a running Worker in-place through Hermes' live comment bridge (normally observed within about six seconds);
 - immediately pause a running Worker, which terminates its current local process and parks the task for Owner input;
 - resume a paused task and return it to automatic dispatch;
+- reorder, defer, or cancel a queued Goal, and safely retry a stopped blocked or failed Goal;
 - answer a pending Goal decision with a listed option or a written answer, which records the decision and resumes supervision;
-- enlarge the Inspector or change global text scale for long traces.
+- enlarge the Inspector or change global text scale for long traces;
+- drag the Inspector splitter to change its width and the activity splitter to change the activity area's height. Double-click resets a splitter, focused splitters accept Arrow keys, and both dimensions persist locally across reloads.
+
+An Owner intervention is persisted with a unique ID before Hermes delivery. The Inspector distinguishes `DELIVERY PENDING`, `DELIVERY FAILED`, `ACCEPTED / QUEUED`, and `WORKER OBSERVED`; delivery failures retry the same ID, and accepted delivery is never presented as Worker acknowledgement. `WORKER OBSERVED` requires later Worker-authored public evidence containing that intervention ID.
 
 The local Goal API used by this screen is:
 
@@ -97,9 +114,17 @@ GET  /api/directors                         summary including activeGoals, queue
 GET  /api/directors/:id/goals/:goalId      one durable Goal with its bounded run history, waves, evidence, events, and decision state
 POST /api/directors/:id/goals/:goalId/decision
      { "selectedOption": "..." } or { "answer": "..." }
+POST /api/directors/:id/goals/:goalId/control
+     { "action": "reorder", "position": "front" | "back" | 1 } or { "action": "defer" | "cancel" | "retry" }
+GET  /api/directors/:id/tasks/:taskId       one Worker task with durable Praetorium metadata and current evidence
+GET  /api/directors/:id/tasks/:taskId/trace raw local Worker execution trace
+POST /api/directors/:id/tasks/:taskId/interventions
+     { "message": "..." }
+POST /api/directors/:id/tasks/:taskId/control
+     { "action": "pause" | "resume" }
 ```
 
-The decision endpoint returns `202 Accepted` and resumes supervision asynchronously. It accepts answers only while that Goal is `awaiting_owner`. These are loopback-only, same-host application routes, not remote-control APIs.
+The state-changing endpoints return `202 Accepted` and continue asynchronously. Decision answers are accepted only while that Goal is `awaiting_owner`; Goal cancellation and retry first prove that owned Worker cards have stopped, and orphan or terminal tasks reject new interventions. These are loopback-only, same-host application routes, not remote-control APIs.
 
 Project slots are populated from existing configuration. On a fresh install, Praetorium discovers up to three immediate Git repositories under `PRAETORIUM_PROJECTS_ROOT` (default `C:\projects`). Environment Management can validate, discover, and connect either a Windows absolute path or a Linux path inside a selected WSL2 distribution.
 
@@ -128,6 +153,8 @@ Skills:
 - `release-readiness`, `remediate-findings`, `quality-gate`
 
 Specialist reviews are fresh-context, read-only, and bound to an exact revision or artifact digest. Implementers do not review their own work, fixers are separate from reviewers, and relevant reviews become stale after remediation changes the candidate revision.
+
+The nine built-in workflows are quick fix, standard feature, high-risk change, research/planning, release, skill development, and high-risk variants for release, research/planning, and skill development. Deterministic security, authorization, payment, secret, schema, data-integrity, concurrency, or public-contract signals impose a high-risk floor. Workflow changes may escalate monotonically but may not discard the release, research, or skill lifecycle. A release Goal is not complete merely because readiness passed: a planned `external_mutation` task must actually finish and be observed.
 
 The Skill Director uses the same durable supervisor and its semantic contract stages observed evidence → scoped `skill-proposal.v1` → Worker implementation → independent forward evaluation → canary/rollout decision. The host enforces the skill-development implementer, adversarial review, quality gate, and Owner completion approval; `skill-proposal.v1` remains a governance artifact rather than the outer control envelope. Drafting or editing inside the Skill Director workspace uses `workspace_write` and does not activate anything. A proposed activation, install, or publication action uses `skill_activation` and parks before task creation for exact plan-bound Owner approval. Skill activation and external mutation cannot share an approval wave.
 
@@ -174,7 +201,7 @@ npm test
 git diff --check
 ```
 
-The test suite covers Director control-envelope validation, durable Goal/wave supervision, workflow gate freshness, Owner decisions, restart and materialization recovery, stable project-to-Director assignment, bounded handoff, board caching, Worker concurrency, local-only policy, WSL launch boundaries, live task evidence, Owner intervention, pause/resume commands, and route behavior.
+The test suite covers Director control-envelope validation, durable Goal/wave supervision, ordered Goal controls, workflow gate freshness, exact candidate snapshots, Owner decisions, restart and materialization recovery, infrastructure backoff, fair shared Worker capacity, stable project-to-Director assignment, bounded handoff, board caching, Worker concurrency, local-only policy, WSL launch boundaries, intervention delivery leases and Worker acknowledgement, pause/resume commands, evidence-free blocker handling, release execution proof, and route behavior.
 
 Bootstrap profiles and skills:
 
@@ -198,6 +225,9 @@ npm run tauri build -- --bundles nsis
 - State-changing requests require a same-host Origin when an Origin or Referer is present.
 - Hermes child processes use argument arrays with `shell: false`.
 - Director state, project assignment, Goals, action journals, and waves are written atomically. Interrupted disposable runs recover as failed while non-terminal Goals resume from persisted evidence and idempotent task materialization.
+- Owner interventions are written durably before delivery, retried under a lease with the same identifier, and credited as observed only from later Worker-authored evidence. Orphan, legacy, and terminal cards cannot receive an unaudited intervention.
+- Candidate digests include tracked content and every declared output path, including ignored or not-yet-created deliverables. Traversal, globs, protected roots, root escapes, opaque submodules, external symlink targets, oversized candidates, and files that change while hashing fail closed; exact authority plans revalidate the digest immediately before execution.
+- All materialized current reviews participate in completion gates and require host-observation receipts. Synthetic or evidence-free blocker text cannot terminalize a Goal, and release readiness cannot stand in for completed external execution.
 - Project identities are unique and Director slots are stable, so deleting and later reconnecting a same-named repository cannot inherit another project's board or execution history.
 - Project removal refreshes Hermes state and fails closed while any non-terminal task remains.
 - Normal app exit and update require a clean backend activity check and graceful shutdown; unexpected server death or a failed bounded shutdown is contained and cleaned through the desktop-owned Windows Job Object before restart or exit.
@@ -210,7 +240,9 @@ npm run tauri build -- --bundles nsis
 - `lib/director-service.js`: Director turns, durable Goal lifecycle, wave materialization, board scheduler, restart recovery, Owner decisions, Worker intervention
 - `lib/goal-supervisor.js`: Goal normalization, task/wave synchronization, evidence snapshots, acceptance checks, and supervision prompts
 - `lib/director-actions.js`: strict Director analysis and action-envelope extraction/validation
-- `lib/workflow-catalog.js`: six built-in workflows, twelve operating skills, approved Worker profiles
+- `lib/owner-language.js`: Owner-language detection and public communication contract
+- `lib/candidate-snapshot.js`: bounded, runtime-aware candidate identity and declared-output binding
+- `lib/workflow-catalog.js`: nine built-in workflows, twelve operating skills, approved Worker profiles
 - `lib/hermes-runtime.js`: local Hermes process adapter, task evidence/logs, comments, pause/resume primitives
 - `lib/wsl-runtime.js`: WSL2 distribution discovery, project validation, readiness diagnostics, and injection-safe native launch bridge
 - `routes/directors.js`: local Director, Goal/decision, board, trace, intervention, and control HTTP API
@@ -225,8 +257,8 @@ Repository automation instructions live in `AGENTS.md`; `CLAUDE.md` points Claud
 
 ## Release
 
-Tags matching `v*` run the active test suite and build Windows NSIS and macOS DMG artifacts. Release assets include SHA-256 checksum files. The company-PC bootstrap currently supports Windows; macOS packaging remains available for the desktop shell.
+Tags matching `v*` run the active test suite and build Windows NSIS and macOS DMG artifacts. The workflow first requires package, lockfile, Cargo, Tauri, installer-default, and tag versions to match exactly. Release assets include SHA-256 checksum files. The company-PC bootstrap currently supports Windows; macOS packaging remains available for the desktop shell.
 
-The `v2.0.0` installer is the last published binary baseline. The current source version is `v2.2.0`; create a reviewed release before advertising or using the versioned bootstrap installer on another machine. For development or continuation now, clone the working branch and run the local-development steps above.
+The `v2.0.0` installer is the last published binary baseline. The current source version is `v2.3.0`; create a reviewed release with a tag that matches every packaged version before advertising or using the versioned bootstrap installer on another machine. For development or continuation now, clone the working branch and run the local-development steps above.
 
 License and internal deployment policy follow the repository and company policy.

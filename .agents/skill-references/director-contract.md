@@ -15,6 +15,7 @@ A Director turn is a disposable checkpoint. Turn completion means that Praetoriu
 - Treat every review as revision-bound. A relevant change invalidates earlier reports.
 - Keep reviewers separate from implementers and fixers. After remediation, use a fresh reviewer on the new revision.
 - Expose public operational artifacts (`PLAN`, `OBSERVED`, `DECISION`, `VERIFY`), not private chain-of-thought or repetitive narration.
+- Follow the injected Owner communication language for every public natural-language value, including Worker assignments and Owner decisions. Never translate JSON keys, schema/ID/enum tokens, tags, or the literal checkpoint markers.
 - Honor injected cycle and remediation limits. At a limit, request an Owner decision when a material choice can unblock progress; otherwise return `blocked` with the impasse and attempted evidence.
 
 Every action declares one effect:

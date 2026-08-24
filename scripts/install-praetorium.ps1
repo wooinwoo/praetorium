@@ -2,7 +2,7 @@
 param(
     [string]$ProjectsRoot = 'C:\projects',
     [string]$Repository = 'wooinwoo/praetorium',
-    [string]$Version = 'v2.2.0',
+    [string]$Version = 'v2.3.0',
     [string]$SourceRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'PraetoriumData\source'),
     [switch]$SkipAppInstall,
     [switch]$SkipLaunch

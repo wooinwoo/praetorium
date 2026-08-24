@@ -1,11 +1,11 @@
 {
   "name": "praetorium",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test --test-isolation=none tests/lib/candidate-snapshot.test.js tests/lib/director-actions.test.js tests/lib/director-lifecycle.test.js tests/lib/director-service.test.js tests/lib/goal-supervisor.test.js tests/lib/hermes-runtime.test.js tests/lib/local-only.test.js tests/lib/owner-console-source.test.js tests/lib/packaging.test.js tests/lib/praetorium-config.test.js tests/lib/workflow-catalog.test.js tests/lib/wsl-runtime.test.js tests/routes/directors.test.js",
-    "test:watch": "node --watch --test --test-isolation=none tests/lib/candidate-snapshot.test.js tests/lib/director-actions.test.js tests/lib/director-lifecycle.test.js tests/lib/director-service.test.js tests/lib/goal-supervisor.test.js tests/lib/hermes-runtime.test.js tests/lib/local-only.test.js tests/lib/owner-console-source.test.js tests/lib/packaging.test.js tests/lib/praetorium-config.test.js tests/lib/workflow-catalog.test.js tests/lib/wsl-runtime.test.js tests/routes/directors.test.js",
+    "test": "node --test --test-isolation=none tests/lib/candidate-snapshot.test.js tests/lib/director-actions.test.js tests/lib/director-lifecycle.test.js tests/lib/director-policy-regressions.test.js tests/lib/director-service.test.js tests/lib/goal-supervisor.test.js tests/lib/hermes-runtime.test.js tests/lib/local-only.test.js tests/lib/owner-console-source.test.js tests/lib/owner-language.test.js tests/lib/packaging.test.js tests/lib/praetorium-config.test.js tests/lib/workflow-catalog.test.js tests/lib/wsl-runtime.test.js tests/routes/directors.test.js",
+    "test:watch": "node --watch --test --test-isolation=none tests/lib/candidate-snapshot.test.js tests/lib/director-actions.test.js tests/lib/director-lifecycle.test.js tests/lib/director-policy-regressions.test.js tests/lib/director-service.test.js tests/lib/goal-supervisor.test.js tests/lib/hermes-runtime.test.js tests/lib/local-only.test.js tests/lib/owner-console-source.test.js tests/lib/owner-language.test.js tests/lib/packaging.test.js tests/lib/praetorium-config.test.js tests/lib/workflow-catalog.test.js tests/lib/wsl-runtime.test.js tests/routes/directors.test.js",
     "tauri": "tauri"
   },
   "devDependencies": {

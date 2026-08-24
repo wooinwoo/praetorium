@@ -20,6 +20,7 @@ const REVIEW_KIND = Object.freeze({
   'convention-reviewer': 'convention',
   'test-gap-reviewer': 'test-gap',
   'adversarial-reviewer': 'adversarial',
+  'security-reviewer': 'security',
 });
 
 function sha256Json(value) {
@@ -46,7 +47,7 @@ function observedReceipt(item, candidateDigest = DIGEST_V1) {
     taskId: item.taskId,
     status: item.status,
     candidateDigest,
-    taskLogObserved: false,
+    taskLogObserved: true,
     executionAttested: false,
     hashes: {
       task: emptyHash,
@@ -55,10 +56,10 @@ function observedReceipt(item, candidateDigest = DIGEST_V1) {
       comments: emptyHash,
       events: emptyHash,
       runs: emptyHash,
-      log: null,
+      log: sha256Json('worker task log'),
       creditedEvidence: sha256Json(creditedEvidence),
     },
-    counts: { comments: 0, events: 0, runs: 0 },
+    counts: { comments: 1, events: 2, runs: 1 },
   };
 }
 
@@ -250,6 +251,21 @@ describe('workflow gate policy', () => {
     assert.equal(observed.hostReceipts.satisfied, true);
     assert.equal(observed.hostReceipts.executionAttested, false);
 
+    const logless = validQuickFixEvidence().map(item => ({
+      ...item,
+      hostReceipt: {
+        ...observedReceipt(item),
+        taskLogObserved: false,
+        hashes: { ...observedReceipt(item).hashes, log: null },
+        counts: { comments: 0, events: 0, runs: 0 },
+      },
+    }));
+    const loglessAudit = evaluateWorkflowGates('quick-fix', logless, {
+      expectedCandidate: { digest: DIGEST_V1 }, requireHostReceipts: true,
+    });
+    assert.equal(loglessAudit.satisfied, false);
+    assert.equal(loglessAudit.hostReceipts.missingTaskIds.length, logless.length);
+
     evidence[0].report = { forged: true };
     const tampered = evaluateWorkflowGates('quick-fix', evidence, {
       expectedCandidate: { digest: DIGEST_V1 }, requireHostReceipts: true,
@@ -265,6 +281,66 @@ describe('workflow gate policy', () => {
     });
     assert.equal(withUnobservedHistory.satisfied, true);
     assert.equal(withUnobservedHistory.hostReceipts.satisfied, true);
+  });
+
+  it('blocks on every current materialized review even when the workflow did not require that profile', () => {
+    const failedSecurity = reviewEvidence('security-reviewer', { taskId: 'task-security-current' });
+    failedSecurity.report.verdict = 'fail';
+    failedSecurity.report.summary = 'Authentication bypass is reproducible.';
+    failedSecurity.report.checks = [{ id: 'auth-bypass', status: 'fail', evidence: ['request returned 200'] }];
+    failedSecurity.report.findings = [{
+      id: 'auth-bypass', severity: 'critical', confidence: 'high', category: 'authentication',
+      title: 'Authentication bypass', claim: 'A protected route is public.',
+      evidence: [{ path: 'src/auth.js', line: 10, detail: 'guard is skipped' }],
+      impact: 'Unauthorized access', required_action: 'Restore the guard',
+      verification: 'The unauthenticated request must return 401', blocking: true,
+    }];
+    const failed = auditQuickFix([...validQuickFixEvidence(), failedSecurity]);
+    assert.equal(failed.satisfied, false);
+    assert.ok(failed.rejectedProfiles.includes('security-reviewer'));
+    assert.ok(failed.blockingTaskIds.includes('task-security-current'));
+
+    const untrustedSecurity = reviewEvidence('security-reviewer', { taskId: 'task-security-untrusted' });
+    untrustedSecurity.report.scope.artifact_digest = DIGEST_V2;
+    const untrusted = auditQuickFix([...validQuickFixEvidence(), untrustedSecurity]);
+    assert.equal(untrusted.satisfied, false);
+    assert.ok(untrusted.blockingTaskIds.includes('task-security-untrusted'));
+
+    const passedSecurity = reviewEvidence('security-reviewer', { taskId: 'task-security-pass' });
+    const gateWithSecurity = gateEvidence({ reports: [
+      ...QUICK_REVIEW_PROFILES.map(profile => ({
+        review_kind: REVIEW_KIND[profile], status: 'current', verdict: 'pass',
+      })),
+      { review_kind: 'security', status: 'current', verdict: 'pass' },
+    ] });
+    const passed = auditQuickFix([
+      ...validQuickFixEvidence().filter(item => item.profile !== 'quality-gate-reviewer'),
+      passedSecurity,
+      gateWithSecurity,
+    ]);
+    assert.equal(passed.satisfied, true);
+    assert.equal(passed.creditedTaskIds['security-reviewer'], 'task-security-pass');
+  });
+
+  it('requires provenance for supplemental current reviews and ignores stale pre-write failures', () => {
+    const evidence = validQuickFixEvidence().map(item => ({ ...item, hostReceipt: observedReceipt(item) }));
+    const supplemental = reviewEvidence('security-reviewer', { taskId: 'task-security-current' });
+    const missingReceipt = evaluateWorkflowGates('quick-fix', [...evidence, supplemental], {
+      expectedCandidate: { digest: DIGEST_V1 }, requireHostReceipts: true,
+    });
+    assert.equal(missingReceipt.satisfied, false);
+    assert.ok(missingReceipt.hostReceipts.missingTaskIds.includes('task-security-current'));
+    assert.ok(missingReceipt.blockingTaskIds.includes('task-security-current'));
+
+    const staleFailure = reviewEvidence('security-reviewer', {
+      taskId: 'task-security-stale', waveIndex: 0, completedAt: '2026-08-23T00:00:00.000Z',
+    });
+    staleFailure.report.verdict = 'fail';
+    const currentOnly = evaluateWorkflowGates('quick-fix', [staleFailure, ...evidence], {
+      expectedCandidate: { digest: DIGEST_V1 }, requireHostReceipts: true,
+    });
+    assert.equal(currentOnly.satisfied, true);
+    assert.ok(!currentOnly.blockingTaskIds.includes('task-security-stale'));
   });
 
   it('invalidates pre-remediation reviews and accepts only fresh reports for the new candidate', () => {

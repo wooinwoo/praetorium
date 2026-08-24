@@ -43,6 +43,29 @@ describe('HermesRuntime helpers', () => {
     assert.deepEqual(result.args.slice(-3), ['--max', '0', '--json']);
   });
 
+  it('forwards declared candidate deliverables across the WSL runtime boundary', async () => {
+    let received = null;
+    const expected = { schema: 'candidate-snapshot.v1', digest: `sha256:${'a'.repeat(64)}` };
+    const runtime = new HermesRuntime({
+      wslRuntime: {
+        candidateSnapshot: async options => {
+          received = options;
+          return expected;
+        },
+      },
+    });
+    const result = await runtime.candidateSnapshot({
+      cwd: '/home/owner/app', target: { kind: 'wsl', distro: 'Ubuntu' },
+      declaredPaths: ['dist/app.js', 'reports/review.json'],
+    });
+
+    assert.equal(result, expected);
+    assert.deepEqual(received, {
+      distro: 'Ubuntu', path: '/home/owner/app',
+      declaredPaths: ['dist/app.js', 'reports/review.json'],
+    });
+  });
+
   it('strips inherited remote surfaces and ambient credentials while preserving runtime essentials', () => {
     const env = _test.localOnlyEnv({
       PATH: 'safe',

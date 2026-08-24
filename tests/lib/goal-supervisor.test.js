@@ -9,6 +9,7 @@ import {
   normalizeGoalRecord,
   syncGoalTasks,
 } from '../../lib/goal-supervisor.js';
+import { evaluateWorkflowGates, isStructuredEvidenceApproved } from '../../lib/workflow-catalog.js';
 
 function goalRecord(overrides = {}) {
   return {
@@ -49,6 +50,23 @@ function gateReport(acceptance, overrides = {}) {
   };
 }
 
+function reviewReport(reviewKind = 'convention', overrides = {}) {
+  return {
+    schema: 'review.v1',
+    review_kind: reviewKind,
+    scope: {
+      base_revision: 'base-revision', head_revision: null,
+      artifact_digest: 'sha256:candidate', paths: ['lib/'],
+    },
+    verdict: 'pass',
+    summary: `${reviewKind} review passed`,
+    checks: [{ id: `${reviewKind}-contract`, status: 'pass', evidence: ['node --test passed'] }],
+    findings: [],
+    coverage: { examined: ['lib/'], omitted: [], limitations: [], assumptions: [] },
+    ...overrides,
+  };
+}
+
 describe('durable Goal supervisor', () => {
   it('normalizes restart fields and bounds persisted event history', () => {
     const events = Array.from({ length: 245 }, (_, index) => ({ at: `event-${index}`, kind: 'monitor' }));
@@ -83,6 +101,106 @@ describe('durable Goal supervisor', () => {
     assert.equal(normalized.maxRemediationLoops, 3);
     assert.equal(normalized.events.length, 240);
     assert.equal(normalized.events[0].at, 'event-5');
+  });
+
+  it('normalizes Hermes epoch seconds without corrupting millisecond or ISO timestamps', () => {
+    const expected = '2026-08-24T16:04:32.000Z';
+    assert.equal(_test.iso(1787587472), expected);
+    assert.equal(_test.iso('1787587472'), expected);
+    assert.equal(_test.iso(1787587472000), expected);
+    assert.equal(_test.iso('1787587472000'), expected);
+    assert.equal(_test.iso('2026-08-25T01:04:32+09:00'), expected);
+    assert.equal(_test.iso(new Date(expected)), expected);
+    for (const invalid of [null, undefined, false, 0, '', 'not-a-time', Number.NaN, Number.POSITIVE_INFINITY, {}]) {
+      assert.equal(_test.iso(invalid), null);
+    }
+
+    const goal = goalRecord({
+      currentWaveTaskIds: ['task-epoch-seconds'],
+      taskRecords: [{ taskId: 'task-epoch-seconds', status: 'queued', startedAt: null }],
+      waves: [{
+        id: 'wave-epoch-seconds', index: 1, status: 'queued', taskIds: ['task-epoch-seconds'],
+        startedAt: null, completedAt: null,
+      }],
+    });
+    syncGoalTasks(goal, [
+      { id: 'task-epoch-seconds', status: 'running', started_at: 1787587472 },
+    ], '2026-08-24T16:05:00.000Z');
+
+    assert.equal(goal.taskRecords[0].startedAt, expected);
+    assert.equal(goal.waves[0].startedAt, expected);
+  });
+
+  it('repairs a persisted 1970 startedAt from the live board without overwriting a valid first start', () => {
+    const repaired = '2026-08-24T16:04:32.000Z';
+    const preserved = '2026-08-24T15:59:00.000Z';
+    const goal = goalRecord({
+      currentWaveTaskIds: ['task-legacy-1970', 'task-valid-start'],
+      taskRecords: [{
+        taskId: 'task-legacy-1970', status: 'queued', startedAt: '1970-01-21T16:33:07.472Z',
+      }, {
+        taskId: 'task-valid-start', status: 'queued', startedAt: preserved,
+      }, {
+        taskId: 'task-invalid-board-time', status: 'queued', startedAt: '1970-01-01T00:00:01.000Z',
+      }],
+      waves: [{
+        id: 'wave-started-at-repair', index: 1, status: 'queued',
+        taskIds: ['task-legacy-1970', 'task-valid-start'],
+        startedAt: null, completedAt: null,
+      }],
+    });
+
+    syncGoalTasks(goal, [{
+      id: 'task-legacy-1970', status: 'running', started_at: 1787587472,
+    }, {
+      id: 'task-valid-start', status: 'running', started_at: 1787587532,
+    }, {
+      id: 'task-invalid-board-time', status: 'running', started_at: 'invalid',
+    }], '2026-08-24T16:05:00.000Z');
+
+    assert.equal(goal.taskRecords[0].startedAt, repaired);
+    assert.equal(goal.taskRecords[1].startedAt, preserved,
+      'a plausible persisted first-start time must remain immutable across later board observations');
+    assert.equal(goal.taskRecords[2].startedAt, '1970-01-01T00:00:01.000Z',
+      'invalid live data must not rewrite durable state');
+    assert.equal(goal.waves[0].startedAt, preserved);
+  });
+
+  it('repairs a persisted 1970 completedAt from the live board without overwriting a valid completion', () => {
+    const repaired = '2026-08-24T16:04:32.000Z';
+    const preserved = '2026-08-24T16:03:00.000Z';
+    const goal = goalRecord({
+      currentWaveTaskIds: ['task-legacy-completion', 'task-valid-completion'],
+      taskRecords: [{
+        taskId: 'task-legacy-completion', status: 'done',
+        completedAt: '1970-01-21T16:33:07.472Z',
+      }, {
+        taskId: 'task-valid-completion', status: 'done', completedAt: preserved,
+      }, {
+        taskId: 'task-invalid-completion', status: 'done',
+        completedAt: '1970-01-01T00:00:01.000Z',
+      }],
+      waves: [{
+        id: 'wave-completed-at-repair', index: 1, status: 'running',
+        taskIds: ['task-legacy-completion', 'task-valid-completion'],
+        startedAt: '2026-08-24T16:00:00.000Z', completedAt: null,
+      }],
+    });
+
+    syncGoalTasks(goal, [{
+      id: 'task-legacy-completion', status: 'done', completed_at: 1787587472,
+    }, {
+      id: 'task-valid-completion', status: 'done', completed_at: 1787587532,
+    }, {
+      id: 'task-invalid-completion', status: 'done', completed_at: 'invalid',
+    }], '2026-08-24T16:05:00.000Z');
+
+    assert.equal(goal.taskRecords[0].completedAt, repaired);
+    assert.equal(goal.taskRecords[1].completedAt, preserved,
+      'a plausible durable completion must not move on later board observations');
+    assert.equal(goal.taskRecords[2].completedAt, '1970-01-01T00:00:01.000Z',
+      'invalid live completion data must not rewrite durable state');
+    assert.equal(goal.waves[0].completedAt, repaired);
   });
 
   it('keeps an Owner-paused card non-terminal until it is actually resumed and completed', () => {
@@ -166,6 +284,128 @@ describe('durable Goal supervisor', () => {
     assert.deepEqual(_test.parseJsonObject(`prefix ${JSON.stringify(report)} suffix`), report);
   });
 
+  it('credits the approved report from the latest Hermes run metadata before truncated summaries', () => {
+    const staleReport = reviewReport('convention', { summary: 'stale validation report' });
+    const currentReport = reviewReport('convention', { summary: 'complete latest run report' });
+    const goal = goalRecord({
+      taskRecords: [{
+        taskId: 'convention-review', actionId: 'review', title: 'Convention review',
+        profile: 'convention-reviewer', waveIndex: 2, status: 'done',
+        completedAt: '2026-08-24T00:01:00.000Z', acceptance: ['review report'],
+      }],
+    });
+    const evidence = goalTaskEvidence(goal, new Map([['convention-review', {
+      task: { id: 'convention-review', status: 'done' },
+      validation: JSON.stringify(staleReport),
+      latest_summary: `truncated ${JSON.stringify(staleReport).slice(0, 80)}`,
+      runs: [
+        { id: 1, metadata: { report: staleReport, review_outcome: 'approved' } },
+        { id: 2, metadata: JSON.stringify({ report: currentReport, review_outcome: 'approved' }) },
+        { id: 3, metadata: { session_id: 'latest-run-without-a-report' } },
+      ],
+    }]]));
+
+    assert.deepEqual(evidence[0].report, currentReport);
+    assert.equal(evidence[0].persistedReportApproved, null);
+    assert.equal(isStructuredEvidenceApproved(evidence[0]), true);
+    const mismatched = evaluateWorkflowGates('quick-fix', evidence, {
+      expectedCandidate: { digest: 'sha256:a-different-candidate' },
+    });
+    assert.deepEqual(mismatched.blockingReasons, [{
+      taskId: 'convention-review', profile: 'convention-reviewer', reason: 'host-candidate-mismatch',
+    }]);
+  });
+
+  it('credits the durable Hermes board task result when run metadata only contains a completion receipt', () => {
+    const report = reviewReport('security', { summary: 'durable board result' });
+    const goal = goalRecord({
+      taskRecords: [{
+        taskId: 'security-board-result', actionId: 'review', title: 'Security review',
+        profile: 'security-reviewer', waveIndex: 2, status: 'done',
+        completedAt: '2026-08-24T00:01:00.000Z', acceptance: ['review report'],
+      }],
+    });
+    const evidence = goalTaskEvidence(goal, new Map([['security-board-result', {
+      task: {
+        id: 'security-board-result',
+        status: 'done',
+        result: JSON.stringify(report),
+      },
+      latest_summary: 'Security review passed, but this summary does not contain the full report.',
+      runs: [{
+        metadata: {
+          schema: 'kanban-completion.v1',
+          evidence: { verdict: 'pass' },
+          artifacts: [{ kind: 'review', storage: 'kanban_result', schema: 'review.v1' }],
+        },
+      }],
+    }]]));
+
+    assert.deepEqual(evidence[0].report, report);
+    assert.equal(evidence[0].persistedReportApproved, null);
+    assert.equal(isStructuredEvidenceApproved(evidence[0]), true);
+  });
+
+  it('leaves metadata reports without an outcome to structural validation', () => {
+    const report = reviewReport();
+    const goal = goalRecord({
+      taskRecords: [{
+        taskId: 'outcome-less-review', profile: 'convention-reviewer', waveIndex: 2,
+        status: 'done', completedAt: '2026-08-24T00:01:00.000Z',
+      }],
+    });
+    const evidence = goalTaskEvidence(goal, new Map([['outcome-less-review', {
+      task: { id: 'outcome-less-review', status: 'done' },
+      runs: [{ metadata: { report } }],
+    }]]));
+
+    assert.equal(evidence[0].persistedReportApproved, null);
+    assert.equal(isStructuredEvidenceApproved(evidence[0]), true);
+    evidence[0].report.checks = [];
+    assert.equal(isStructuredEvidenceApproved(evidence[0]), false);
+  });
+
+  it('does not let summary fallback bypass a rejected latest-run review outcome', () => {
+    const report = reviewReport();
+    const goal = goalRecord({
+      taskRecords: [{
+        taskId: 'rejected-review', profile: 'convention-reviewer', waveIndex: 2,
+        status: 'done', completedAt: '2026-08-24T00:01:00.000Z',
+      }],
+    });
+    const evidence = goalTaskEvidence(goal, new Map([['rejected-review', {
+      task: { id: 'rejected-review', status: 'done' },
+      latest_summary: JSON.stringify(report),
+      runs: [{ metadata: { report, review_outcome: 'rejected' } }],
+    }]]));
+
+    assert.deepEqual(evidence[0].report, report);
+    assert.equal(evidence[0].persistedReportApproved, false);
+    assert.equal(isStructuredEvidenceApproved(evidence[0]), false);
+  });
+
+  it('reads an approved quality-gate report from latest Hermes run metadata', () => {
+    const acceptance = [
+      { criterion: 'API returns 200', status: 'met', evidence: ['contract test api.test.js:20'] },
+      { criterion: 'Unauthorized requests are denied', status: 'met', evidence: ['auth test api.test.js:41'] },
+    ];
+    const report = gateReport(acceptance);
+    const goal = goalRecord({
+      taskRecords: [{
+        taskId: 'metadata-gate', profile: 'quality-gate-reviewer', waveIndex: 3,
+        status: 'done', completedAt: '2026-08-24T00:03:00.000Z',
+      }],
+    });
+    const evidence = goalTaskEvidence(goal, new Map([['metadata-gate', {
+      task: { id: 'metadata-gate', status: 'done' },
+      latest_summary: '{"schema":"quality-gate.v1","candidate":',
+      runs: [{ metadata: { report, review_outcome: 'approved' } }],
+    }]]));
+
+    assert.deepEqual(evidence[0].report, report);
+    assert.equal(evaluateGoalAcceptance(goal, evidence, { gateTaskId: 'metadata-gate' }).satisfied, true);
+  });
+
   it('accepts only the selected current quality gate with exact criterion evidence', () => {
     const goal = goalRecord();
     const completeAcceptance = [
@@ -229,6 +469,17 @@ describe('durable Goal supervisor', () => {
     const goal = goalRecord({
       status: 'evaluating',
       phase: 'assessing_evidence',
+      analysis: {
+        requestSummary: 'Preserve the public API contract',
+        evidence: ['SPEC.md checked'],
+        risks: ['authorization regression'],
+        unknowns: ['legacy client behavior'],
+        workerStrategy: ['one bounded writer'],
+        reviewStrategy: ['independent security review'],
+        stopConditions: ['ask Owner before changing the public contract'],
+        recommendedWorkflow: 'quick-fix',
+      },
+      publicDecisions: [{ at: 'time-decision', waveIndex: 2, decision: 'Keep the v1 response shape' }],
       ownerAnswers,
       currentWaveTaskIds: ['current-review'],
       currentCandidate: { revision: 'abc', digest: 'sha256:candidate' },
@@ -264,6 +515,9 @@ describe('durable Goal supervisor', () => {
     assert.match(prompt, /\[CATALOG FOR TEST\]/);
     assert.deepEqual(snapshot.owner_answers.map(item => item.answer), ownerAnswers.slice(-8).map(item => item.answer));
     assert.equal(snapshot.current_wave.id, 'wave-current');
+    assert.deepEqual(snapshot.goal_charter.risks, ['authorization regression']);
+    assert.equal(snapshot.goal_charter.recommendedWorkflow, 'quick-fix');
+    assert.equal(snapshot.public_decisions[0].decision, 'Keep the v1 response shape');
     assert.equal(snapshot.current_wave_evidence.length, 1);
     assert.equal(snapshot.current_wave_evidence[0].summary.length, 2500);
     assert.deepEqual(snapshot.current_wave_evidence[0].comments.map(item => item.body), ['comment-3', 'comment-4', 'comment-5', 'comment-6']);
@@ -273,5 +527,43 @@ describe('durable Goal supervisor', () => {
     assert.ok(snapshot.historical_evidence.filter(item => item.profile !== 'codex-implementer').every(item => item.summary === ''));
     assert.equal(prompt.includes('answer-0'), false);
     assert.ok(prompt.length < 50000, `prompt should remain bounded, got ${prompt.length} characters`);
+  });
+
+  it('compacts an oversized durable Goal without entering a permanent supervision deadlock', () => {
+    const long = prefix => Array.from({ length: 100 }, (_, index) => `${prefix}-${index}-${'x'.repeat(1800)}`);
+    const goal = goalRecord({
+      objective: 'o'.repeat(200000),
+      successCriteria: long('criterion'),
+      constraints: long('constraint'),
+      requirements: long('requirement'),
+      ownerAnswers: long('answer').map((answer, index) => ({
+        at: `time-${index}`, question: 'q'.repeat(2000), answer,
+      })),
+      analysis: {
+        requestSummary: 's'.repeat(10000),
+        evidence: long('checked'),
+        risks: long('risk'),
+        unknowns: long('unknown'),
+        workerStrategy: long('worker'),
+        reviewStrategy: long('review'),
+        stopConditions: long('stop'),
+        recommendedWorkflow: 'high-risk-change',
+      },
+      publicDecisions: long('decision').map((decision, index) => ({ at: `d-${index}`, waveIndex: index, decision })),
+    });
+
+    const prompt = buildSupervisionPrompt({
+      goal,
+      evidence: [],
+      gateAudit: { satisfied: false, missingProfiles: ['quality-gate-reviewer'] },
+      catalog: '[CATALOG FOR TEST]',
+      reason: 'retry_after_restart',
+    });
+    const snapshot = JSON.parse(prompt.split('[DURABLE GOAL SNAPSHOT]\n')[1]);
+
+    assert.ok(prompt.length < 130000, `prompt should remain below the hard budget, got ${prompt.length}`);
+    assert.equal(snapshot.goal_charter.recommendedWorkflow, 'high-risk-change');
+    assert.ok(snapshot.public_decisions.length > 0);
+    assert.match(prompt, /retry_after_restart/);
   });
 });
