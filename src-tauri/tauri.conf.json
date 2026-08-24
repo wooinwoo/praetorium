@@ -65,6 +65,7 @@
       "../lib/hermes-runtime.js": "./lib/hermes-runtime.js",
       "../lib/local-only.js": "./lib/local-only.js",
       "../lib/praetorium-config.js": "./lib/praetorium-config.js",
+      "../lib/project-identity.js": "./lib/project-identity.js",
       "../lib/workflow-catalog.js": "./lib/workflow-catalog.js",
       "../lib/wsl-runtime.js": "./lib/wsl-runtime.js",
       "../routes/directors.js": "./routes/directors.js",

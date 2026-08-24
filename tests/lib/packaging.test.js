@@ -1,0 +1,27 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, extname, normalize, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
+describe('Tauri runtime packaging', () => {
+  it('packages every relative module imported by a packaged runtime file', () => {
+    const config = JSON.parse(readFileSync(resolve(root, 'src-tauri/tauri.conf.json'), 'utf8'));
+    const packaged = new Set(Object.keys(config.bundle.resources)
+      .map(source => normalize(resolve(root, 'src-tauri', source))));
+    const moduleFiles = [...packaged].filter(path => ['.js', '.mjs'].includes(extname(path)));
+    const missing = [];
+
+    for (const file of moduleFiles) {
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(/(?:from\s*|import\s*)['"](\.{1,2}\/[^'"]+)['"]/g)) {
+        const dependency = normalize(resolve(dirname(file), match[1]));
+        if (!packaged.has(dependency)) missing.push(`${file.slice(root.length + 1)} -> ${dependency.slice(root.length + 1)}`);
+      }
+    }
+
+    assert.deepEqual(missing, []);
+  });
+});
