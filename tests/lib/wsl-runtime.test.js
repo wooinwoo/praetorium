@@ -48,4 +48,22 @@ describe('WSL runtime boundary', () => {
     assert.ok(launch.args.includes('HERMES_HOME=/home/owner/.hermes'));
     assert.ok(!launch.args.some(arg => arg.includes('/tmp/override') || arg.includes('/tmp/hermes')));
   });
+
+  it('discovers direct and one-level grouped Git repositories', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    runtime.inspect = async () => ({ home: '/home/owner' });
+    const calls = [];
+    runtime._run = async args => {
+      calls.push(args);
+      return { stdout: Buffer.from('/home/owner/projects/direct/.git\0/home/owner/projects/direct/vendor/.git\0/home/owner/projects/personal/nested/.git\0') };
+    };
+
+    assert.deepEqual(await runtime.discoverProjects({ distro: 'Ubuntu' }), [
+      '/home/owner/projects/direct',
+      '/home/owner/projects/personal/nested',
+    ]);
+    assert.deepEqual(calls[1].slice(-8), [
+      '/home/owner/projects', '-mindepth', '2', '-maxdepth', '3', '-name', '.git', '-print0',
+    ]);
+  });
 });

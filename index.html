@@ -19,12 +19,14 @@
         <span id="active-project-path"></span>
       </div>
       <div class="topbar-actions">
-        <span class="signal" id="session-count"><i></i><span>0 sessions</span></span>
-        <span class="signal" id="connection-state"><i></i><span>연결 중</span></span>
+        <span class="signal" id="session-count" role="status" aria-label="실행 세션 0개"><i></i><span class="signal-copy">0 sessions</span></span>
+        <span class="signal" id="connection-state" role="status" aria-label="로컬 연결 확인 중"><i></i><span class="signal-copy">연결 중</span></span>
         <button class="quiet-button" id="text-scale-down" type="button" aria-label="글자 작게">A−</button>
         <button class="quiet-button" id="text-scale-up" type="button" aria-label="글자 크게">A+</button>
-        <button class="quiet-button" id="project-settings-btn" type="button">환경 관리</button>
-        <button class="quiet-button square" id="inspector-toggle" type="button" aria-label="Inspector 열기" aria-expanded="false">
+        <button class="quiet-button" id="project-settings-btn" type="button" aria-label="환경 관리 열기">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/></svg><span>환경 관리</span>
+        </button>
+        <button class="quiet-button square" id="inspector-toggle" type="button" aria-label="Inspector 열기" aria-expanded="false" aria-controls="command-pane">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM14 5v14M7 9h4M7 13h4"/></svg>
         </button>
         <button class="quiet-button square" id="theme-toggle" type="button" aria-label="테마 전환">
@@ -50,7 +52,7 @@
         <header class="mission-header">
           <div class="mission-copy">
             <div class="mission-context"><span id="mission-board-name">BOARD</span><i aria-hidden="true"></i><span id="mission-run-time">대기</span><span id="mission-runtime-badge" class="runtime-badge">WINDOWS</span></div>
-            <h1 id="mission-title">새 목표를 기다리고 있습니다</h1>
+            <h1 id="mission-title" tabindex="-1">새 목표를 기다리고 있습니다</h1>
             <p id="mission-subtitle">Owner가 목표를 주면 Director가 분석·계획·위임·검증 흐름을 구성합니다.</p>
           </div>
           <div class="mission-actions">
@@ -61,7 +63,8 @@
           </div>
         </header>
 
-        <section class="current-focus" id="current-focus" aria-live="polite"></section>
+        <section class="current-focus" id="current-focus"></section>
+        <span id="status-announcer" class="visually-hidden" aria-live="polite"></span>
 
         <section class="owner-gate" id="owner-gate" hidden>
           <div><span>OWNER DECISION</span><strong>판단이 필요한 작업이 있습니다</strong></div>
@@ -95,6 +98,7 @@
           </details>
         </div>
         <div class="composer">
+          <label class="visually-hidden" for="owner-message-input">Owner 요청</label>
           <textarea id="owner-message-input" rows="3" placeholder="목표, 제약, 완료 기준을 입력하세요…"></textarea>
           <div class="composer-footer">
             <select id="owner-message-mode" aria-label="요청 처리 방식">
@@ -109,23 +113,23 @@
       </aside>
     </main>
 
-    <dialog id="workflow-dialog" class="sheet-dialog">
+    <dialog id="workflow-dialog" class="sheet-dialog" aria-labelledby="workflow-dialog-title">
       <form method="dialog" class="sheet-card wide-sheet">
-        <header><div><h2>운영 플로우</h2><p>Director가 목표와 위험에 따라 선택하고 필요한 단계만 조정합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
+        <header><div><h2 id="workflow-dialog-title">운영 플로우</h2><p>Director가 목표와 위험에 따라 선택하고 필요한 단계만 조정합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
         <div class="workflow-grid" id="owner-workflow-list"></div>
       </form>
     </dialog>
 
-    <dialog id="project-dialog" class="management-dialog">
+    <dialog id="project-dialog" class="management-dialog" aria-labelledby="project-dialog-title">
       <form method="dialog" class="management-card">
-        <header class="management-header"><div><h2>환경 관리</h2><p>프로젝트 실행 위치, 로컬 런타임, 14개 역할 프로필을 한곳에서 확인합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
+        <header class="management-header"><div><h2 id="project-dialog-title">환경 관리</h2><p>프로젝트 실행 위치, 로컬 런타임, 14개 역할 프로필을 한곳에서 확인합니다.</p></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
         <nav class="management-tabs" role="tablist" aria-label="환경 관리 항목">
-          <button type="button" role="tab" aria-selected="true" data-management-tab="projects">프로젝트 <span id="project-capacity">0 / 3</span></button>
-          <button type="button" role="tab" aria-selected="false" data-management-tab="runtimes">런타임 <span id="runtime-count">0</span></button>
-          <button type="button" role="tab" aria-selected="false" data-management-tab="roles">역할 프로필 <span id="profile-count">14</span></button>
+          <button id="management-tab-projects" type="button" role="tab" aria-selected="true" aria-controls="management-panel-projects" tabindex="0" data-management-tab="projects">프로젝트 <span id="project-capacity">0 / 3</span></button>
+          <button id="management-tab-runtimes" type="button" role="tab" aria-selected="false" aria-controls="management-panel-runtimes" tabindex="-1" data-management-tab="runtimes">런타임 <span id="runtime-count">0</span></button>
+          <button id="management-tab-roles" type="button" role="tab" aria-selected="false" aria-controls="management-panel-roles" tabindex="-1" data-management-tab="roles">역할 프로필 <span id="profile-count">14</span></button>
         </nav>
         <div class="management-body">
-          <section class="management-panel active" data-management-panel="projects" aria-labelledby="projects-heading">
+          <section id="management-panel-projects" class="management-panel active" role="tabpanel" data-management-panel="projects" aria-labelledby="management-tab-projects">
             <header class="panel-heading"><div><h3 id="projects-heading">Project Director 배정</h3><p>각 프로젝트가 실제로 실행될 운영체제와 경로를 함께 저장합니다.</p></div></header>
             <div id="project-list" class="project-list"></div>
             <fieldset class="project-editor">
@@ -133,19 +137,19 @@
               <label><span>실행 환경</span><select id="project-runtime"><option value="windows">Windows</option><option value="wsl">WSL2</option></select></label>
               <label id="project-distro-field" hidden><span>WSL 배포판</span><select id="project-distro"></select></label>
               <label><span>표시 이름</span><input id="project-name" type="text" maxlength="80" autocomplete="off" placeholder="예: Praetorium" /></label>
-              <label class="path-field"><span>프로젝트 절대 경로</span><input id="project-path" type="text" autocomplete="off" placeholder="C:\projects\praetorium" /><small id="project-path-help">Windows에서 존재하는 폴더를 입력하세요.</small></label>
+              <label class="path-field"><span>프로젝트 절대 경로</span><input id="project-path" type="text" autocomplete="off" placeholder="C:\projects\praetorium" aria-describedby="project-path-help" /><small id="project-path-help">Windows에서 존재하는 폴더를 입력하세요.</small></label>
               <div class="project-editor-actions"><button type="button" class="secondary-button" id="validate-project-btn">경로 확인</button><button type="button" class="primary-button" id="add-project-btn">Director에 연결</button></div>
             </fieldset>
-            <section class="project-discovery"><div><h4>Git 프로젝트 자동 찾기</h4><p>지정한 루트의 바로 아래 Git 저장소만 찾습니다. 기존 배정은 유지합니다.</p></div><label><span>검색 루트</span><input id="discovery-root" type="text" placeholder="C:\projects" /></label><button type="button" class="secondary-button" id="discover-projects-btn">검색하고 빈 슬롯에 연결</button></section>
+            <section class="project-discovery"><div><h4>로컬 Git 프로젝트 자동 찾기</h4><p>지정한 루트에서 한 단계까지 묶인 Git 저장소를 찾습니다. GitHub 계정은 조회하지 않으며 기존 배정은 유지합니다.</p></div><label><span>검색 루트</span><input id="discovery-root" type="text" placeholder="C:\projects" /></label><button type="button" class="secondary-button" id="discover-projects-btn">검색하고 빈 슬롯에 연결</button></section>
           </section>
 
-          <section class="management-panel" data-management-panel="runtimes" aria-labelledby="runtimes-heading" hidden>
+          <section id="management-panel-runtimes" class="management-panel" role="tabpanel" data-management-panel="runtimes" aria-labelledby="management-tab-runtimes" hidden>
             <header class="panel-heading"><div><h3 id="runtimes-heading">로컬 실행 런타임</h3><p>Windows와 각 WSL 배포판의 Hermes, Codex, 프로필 준비 상태를 실제 명령으로 확인합니다.</p></div><button type="button" class="secondary-button" id="refresh-runtimes-btn">다시 진단</button></header>
             <div id="runtime-list" class="runtime-list"><div class="panel-loading">런타임을 진단하는 중입니다.</div></div>
             <section class="runtime-guide" id="runtime-guide" hidden><h4>WSL 런타임 준비</h4><p id="runtime-guide-copy"></p><pre id="runtime-setup-command"></pre><button type="button" class="secondary-button" id="copy-runtime-command">명령 복사</button></section>
           </section>
 
-          <section class="management-panel" data-management-panel="roles" aria-labelledby="roles-heading" hidden>
+          <section id="management-panel-roles" class="management-panel" role="tabpanel" data-management-panel="roles" aria-labelledby="management-tab-roles" hidden>
             <header class="panel-heading"><div><h3 id="roles-heading">역할 프로필</h3><p>Director, 구현, 전문 리뷰, 수정, 품질 게이트의 권한과 스킬 구성을 확인합니다.</p></div></header>
             <div class="role-browser"><div id="profile-list" class="profile-list"></div><article id="profile-detail" class="profile-detail"></article></div>
           </section>
@@ -153,7 +157,7 @@
       </form>
     </dialog>
 
-    <dialog id="focus-dialog" class="focus-dialog">
+    <dialog id="focus-dialog" class="focus-dialog" aria-labelledby="focus-dialog-title">
       <form method="dialog" class="focus-card">
         <header><div><h2 id="focus-dialog-title">상세 보기</h2></div><button value="cancel" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
         <div id="focus-dialog-content" class="focus-content"></div>
