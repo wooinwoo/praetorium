@@ -12,6 +12,9 @@
   --green: #56cf9b;
   --amber: #e6b85c;
   --red: #ee7382;
+  --rail-bg: #0d1116;
+  --code-bg: #080b0f;
+  --button-ink: #07111f;
   --rail: 220px;
   --top: 54px;
   --drawer: 440px;
@@ -20,6 +23,24 @@
   --activity-height: 216px;
   font-family: Inter, Pretendard, "Segoe UI", sans-serif;
   font-size: 14px;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f7fa;
+  --panel: #ffffff;
+  --surface: #e9edf3;
+  --hover: #e1e7ef;
+  --line: #cbd3de;
+  --text: #151a22;
+  --soft: #465267;
+  --muted: #687587;
+  --blue: #2563eb;
+  --green: #16825d;
+  --amber: #9a6500;
+  --red: #c3374a;
+  --rail-bg: #eef2f6;
+  --code-bg: #e8edf3;
+  --button-ink: #ffffff;
 }
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); color: var(--text); }
@@ -39,11 +60,11 @@ button { cursor: pointer; }
 .signal.online i, .signal.active i { background: var(--green); }
 .quiet-button, .secondary-button, .primary-button, .section-link, .panel-toggle, .composer button { border: 1px solid var(--line); background: transparent; border-radius: 7px; padding: 8px 11px; }
 .quiet-button:hover, .secondary-button:hover, .section-link:hover { background: var(--hover); }
-.primary-button, .composer button, #owner-send-btn { background: var(--blue); border-color: var(--blue); color: #07111f; font-weight: 700; }
+.primary-button, .composer button, #owner-send-btn { background: var(--blue); border-color: var(--blue); color: var(--button-ink); font-weight: 700; }
 .square, .icon-only { width: 34px; height: 34px; padding: 7px; }
 svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .app-shell { position: relative; display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); height: calc(100vh - var(--top)); }
-.project-sidebar { min-width: 0; padding: 16px 10px; border-right: 1px solid var(--line); background: #0d1116; overflow: auto; }
+.project-sidebar { min-width: 0; padding: 16px 10px; border-right: 1px solid var(--line); background: var(--rail-bg); overflow: auto; }
 .project-sidebar > header { display: flex; justify-content: space-between; padding: 0 8px 10px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 .director-list { display: grid; gap: 4px; }
 .director-list button, .workflow-button { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--soft); border-radius: 8px; text-align: left; padding: 10px; }
@@ -347,7 +368,9 @@ body.inspector-fullscreen .command-pane { left: var(--rail); width: auto; }
 .intervention-timeline p { margin: 7px 0; }
 .intervention-timeline dt { color: var(--muted); font-size: 11px; }
 .intervention-timeline dd { margin: 0; color: var(--soft); font-size: 11.5px; }
-.raw-worker-log pre, .technical-payload pre { max-height: 52vh; overflow: auto; padding: 10px; background: #080b0f; color: var(--soft); font: 12px/1.6 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
+.raw-worker-log pre, .technical-payload pre { max-height: 52vh; overflow: auto; padding: 10px; background: var(--code-bg); color: var(--soft); font: 12px/1.6 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
+.theme-button { min-width: 72px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; white-space: nowrap; }
+.theme-button span { font-size: 12px; font-weight: 650; }
 .composer-scope { justify-content: flex-start; flex-wrap: wrap; }
 .composer-scope > span { color: var(--blue); font-size: 11.5px; }
 .composer-scope strong { font-size: 13px; }

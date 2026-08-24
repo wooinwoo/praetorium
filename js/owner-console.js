@@ -3251,12 +3251,13 @@ function openManagement(tab = 'projects') {
 }
 
 function initTheme() {
-  const saved = localStorage.getItem('praetorium-theme') || 'dark';
+  const saved = localStorage.getItem('praetorium-theme') === 'light' ? 'light' : 'dark';
   const apply = theme => {
     document.documentElement.dataset.theme = theme;
     const nextLabel = theme === 'light' ? '다크 테마로 전환' : '라이트 테마로 전환';
     $('theme-toggle').setAttribute('aria-label', nextLabel);
     $('theme-toggle').title = nextLabel;
+    $('theme-toggle-label').textContent = theme === 'light' ? '라이트' : '다크';
   };
   apply(saved);
   $('theme-toggle').addEventListener('click', () => {

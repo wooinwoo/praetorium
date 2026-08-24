@@ -256,6 +256,14 @@ test('Owner console clamps repeated objectives and uses a neutral graphite palet
   assert.doesNotMatch(css, /--accent:\s*#8b7cf6/);
 });
 
+test('Owner console exposes a visible theme state and real light-theme tokens', async () => {
+  const [html, css, js] = await Promise.all([source('index.html'), source('css/owner-console.css'), source('js/owner-console.js')]);
+  assert.match(html, /id="theme-toggle-label">다크</);
+  assert.match(js, /\$\('theme-toggle-label'\)\.textContent/);
+  assert.match(css, /:root\[data-theme="light"\]/);
+  assert.match(css, /--rail-bg:/);
+});
+
 test('Primary operational labels are shown in Korean while internal status keys stay stable', async () => {
   const [html, js] = await Promise.all([source('index.html'), source('js/owner-console.js')]);
   for (const copy of ['목표 대기열', '디렉터 공개 판단', '현재 작업 묶음', '완료 게이트', '실행 활동', '받는 곳', '전체 화면']) assert.match(html, new RegExp(copy));
