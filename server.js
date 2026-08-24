@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HermesRuntime } from './lib/hermes-runtime.js';
+import { acquireProcessLease, HermesRuntime } from './lib/hermes-runtime.js';
 import { WslRuntime } from './lib/wsl-runtime.js';
 import { DirectorService } from './lib/director-service.js';
 import { DATA_DIR, MAX_PROJECTS, PORT, PROJECTS_ROOT, addProject, deleteProject, getProjects } from './lib/praetorium-config.js';
@@ -81,6 +81,12 @@ function shellQuote(value) {
 }
 
 const directorState = join(DATA_DIR, 'directors.json');
+const serverLease = acquireProcessLease({ leaseFile: `${directorState}.lease` });
+const releaseServerLease = () => serverLease.release();
+process.once('exit', releaseServerLease);
+if (serverLease.recovered) {
+  console.warn(`[Praetorium] Recovered stale server lease from PID ${serverLease.recovered.pid || 'unknown'}.`);
+}
 
 const wslRuntime = new WslRuntime();
 const hermesRuntime = new HermesRuntime({ wslRuntime });
@@ -133,7 +139,10 @@ addRoute('POST', '/api/system/shutdown', async (_req, res) => {
   json(res, readiness, 202);
   setImmediate(() => {
     directorService.stopScheduler();
-    server.close(() => process.exit(0));
+    server.close(() => {
+      releaseServerLease();
+      process.exit(0);
+    });
   });
 });
 
@@ -259,9 +268,19 @@ server.listen(PORT, LOCAL_BIND_ADDRESS, () => {
   console.log('[Praetorium] Remote access, gateways, webhooks, messaging, and shell terminals are disabled.');
 });
 
+server.once('error', error => {
+  console.error('[Praetorium] Local server failed:', error.message);
+  releaseServerLease();
+  process.exitCode = 1;
+  setImmediate(() => process.exit(1));
+});
+
 function shutdown() {
   directorService.stopScheduler();
-  server.close(() => process.exit(0));
+  server.close(() => {
+    releaseServerLease();
+    process.exit(0);
+  });
 }
 process.once('SIGINT', shutdown);
 process.once('SIGTERM', shutdown);

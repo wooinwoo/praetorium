@@ -25,7 +25,9 @@ function setup() {
     getBoardStatus: () => ({ refreshing: true }),
     getTaskDetails: async (_id, taskId) => ({ task: { id: taskId }, latest_summary: 'done' }),
     getTaskTrace: async (_id, taskId) => ({ taskId, log: 'live log' }),
-    interveneTask: async (_id, taskId, message) => ({ taskId, message, delivered: true }),
+    interveneTask: async (_id, taskId, message) => ({
+      taskId, message, accepted: true, persisted: true, workerObserved: false, status: 'accepted_queued',
+    }),
     controlTask: async (_id, taskId, action) => ({ taskId, action, accepted: true }),
     submitMessage: (id, prompt) => ({ id: 'run-1', directorId: id, prompt }),
     createObjective: async () => ({ id: 'task-1' }),
@@ -131,7 +133,8 @@ describe('director routes', () => {
     const res = response();
     await routes['POST /api/directors/:id/tasks/:taskId/interventions']({ params: { id: 'project-director-1', taskId: 't_one' }, body: { message: 'change direction' } }, res);
     assert.equal(res.status, 202);
-    assert.equal(res.body.delivered, true);
+    assert.equal(res.body.accepted, true);
+    assert.equal(res.body.workerObserved, false);
   });
 
   it('controls worker execution lifecycle', async () => {

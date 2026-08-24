@@ -14,9 +14,9 @@ function conversationOutput(text = 'done') {
   })}</PRAETORIUM_CONTROL>`;
 }
 
-function delegationOutput() {
+function delegationOutput({ workflowId = 'quick-fix' } = {}) {
   return `위임합니다.\n<PRAETORIUM_CONTROL>${JSON.stringify({
-    schema: 'director-action.v1', mode: 'delegate', workflow_id: 'quick-fix', state: 'executing',
+    schema: 'director-action.v1', mode: 'delegate', workflow_id: workflowId, state: 'executing',
     requirements: ['tests pass'], decisions: ['small isolated change'],
     actions: [{
       id: 'implement', title: 'Implement fix', target: 'codex-implementer', task: 'Implement the fix.',
@@ -68,6 +68,10 @@ function service(opts = {}) {
     projectsRoot: 'C:\\projects',
     getProjects: opts.getProjects || (() => [{ id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha' }]),
   });
+}
+
+function combinedDelegationOutput(options = {}) {
+  return `${analysisOutput()}\n${delegationOutput(options)}`;
 }
 
 function seedActiveGoal(svc, overrides = {}) {
@@ -210,7 +214,10 @@ describe('DirectorService', () => {
     let dispatched = null;
     const svc = service({ runtime: runtime({
       listTasks: async () => [
-        { status: 'ready' }, { status: 'ready' }, { status: 'ready' }, { status: 'running' },
+        { id: 'review-1', status: 'ready', assignee: 'convention-reviewer' },
+        { id: 'review-2', status: 'ready', assignee: 'test-gap-reviewer' },
+        { id: 'review-3', status: 'ready', assignee: 'adversarial-reviewer' },
+        { id: 'review-running', status: 'running', assignee: 'security-reviewer' },
       ],
       dispatch: async ({ max }) => { dispatched = max; return { json: { spawned: max } }; },
     }) });
@@ -228,6 +235,89 @@ describe('DirectorService', () => {
     const result = await svc.tickDirector('project-director-1');
     assert.equal(dispatched, 0);
     assert.deepEqual(result.dispatch.crashed, ['worker-1']);
+  });
+
+  it('backs off idle dispatch while preserving the periodic orphan reconciliation pass', async () => {
+    let dispatches = 0;
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [],
+      dispatch: async () => { dispatches += 1; return { json: { spawned: 0 } }; },
+    }) });
+    await svc.tickDirector('project-director-1');
+    const second = await svc.tickDirector('project-director-1');
+    assert.equal(dispatches, 1);
+    assert.equal(second.dispatchSkipped, true);
+    const director = svc.getDirector('project-director-1');
+    svc._boardEntry(director).lastDispatchAt = new Date(Date.now() - 61000).toISOString();
+    const third = await svc.tickDirector('project-director-1');
+    assert.equal(dispatches, 2);
+    assert.equal(third.reconciliationDue, true);
+    assert.equal(svc.getBoardStatus(director.id).dispatchCount, 2);
+  });
+
+  it('invalidates an in-flight scheduler generation before a restarted scheduler can create a second loop', async () => {
+    const svc = service({ getProjects: () => [] });
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timers = new Set();
+    globalThis.setTimeout = (callback, delay) => {
+      const timer = { callback, delay, unref() {} };
+      timers.add(timer);
+      return timer;
+    };
+    globalThis.clearTimeout = timer => timers.delete(timer);
+
+    let releaseFirstTick;
+    let tickCalls = 0;
+    svc.tick = async () => {
+      tickCalls += 1;
+      if (tickCalls === 1) return new Promise(resolve => { releaseFirstTick = resolve; });
+      return [];
+    };
+    const fire = timer => {
+      timers.delete(timer);
+      return timer.callback();
+    };
+
+    try {
+      svc.startScheduler(5000);
+      const firstTimer = [...timers][0];
+      const firstTurn = fire(firstTimer);
+
+      svc.stopScheduler();
+      svc.startScheduler(5000);
+      const restartedTimer = [...timers][0];
+      await fire(restartedTimer);
+
+      releaseFirstTick([]);
+      await firstTurn;
+      assert.equal(timers.size, 1, 'only the restarted generation may own a follow-up timer');
+
+      svc.stopScheduler();
+      assert.equal(timers.size, 0, 'stopping the current generation clears its only timer');
+    } finally {
+      svc.stopScheduler();
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it('preserves supervision and board failures in scheduler health instead of treating them as idle success', async () => {
+    const boardSvc = service();
+    boardSvc._maybeSuperviseGoal = async () => { throw new Error('supervision failed'); };
+    await assert.rejects(() => boardSvc.tickDirector('project-director-1'), /supervision failed/);
+    assert.equal(boardSvc.getBoardStatus('project-director-1').lastTickError, 'supervision failed');
+
+    const schedulerSvc = service({ getProjects: () => [] });
+    schedulerSvc.tick = async () => [{ directorId: 'skill-director', error: 'board offline' }];
+    try {
+      schedulerSvc.startScheduler(5000);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.match(schedulerSvc.summary().scheduler.lastError, /skill-director: board offline/);
+      assert.equal(schedulerSvc.summary().scheduler.idleTicks, 0, 'failures should retry at the base interval');
+    } finally {
+      schedulerSvc.stopScheduler();
+    }
   });
 
   it('serves board reads immediately and single-flights a slow Hermes refresh', async () => {
@@ -295,6 +385,96 @@ describe('DirectorService', () => {
     assert.deepEqual(await ticking, { skipped: true });
     assert.equal((await checking).safe, true);
     assert.equal(dispatches, 0);
+  });
+
+  it('waits for an in-flight dispatch to drain and then refuses shutdown when it spawned a Worker', async () => {
+    let status = 'ready';
+    let dispatchEntered;
+    const entered = new Promise(resolve => { dispatchEntered = resolve; });
+    let releaseDispatch;
+    const dispatchHeld = new Promise(resolve => { releaseDispatch = resolve; });
+    let supervisionEntered;
+    const supervising = new Promise(resolve => { supervisionEntered = resolve; });
+    let releaseSupervision;
+    const supervisionHeld = new Promise(resolve => { releaseSupervision = resolve; });
+    const svc = service({ runtime: runtime({
+      listTasks: async ({ profile }) => profile === 'skill-director' ? [] : [{
+        id: 't_writer', status, assignee: 'codex-implementer',
+      }],
+      dispatch: async () => {
+        dispatchEntered();
+        await dispatchHeld;
+        status = 'running';
+        return { json: { spawned: 1 } };
+      },
+    }) });
+    svc._maybeSuperviseGoal = async () => {
+      supervisionEntered();
+      await supervisionHeld;
+      return { monitored: true };
+    };
+
+    const ticking = svc.tickDirector('project-director-1');
+    await entered;
+    let shutdownSettled = false;
+    const checking = svc.beginShutdown().finally(() => { shutdownSettled = true; });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(shutdownSettled, false, 'shutdown must wait for the board lock held by dispatch and supervision');
+
+    releaseDispatch();
+    await supervising;
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(shutdownSettled, false, 'shutdown must also wait for post-dispatch supervision');
+    releaseSupervision();
+    await ticking;
+    const readiness = await checking;
+    assert.equal(readiness.safe, false);
+    assert.match(readiness.reason, /Worker 실행 1개/);
+  });
+
+  it('reloops a newly supervised wave only after releasing the widened board lock', async () => {
+    const svc = service();
+    let supervisionCalls = 0;
+    let secondTurnSawUnlockedBoard = false;
+    const director = svc.getDirector('project-director-1');
+    const boardKey = svc._boardKey(director);
+    svc._maybeSuperviseGoal = async () => {
+      supervisionCalls += 1;
+      if (supervisionCalls === 2) secondTurnSawUnlockedBoard = svc.boardLocks.has(boardKey) === false;
+      return { taskIds: supervisionCalls === 1 ? ['t_new_wave'] : [] };
+    };
+
+    await svc.tickDirector(director.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    assert.equal(supervisionCalls, 2, 'newly materialized work should not wait for the scheduler interval');
+    // The second turn has reacquired the lock by the time supervision runs;
+    // observing it unlocked here would indicate supervision escaped serialization.
+    assert.equal(secondTurnSawUnlockedBoard, false);
+    assert.equal(svc.boardLocks.has(boardKey), false);
+  });
+
+  it('serializes legacy or unknown writers across the whole board while preserving review parallelism', async () => {
+    const writerTasks = [
+      { id: 'legacy-write-1', status: 'ready', assignee: 'codex-implementer' },
+      { id: 'legacy-write-2', status: 'ready', assignee: 'remediator' },
+    ];
+    let observedMax = null;
+    const svc = service({ runtime: runtime({
+      listTasks: async () => writerTasks,
+      dispatch: async ({ max }) => { observedMax = max; return { json: { spawned: max } }; },
+    }) });
+    const result = await svc.tickDirector('project-director-1');
+    assert.equal(observedMax, 1);
+    assert.equal(result.writerSafety.reason, 'writer-ready');
+    assert.deepEqual(result.writerSafety.readyWriterTaskIds, ['legacy-write-1', 'legacy-write-2']);
+
+    writerTasks.splice(0, writerTasks.length,
+      { id: 'legacy-write-running', status: 'running', assignee: 'codex-implementer' },
+      { id: 'review-ready', status: 'ready', assignee: 'security-reviewer' });
+    const blocked = await svc.tickDirector('project-director-1');
+    assert.equal(blocked.allocated, 0);
+    assert.equal(blocked.writerSafety.reason, 'potential-writer-running');
   });
 
   it('ticks project boards independently when one board is slow', async () => {
@@ -384,6 +564,126 @@ describe('DirectorService', () => {
     assert.equal(summary.activeGoals[0].status, 'executing');
     assert.equal(summary.activeGoals[0].completedAt, null);
     assert.equal(svc.getDirector('project-director-1').activeGoalId, completed.goalId);
+  });
+
+  it('routes the legacy objective API through the durable Goal queue instead of raw Hermes task creation', async () => {
+    let rawObjectives = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => ({ stdout: combinedDelegationOutput() }),
+      createObjective: async () => { rawObjectives += 1; return { json: { id: 'raw-objective' } }; },
+    }) });
+
+    const run = await svc.createObjective('project-director-1', {
+      title: 'Durable objective', body: 'Keep the exact acceptance evidence.',
+    });
+    assert.equal(rawObjectives, 0);
+    assert.ok(run.goalId);
+    assert.equal(svc.getGoal(run.goalId).objective, 'Durable objective\n\nKeep the exact acceptance evidence.');
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.equal(svc.getRun(run.id).status, 'completed');
+    assert.equal(svc.getGoal(run.goalId).waves.length, 1);
+  });
+
+  it('uses one Director inference when the combined analysis and plan envelope is valid', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => { chatCalls += 1; return { stdout: combinedDelegationOutput() }; },
+    }) });
+    const submitted = svc.submitMessage('project-director-1', '빠르게 구현해줘', { mode: 'delegate' });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const run = svc.getRun(submitted.id);
+    assert.equal(run.status, 'completed');
+    assert.equal(run.fastPath, true);
+    assert.equal(run.combinedAttempt, 1);
+    assert.equal(run.planAttempt, 0);
+    assert.equal(chatCalls, 1);
+    assert.doesNotMatch(run.output, /PRAETORIUM_ANALYSIS/);
+  });
+
+  it('propagates a combined workflow mismatch and retries a mismatched fallback plan', async () => {
+    const prompts = [];
+    const outputs = [
+      combinedDelegationOutput({ workflowId: 'standard-feature' }),
+      delegationOutput({ workflowId: 'standard-feature' }),
+      delegationOutput(),
+    ];
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async ({ prompt }) => {
+        prompts.push(prompt);
+        return { stdout: outputs[chatCalls++] };
+      },
+    }) });
+    const submitted = svc.submitMessage('project-director-1', 'Implement the bounded fix', { mode: 'delegate' });
+    await new Promise(resolve => setTimeout(resolve, 80));
+    const run = svc.getRun(submitted.id);
+
+    assert.equal(chatCalls, 3);
+    assert.equal(run.status, 'completed');
+    assert.equal(run.planAttempt, 2);
+    assert.match(prompts[1], /Combined fast path workflow mismatch/);
+    assert.match(prompts[2], /does not match validated analysis/);
+  });
+
+  it('queues delegated Goals per project and promotes the next Goal after terminal completion', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => { chatCalls += 1; return { stdout: combinedDelegationOutput() }; },
+    }) });
+    const first = svc.submitMessage('project-director-1', '첫 기능 구현해줘', { mode: 'delegate' });
+    const second = svc.submitMessage('project-director-1', '둘째 기능 구현해줘', { mode: 'delegate' });
+    assert.equal(svc.getRun(second.id).status, 'queued');
+    assert.equal(svc.getGoal(svc.getRun(second.id).goalId).status, 'queued');
+    assert.equal(svc.summary().queuedGoals[0].queuePosition, 1);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(chatCalls, 1, 'the queued Goal must not open a competing Director turn');
+    const firstGoal = svc.getGoal(svc.getRun(first.id).goalId);
+    svc._finishGoal(firstGoal, 'completed', 'first complete', { gateAudit: { satisfied: true } });
+    svc._save();
+    await new Promise(resolve => setTimeout(resolve, 60));
+    const secondGoal = svc.getGoal(svc.getRun(second.id).goalId);
+    assert.equal(chatCalls, 2);
+    assert.equal(secondGoal.status, 'executing');
+    assert.equal(svc.getRun(second.id).status, 'completed');
+    assert.equal(svc.getDirector('project-director-1').activeGoalId, secondGoal.id);
+  });
+
+  it('promotes a delegated Goal immediately after a non-Goal Director conversation ends', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => {
+        chatCalls += 1;
+        if (chatCalls === 1) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+          return { stdout: conversationOutput('conversation complete') };
+        }
+        return { stdout: combinedDelegationOutput() };
+      },
+    }) });
+
+    svc.submitMessage('project-director-1', 'Explain the current state', { mode: 'conversation' });
+    const queued = svc.submitMessage('project-director-1', 'Implement the next fix', { mode: 'delegate' });
+    const queuedGoalId = svc.getRun(queued.id).goalId;
+    assert.equal(svc.getGoal(queuedGoalId).status, 'queued');
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(chatCalls, 2);
+    assert.equal(svc.getRun(queued.id).status, 'completed');
+    assert.equal(svc.getGoal(queuedGoalId).status, 'executing');
+    assert.equal(svc.getDirector('project-director-1').activeGoalId, queuedGoalId);
+  });
+
+  it('preserves queued Goal turns across restart instead of marking them interrupted', () => {
+    const first = service();
+    seedActiveGoal(first, { taskId: 't_active_before_restart' });
+    const queued = first.submitMessage('project-director-1', '다음 기능도 구현해줘', { mode: 'delegate' });
+    const restarted = new DirectorService({
+      runtime: runtime(), stateFile: first.stateFile, projectsRoot: 'C:\\projects',
+      getProjects: () => [{ id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha' }],
+    });
+    assert.equal(restarted.getRun(queued.id).status, 'queued');
+    assert.equal(restarted.getGoal(restarted.getRun(queued.id).goalId).status, 'queued');
+    assert.equal(restarted.summary().queuedGoals.length, 1);
   });
 
   it('records selectedOption once and rejects a duplicate Owner decision', async () => {
@@ -554,6 +854,61 @@ describe('DirectorService', () => {
     assert.equal(summary.goals[0].id, active.id);
   });
 
+  it('compacts only terminal history and reports durable retention metrics', () => {
+    const svc = service();
+    const active = seedActiveGoal(svc, { taskId: 't_retention_active' });
+    for (let index = 0; index < 510; index += 1) {
+      svc.state.goals.push({
+        id: `goal-retained-${index}`, directorId: 'project-director-1', projectId: 'alpha',
+        objective: `terminal ${index}`, status: 'completed', phase: 'completed',
+        taskIds: [], currentWaveTaskIds: [], taskRecords: [], waves: [], events: [],
+        createdAt: new Date(1700000000000 + index * 1000).toISOString(),
+        updatedAt: new Date(1700000000000 + index * 1000).toISOString(),
+        completedAt: new Date(1700000000000 + index * 1000).toISOString(),
+      });
+    }
+    for (let index = 0; index < 2100; index += 1) {
+      svc.state.runs.push({
+        id: `historical-run-${index}`, directorId: 'project-director-1', projectId: 'alpha',
+        status: 'completed', createdAt: new Date(1700000000000 + index * 1000).toISOString(),
+      });
+    }
+    svc._save();
+    assert.equal(svc.state.goals.filter(goal => goal.status === 'completed').length, 500);
+    assert.ok(svc.state.goals.includes(active));
+    assert.equal(svc.state.runs.length, 2000);
+    assert.equal(svc.summary().retention.prunedGoals, 10);
+    assert.equal(svc.summary().retention.prunedRuns, 100);
+    assert.ok(svc.summary().persistence.lastBytes > 0);
+  });
+
+  it('retains terminal Goals by completion recency instead of creation order', () => {
+    const svc = service();
+    const recentlyCompleted = {
+      id: 'goal-long-running-recent-completion', directorId: 'project-director-1', projectId: 'alpha',
+      objective: 'long-running Goal', status: 'completed', phase: 'completed',
+      taskIds: [], currentWaveTaskIds: [], taskRecords: [], waves: [], events: [],
+      createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2030-01-01T00:00:00.000Z',
+      completedAt: '2030-01-01T00:00:00.000Z',
+    };
+    svc.state.goals.push(recentlyCompleted);
+    for (let index = 0; index < 500; index += 1) {
+      svc.state.goals.push({
+        id: `goal-older-completion-${index}`, directorId: 'project-director-1', projectId: 'alpha',
+        objective: `older completion ${index}`, status: 'completed', phase: 'completed',
+        taskIds: [], currentWaveTaskIds: [], taskRecords: [], waves: [], events: [],
+        createdAt: new Date(1750000000000 + index * 1000).toISOString(),
+        updatedAt: new Date(1750000000000 + index * 1000).toISOString(),
+        completedAt: new Date(1750000000000 + index * 1000).toISOString(),
+      });
+    }
+
+    svc._save();
+    assert.equal(svc.state.goals.length, 500);
+    assert.equal(svc.getGoal(recentlyCompleted.id), recentlyCompleted);
+    assert.equal(svc.getGoal('goal-older-completion-0'), null);
+  });
+
   it('atomically migrates active Goal and run ownership when its project changes Director slots', () => {
     let projects = [
       { id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha', slot: 1 },
@@ -590,7 +945,9 @@ describe('DirectorService', () => {
 
   it('shares one adaptive allocation cap across three simultaneous project board ticks', async () => {
     const allocations = [];
-    const readyTasks = Array.from({ length: 12 }, (_, index) => ({ id: `t_ready_${index}`, status: 'ready' }));
+    const readyTasks = Array.from({ length: 12 }, (_, index) => ({
+      id: `t_ready_${index}`, status: 'ready', assignee: 'convention-reviewer',
+    }));
     const svc = service({
       getProjects: () => [
         { id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha', slot: 1 },
@@ -653,6 +1010,101 @@ describe('DirectorService', () => {
     assert.notEqual(_test.persistedAuthorityPlanDigest(pending), planDigest);
     pending.plan.state = 'blocked';
     assert.equal(_test.persistedAuthorityPlanDigest(pending), null);
+  });
+
+  it('requires an authority action to be isolated behind a current host-receipted gate', () => {
+    const svc = service();
+    const goal = seedActiveGoal(svc, { taskId: 't_authority_writer' });
+    goal.currentCandidate = { revision: 'candidate-v1', digest: 'sha256:candidate-v1' };
+    const external = {
+      id: 'publish', title: 'Publish release', target: 'codex-implementer',
+      task: 'Publish the exact approved candidate.', effect: 'external_mutation',
+      skills: [], dependencies: [], writeScope: ['release/'],
+      acceptance: ['host-observed publish receipt'], wakeOn: ['completion'],
+    };
+    const localWrite = {
+      id: 'prepare', title: 'Prepare artifact', target: 'codex-implementer',
+      task: 'Modify the local artifact payload.', effect: 'workspace_write',
+      skills: [], dependencies: [], writeScope: ['artifact/'], acceptance: ['tests pass'], wakeOn: ['completion'],
+    };
+    const mislabeledExternal = {
+      ...external, id: 'mislabeled-publish', effect: 'workspace_write',
+    };
+
+    assert.throws(
+      () => svc._assertAuthorityActionPrerequisites(goal, [mislabeledExternal], null),
+      /must declare effect as external_mutation/,
+    );
+    assert.throws(
+      () => svc._assertAuthorityActionPrerequisites(goal, [localWrite, external], null),
+      /must be the only action in its wave/,
+    );
+    assert.throws(
+      () => svc._assertAuthorityActionPrerequisites(goal, [external], null),
+      /fresh host-receipted review and quality-gate wave/,
+    );
+
+    const gateAudit = {
+      workflowId: 'quick-fix',
+      missingProfiles: [],
+      creditedTaskIds: {
+        'codex-implementer': 't_authority_writer',
+        'convention-reviewer': 't_convention',
+        'test-gap-reviewer': 't_test_gap',
+        'adversarial-reviewer': 't_adversarial',
+        'quality-gate-reviewer': 't_gate',
+      },
+      approvedGateTaskId: 't_gate',
+      gateConsistency: { satisfied: true, reasons: [] },
+      hostReceipts: { required: true, satisfied: true },
+      hostCandidate: { revision: 'candidate-v1', digest: 'sha256:candidate-v1' },
+    };
+    assert.doesNotThrow(() => svc._assertAuthorityActionPrerequisites(goal, [external], gateAudit));
+
+    goal.currentCandidate = { revision: 'candidate-v2', digest: 'sha256:candidate-v2' };
+    assert.throws(
+      () => svc._assertAuthorityActionPrerequisites(goal, [external], gateAudit),
+      /fresh host-receipted review and quality-gate wave/,
+    );
+  });
+
+  it('permits the first skill activation only as an explicit rollback-safe canary', () => {
+    const svc = service();
+    const goal = seedActiveGoal(svc, {
+      taskId: 't_skill_build', directorId: 'skill-director', projectId: null,
+      workflowId: 'skill-development', analysis: { recommendedWorkflow: 'skill-development' },
+    });
+    goal.currentCandidate = { revision: 'skill-v1', digest: 'sha256:skill-v1' };
+    const gateAudit = {
+      workflowId: 'skill-development', missingProfiles: [],
+      creditedTaskIds: {
+        'codex-implementer': 't_skill_build',
+        'adversarial-reviewer': 't_skill_adversarial',
+        'quality-gate-reviewer': 't_skill_gate',
+      },
+      approvedGateTaskId: 't_skill_gate',
+      gateConsistency: { satisfied: true, reasons: [] },
+      hostReceipts: { required: true, satisfied: true },
+      hostCandidate: { revision: 'skill-v1', digest: 'sha256:skill-v1' },
+    };
+    const activate = {
+      id: 'activate', title: 'Activate skill', target: 'codex-implementer',
+      task: 'Activate the approved skill.', effect: 'skill_activation',
+      skills: [], dependencies: [], writeScope: ['skill-registry/'],
+      acceptance: ['activation receipt'], wakeOn: ['completion'],
+    };
+
+    assert.throws(
+      () => svc._assertAuthorityActionPrerequisites(goal, [activate], gateAudit),
+      /limited canary with rollback acceptance/,
+    );
+    const canary = {
+      ...activate,
+      title: 'Limited canary activation',
+      task: 'Activate only the bounded canary cohort and stop on failure.',
+      acceptance: ['Host receipt identifies the canary cohort', 'Rollback restores the previous registry entry'],
+    };
+    assert.doesNotThrow(() => svc._assertAuthorityActionPrerequisites(goal, [canary], gateAudit));
   });
 
   it('does not resume a blocked Worker after its durable Goal is terminal', async () => {

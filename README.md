@@ -15,7 +15,7 @@ Praetorium never starts a remote-control service. Its small HTTP server is force
 
 ## Install on the company Windows PC
 
-`v2.0.0` is the last published binary baseline. The current `v2.1.0` source adds native WSL2 projects and the environment-management console; build it locally until the Owner publishes a signed release tag. The only expected interactive step is `codex login` when the machine has not already been authenticated.
+`v2.0.0` is the last published binary baseline. The current `v2.2.0` source adds native WSL2 projects, environment management, durable Goal queues, runtime hardening, and decision-grade supervision UI; build it locally until the Owner publishes a signed release tag. The only expected interactive step is `codex login` when the machine has not already been authenticated.
 
 ```powershell
 git clone https://github.com/wooinwoo/praetorium.git
@@ -48,11 +48,15 @@ Owner
    └─ Skill Director     → evaluated skill lifecycle
 ```
 
-Each delegated Owner request creates one durable Goal. Initial analysis, planning, and every later evidence assessment use fresh Director Codex app-server turns; a completed Director turn is only a checkpoint and does not complete the Goal. Conversation-only messages remain disposable turns. Praetorium injects a bounded handoff for conversation context and a bounded durable Goal snapshot for supervision, avoiding unbounded context growth and Hermes `v0.20.5` resume stalls.
+Each delegated Owner request creates one durable Goal. A clear request first uses a combined read-only analysis-and-plan turn; if either envelope is invalid or times out, Praetorium falls back to separate analysis and planning checkpoints. Every later evidence assessment uses a fresh Director Codex app-server turn. A completed Director turn is only a checkpoint and does not complete the Goal. Conversation-only messages remain disposable turns. Praetorium injects a bounded handoff for conversation context and a bounded durable Goal snapshot for supervision, avoiding unbounded context growth and Hermes `v0.20.5` resume stalls.
+
+Each Director supervises one active Goal at a time because all writers for that project share one working directory. Additional delegated requests are accepted into a durable FIFO Goal queue instead of being rejected; terminal completion automatically promotes the next Goal. Different project Directors still run independently in parallel.
 
 The Director emits a validated `executing`, `awaiting_owner`, `complete`, or `blocked` control decision. The host materializes `executing` actions as a bounded Worker wave. When every card in that wave reaches a terminal task state, a fresh Director turn reads its results and public evidence, then starts remediation or fresh review, asks one material Owner question, or proposes completion. Persisted Goal status makes planning, execution, evaluation, remediation, verification, waiting, and terminal state visible.
 
-Hermes stores durable profiles, boards, tasks, results, and Worker lifecycle state; Praetorium stores the Goal, workflow, action journal, waves, decisions, evidence, and completion report. The scheduler evaluates all three project boards independently every ten seconds, so a slow or broken project does not stall the others. Parallelism is selected from ready work, running work, CPU, and memory, capped at 12 workers across the app. Workers use `dir:<project cwd>`, not per-task worktrees: the host dependency-serializes every write action in a project, even when declared paths differ, and places write and review/gate work in separate waves. Read-only reviews and separate projects can still run in parallel. A declared `write_scope` is a task contract, not a narrower filesystem sandbox than the project root. Supervision and remediation loops are bounded; reaching a limit produces an explicit Owner decision instead of retrying forever.
+Hermes stores durable profiles, boards, tasks, results, and Worker lifecycle state; Praetorium stores the Goal, workflow, action journal, waves, decisions, evidence, and completion report. Terminal history is compacted to bounded retention windows while active, queued, approval-bound, and referenced audit state is preserved. Every credited task receives a host-observation receipt containing hashes of the Hermes task record, validation, events, runs, comments, raw log when available, and the exact evidence object credited by the gate. That receipt proves which local bytes Praetorium observed; it is explicitly not an independent attestation that a Worker-authored command-exit claim is true.
+
+The scheduler evaluates project boards independently, so a slow or broken project does not stall the others. It checks active work promptly and exponentially backs idle boards off to a 60-second ceiling; a bounded zero-spawn pass still reconciles orphaned Worker processes every minute. Parallelism is selected from ready work, running work, CPU, and memory, capped at 12 workers across the app. Workers use `dir:<project cwd>`, not per-task worktrees: the host dependency-serializes every write action in a project, rejects mixed write/review waves, and also applies a fail-closed board-wide writer cap to legacy or manually created cards. Read-only review/gate-only waves and separate projects can still run in parallel. A declared `write_scope` is a task contract, not a narrower filesystem sandbox than the project root. Supervision and remediation loops are bounded; reaching a limit produces an explicit Owner decision instead of retrying forever.
 
 After a restart, an interrupted Director turn is marked failed while its non-terminal Goal remains active. Praetorium resumes initial planning, idempotent wave materialization, approved exact-plan execution, or evidence evaluation from persisted state and the Hermes board rather than relying on the old model session or duplicating cards. Persisted Owner pause/resume intent is reconciled before dispatch; an `awaiting_owner` Goal remains parked.
 
@@ -89,8 +93,8 @@ The Owner can intervene without opening a Worker tab:
 The local Goal API used by this screen is:
 
 ```text
-GET  /api/directors                         summary including goals and activeGoals
-GET  /api/directors/:id/goals/:goalId      one durable Goal with waves, evidence, events, and decision state
+GET  /api/directors                         summary including activeGoals, queuedGoals, scheduler, and retention state
+GET  /api/directors/:id/goals/:goalId      one durable Goal with its bounded run history, waves, evidence, events, and decision state
 POST /api/directors/:id/goals/:goalId/decision
      { "selectedOption": "..." } or { "answer": "..." }
 ```
@@ -135,16 +139,16 @@ Praetorium is designed for background operation without approval popups inside t
 - the selected project is the app-server thread root;
 - only the active Hermes board directory is added as an extra writable root;
 - sandboxed shell network access is disabled for Director and worker runs;
-- inherited gateway, relay, webhook, and messaging environment variables are stripped;
+- inherited gateway, relay, webhook, messaging, cloud, package-registry, source-host, API-key, token, password, and credential-file environment variables are stripped while local runtime paths and on-disk Codex login state are preserved;
 - external actions, new authority, irreversible operations, and material product decisions remain Owner decisions;
 - an action wave cannot combine `external_mutation` with `skill_activation`; either effect parks for its own exact-plan Owner approval;
-- `external_mutation` and `skill_activation` action approvals bind the exact action plan and wave; high-risk/release and skill-development completion approvals additionally bind the verified candidate digest, which is rechecked before completion;
+- `external_mutation` and `skill_activation` must be a standalone wave after fresh host-receipted reviews and a consistent quality gate; their approvals bind the exact action plan, wave, and verified candidate digest, which is rechecked before execution;
 - approval is a control-plane decision, not a privilege switch: the exact plan resumes without model regeneration but retains the same project-root `workspace-write`, no-network sandbox and receives no credentials or out-of-root access;
 - unattended escalation without a local decision path fails closed.
 
 Worker intervention does not broaden authority. A mid-run Owner note may narrow or redirect work inside the existing project objective, but new external authority, destructive operations, remote access, or publication still requires an explicit Owner decision. If the approved action cannot run within the already configured local sandbox, it must block for Owner/manual handling; Praetorium does not silently grant network, secrets, system privilege, or global skill-directory writes.
 
-Praetorium exit and update are session-safe. Tray Quit asks the backend for a fresh Director/Worker activity check and refuses to exit while execution is active. The NSIS updater aborts when Praetorium or its loopback server is still running; it never uses force-kill or child-tree termination.
+Praetorium exit and update are session-safe. A Windows named mutex permits one desktop instance and forwards a second launch into a focus signal instead of creating another logger or server owner. Tray Quit asks the backend for a fresh Director/Worker activity check and refuses to exit while execution is active. The desktop shell starts Node suspended, assigns it to a kill-on-close Windows Job Object, then resumes it; this contains Hermes/Codex descendants before they can spawn. The watchdog cleans the contained tree before a bounded restart, while intentional shutdown first uses the backend's graceful pending/committed flow and only tears down leftovers after the bounded grace period. The NSIS updater still aborts while Praetorium or its loopback server is active.
 
 The pinned bridge applies only to Hermes Agent `v0.20.5` and fails closed on an unknown layout. It removes a redundant Hermes OAuth preflight while leaving the real Codex app-server login check intact, fixes the narrow Windows Kanban writable-root override, and makes the selected project override static profile working directories.
 
@@ -187,6 +191,7 @@ npm run tauri build -- --bundles nsis
 ## Security invariants
 
 - HTTP listens on `127.0.0.1` only; the product has no WebSocket or browser shell endpoint.
+- The server acquires an atomic, token-bound single-writer lease before loading or recovering Director state; an append-only expected-token guard journal serializes stale recovery, and process-start identity distinguishes PID reuse while lookup uncertainty fails closed.
 - Non-loopback socket peers are rejected before routing.
 - Host headers are limited to `localhost`, `127.0.0.1`, and IPv6 loopback forms.
 - No LAN discovery, remote-connect route, login token, proxy, or remote bridge is registered.
@@ -195,7 +200,7 @@ npm run tauri build -- --bundles nsis
 - Director state, project assignment, Goals, action journals, and waves are written atomically. Interrupted disposable runs recover as failed while non-terminal Goals resume from persisted evidence and idempotent task materialization.
 - Project identities are unique and Director slots are stable, so deleting and later reconnecting a same-named repository cannot inherit another project's board or execution history.
 - Project removal refreshes Hermes state and fails closed while any non-terminal task remains.
-- App exit and update never force-terminate the Node/Hermes/Codex process tree.
+- Normal app exit and update require a clean backend activity check and graceful shutdown; unexpected server death or a failed bounded shutdown is contained and cleaned through the desktop-owned Windows Job Object before restart or exit.
 - Existing user project changes are never reset or discarded by the installer.
 - Worker logs and comments are read from local Hermes Kanban state and are never relayed to a remote Praetorium service.
 
@@ -222,6 +227,6 @@ Repository automation instructions live in `AGENTS.md`; `CLAUDE.md` points Claud
 
 Tags matching `v*` run the active test suite and build Windows NSIS and macOS DMG artifacts. Release assets include SHA-256 checksum files. The company-PC bootstrap currently supports Windows; macOS packaging remains available for the desktop shell.
 
-The `v2.0.0` installer is the last published binary baseline. The current source version is `v2.1.0`; create a reviewed release before advertising or using the versioned bootstrap installer on another machine. For development or continuation now, clone the working branch and run the local-development steps above.
+The `v2.0.0` installer is the last published binary baseline. The current source version is `v2.2.0`; create a reviewed release before advertising or using the versioned bootstrap installer on another machine. For development or continuation now, clone the working branch and run the local-development steps above.
 
 License and internal deployment policy follow the repository and company policy.

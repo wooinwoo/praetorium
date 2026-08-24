@@ -16,7 +16,7 @@ export function register(ctx) {
   });
 
   addRoute('GET', '/api/directors/:id/goals/:goalId', (req, res) => {
-    const goal = directorService.getGoal(req.params.goalId);
+    const goal = directorService.getGoalDetails?.(req.params.goalId) || directorService.getGoal(req.params.goalId);
     if (!goal || goal.directorId !== req.params.id) return json(res, { error: 'Goal not found' }, 404);
     json(res, goal);
   });

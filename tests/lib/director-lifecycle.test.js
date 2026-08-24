@@ -317,13 +317,29 @@ function completeVerificationWave(runtime, goal, digest = CANDIDATE_V1) {
 }
 
 function externalApprovalRuntime() {
+  let supervisionTurns = 0;
   return new FakeRuntime({
     chat: ({ prompt }) => {
       if (prompt.includes('[PRAETORIUM ANALYSIS CHECKPOINT]')) return analysisOutput();
+      if (prompt.includes('[PRAETORIUM DURABLE GOAL SUPERVISION]')) {
+        supervisionTurns += 1;
+        if (supervisionTurns === 1) {
+          return controlOutput({
+            actions: verificationActions(),
+            decisions: ['Create fresh review and quality-gate evidence before external authority.'],
+            publicOutput: 'Fresh verification wave required.',
+          });
+        }
+        return controlOutput({
+          actions: implementationActions(1, { effect: 'external_mutation' }),
+          decisions: ['Stage one exact external action after the fresh host-bound gate.'],
+          publicOutput: 'Owner approval is required for the exact external action.',
+        });
+      }
       return controlOutput({
-        actions: implementationActions(1, { effect: 'external_mutation' }),
-        decisions: ['Stage one exact external action for Owner approval.'],
-        publicOutput: 'Owner approval is required for the exact external action.',
+        actions: implementationActions(),
+        decisions: ['Implement locally before independent review.'],
+        publicOutput: 'Implementation wave created.',
       });
     },
   });
@@ -361,6 +377,10 @@ describe('Director durable lifecycle', () => {
     assert.equal(completed.waves[1].assessment.state, 'completed');
     assert.equal(completed.waves[1].assessment.gateAudit.satisfied, true);
     assert.equal(completed.waves[1].assessment.gateAudit.acceptance.satisfied, true);
+    assert.equal(completed.finalAudit.satisfied, true);
+    assert.equal(completed.finalAudit.hostReceipts.satisfied, true);
+    assert.equal(completed.finalAudit.hostReceipts.executionAttested, false);
+    assert.ok(completed.taskRecords.every(record => record.hostReceipt?.schema === 'hermes-board-observation.v1'));
     assert.equal(runtime.snapshotCalls, 3, 'audit capture plus final pre-completion capture must observe one candidate');
   });
 
@@ -439,12 +459,17 @@ describe('Director durable lifecycle', () => {
   it('resumes the exact approved external-mutation plan after a crash without another model turn', async () => {
     const beforeCrash = externalApprovalRuntime();
     const firstService = createService(beforeCrash);
-    const submitted = firstService.submitMessage('project-director-1', 'Perform the staged external action', { mode: 'delegate' });
-    const plannedRun = await waitForRun(firstService, submitted.id);
-    assert.equal(plannedRun.status, 'completed');
-    const goal = firstService.getGoal(plannedRun.goalId);
+    const { goal } = await startLifecycle(firstService);
+    await advanceToVerification(firstService, beforeCrash, goal);
+    completeVerificationWave(beforeCrash, goal);
+    const approvalTick = await firstService.tickDirector('project-director-1');
+    await settleService(firstService);
+
+    assert.equal(approvalTick.supervision?.state, 'awaiting_owner', approvalTick.supervision?.error || 'authority plan was not parked');
     assert.equal(goal.status, 'awaiting_owner');
     const pending = clone(goal.pendingAuthorityPlan);
+    assert.equal(pending.candidateDigest, CANDIDATE_V1);
+    assert.equal(pending.gateAudit.hostReceipts.satisfied, true);
     const approveOption = goal.ownerDecision.options.find(option => goal.ownerDecision.optionActions[option] === 'approve');
     assert.ok(approveOption, 'host approval decision must expose an approve option');
 
@@ -473,7 +498,7 @@ describe('Director durable lifecycle', () => {
     assert.match(afterRestart.createTaskCalls[0].body, /\[EFFECT\] external_mutation/);
     assert.equal(
       afterRestart.createTaskCalls[0].idempotencyKey,
-      `praetorium-${goal.id}-1-${pending.plan.actions[0].id}`,
+      `praetorium-${goal.id}-3-${pending.plan.actions[0].id}`,
     );
     assert.equal(resumedTick.supervision?.state, 'executing');
     assert.equal(resumed.pendingAuthorityPlan, null);
@@ -481,13 +506,13 @@ describe('Director durable lifecycle', () => {
   });
 
   it('recovers an active Goal from a checksum-valid backup when the primary state is corrupt', async () => {
-    const runtime = externalApprovalRuntime();
+    const runtime = lifecycleRuntime();
     const firstService = createService(runtime);
     const submitted = firstService.submitMessage('project-director-1', 'Prepare a recoverable active Goal', { mode: 'delegate' });
     const plannedRun = await waitForRun(firstService, submitted.id);
     assert.equal(plannedRun.status, 'completed');
     const goal = firstService.getGoal(plannedRun.goalId);
-    assert.equal(goal.status, 'awaiting_owner');
+    assert.equal(goal.status, 'executing');
     firstService._save();
     firstService._save();
 
@@ -496,7 +521,7 @@ describe('Director durable lifecycle', () => {
     const expectedDigest = backup.integrity.digest;
     delete backup.integrity;
     assert.equal(createHash('sha256').update(JSON.stringify(backup)).digest('hex'), expectedDigest);
-    assert.ok(backup.goals.some(item => item.id === goal.id && item.status === 'awaiting_owner'));
+    assert.ok(backup.goals.some(item => item.id === goal.id && item.status === 'executing'));
 
     writeFileSync(firstService.stateFile, '{"schema":2,"corrupt":', 'utf8');
     const recoveredService = createService(new FakeRuntime(), firstService.stateFile);
@@ -504,7 +529,7 @@ describe('Director durable lifecycle', () => {
 
     assert.equal(recoveredService.stateRecovery?.source, 'backup');
     assert.ok(recoveredService.stateRecovery?.failures.some(item => item.path === firstService.stateFile));
-    assert.equal(recovered.status, 'awaiting_owner');
+    assert.equal(recovered.status, 'executing');
     assert.equal(recoveredService.getDirector('project-director-1').activeGoalId, goal.id);
     assert.ok(recoveredService.summary().activeGoals.some(item => item.id === goal.id));
   });

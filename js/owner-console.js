@@ -28,20 +28,33 @@ const state = {
   taskTraceError: null,
   taskLoading: false,
   taskLoadedAt: 0,
+  goalDetail: null,
+  goalDetailId: null,
+  goalDetailError: null,
+  goalDetailErrorId: null,
+  goalDetailLoading: false,
+  goalDetailLoadingId: null,
+  goalDetailLoadedAt: 0,
   inspectorRenderKey: null,
   inspectorOpener: null,
   interventionDraft: '',
   interventionComposing: false,
+  interventionReceipt: null,
   decisionDraft: '',
   decisionOption: '',
   decisionGoalId: null,
   decisionError: null,
   decisionComposing: false,
   rawLogOpen: null,
+  traceFilters: new Set(['decision', 'worker', 'gate', 'failure']),
+  waveExpansion: new Map(),
   runtimeGuideId: null,
   busyActions: new Set(),
   managementLoads: {},
   consoleError: null,
+  lastSyncedAt: 0,
+  refreshing: false,
+  staleSince: 0,
   loading: null,
   timer: null,
 };
@@ -52,7 +65,8 @@ const FOCUS_KEYS = [
   'data-director', 'data-trace-selection', 'data-select-trace', 'data-select-task', 'data-attention-task', 'data-profile', 'data-skill',
   'data-worker-control', 'data-send-intervention', 'data-raw-worker-log-summary', 'data-retry-board',
   'data-retry-task', 'data-open-projects', 'data-goal-task', 'data-owner-decision-option',
-  'data-owner-decision-submit',
+  'data-owner-decision-submit', 'data-trace-filter', 'data-wave-toggle',
+  'data-retry-goal',
 ];
 
 function activeElementIdentity() {
@@ -170,6 +184,10 @@ function phaseLabel(phase) {
   })[phase] || phase || '대기';
 }
 
+function controlPlaneUnavailable() {
+  return Boolean(state.consoleError || state.boardStatus?.error);
+}
+
 function statusLabel(status) {
   return ({
     idle: '대기', running: '실행 중', unassigned: '미배정', error: '확인 필요',
@@ -255,7 +273,14 @@ function selectedGoals() {
   for (const goal of state.summary?.activeGoals || []) {
     if (typeof goal === 'object' && goal?.id && !all.some(candidate => candidate.id === goal.id)) all.push(goal);
   }
+  for (const goal of state.summary?.queuedGoals || []) {
+    if (typeof goal === 'object' && goal?.id && !all.some(candidate => candidate.id === goal.id)) all.push(goal);
+  }
   return all.filter(goal => goalMatchesDirector(goal)).sort((left, right) => goalTime(right) - goalTime(left));
+}
+
+function queuedGoalsForDirector(director = selectedDirector()) {
+  return (state.summary?.queuedGoals || []).filter(goal => typeof goal === 'object' && goalMatchesDirector(goal, director));
 }
 
 function activeGoalIds() {
@@ -269,7 +294,7 @@ function activeGoalForDirector(director) {
     ? (state.summary?.goals || []).find(goal => goal.id === item)
     : item).filter(Boolean);
   return expanded.find(goal => goalMatchesDirector(goal, director))
-    || (state.summary?.goals || []).find(goal => goalMatchesDirector(goal, director) && !goalIsTerminal(goal))
+    || [...(state.summary?.queuedGoals || []), ...(state.summary?.goals || [])].find(goal => typeof goal === 'object' && goalMatchesDirector(goal, director) && !goalIsTerminal(goal))
     || null;
 }
 
@@ -280,16 +305,27 @@ function goalIsTerminal(goal) {
 function goalIsActive(goal) {
   if (!goal) return false;
   const ids = activeGoalIds();
-  return ids.size ? ids.has(goal.id) : !goalIsTerminal(goal) && goal.status !== 'blocked';
+  return ids.size ? ids.has(goal.id) : !goalIsTerminal(goal) && !['blocked', 'queued'].includes(goal.status);
 }
 
-function selectedGoal() {
+function selectedGoalSummary() {
   const goals = selectedGoals();
   return activeGoalForDirector(selectedDirector()) || goals.find(goal => goalIsActive(goal)) || goals[0] || null;
 }
 
+function selectedGoal() {
+  const summaryGoal = selectedGoalSummary();
+  if (!summaryGoal || state.goalDetailId !== summaryGoal.id || !state.goalDetail) return summaryGoal;
+  return { ...state.goalDetail, ...summaryGoal, runs: state.goalDetail.runs || summaryGoal.runs || [] };
+}
+
+function selectedGoalDetailError(goal = selectedGoalSummary()) {
+  return goal?.id && state.goalDetailErrorId === goal.id ? state.goalDetailError : null;
+}
+
 function goalRuns(goal = selectedGoal()) {
   if (!goal) return [];
+  if (Array.isArray(goal.runs)) return [...goal.runs].sort((left, right) => timeMs(right.createdAt || right.startedAt) - timeMs(left.createdAt || left.startedAt));
   return selectedRuns().filter(run => run.goalId === goal.id);
 }
 
@@ -321,6 +357,7 @@ function taskForAction(action) {
 
 function goalStatusLabel(status) {
   return ({
+    queued: '실행 대기열',
     clarifying: '명세 확인 중', planning: '계획 수립 중', executing: 'Worker 실행 중', evaluating: '결과 평가 중',
     remediating: '재작업 중', verifying: '완료 검증 중', awaiting_owner: 'Owner 판단 대기', completed: '목표 완료',
     blocked: '진행 중단', failed: '목표 실패', cancelled: '취소됨',
@@ -461,6 +498,35 @@ function renderTopbar() {
   $('director-count').textContent = state.summary?.directors?.length || 0;
 }
 
+function renderSyncBanner() {
+  const root = $('sync-banner');
+  if (!root) return;
+  const recovery = state.summary?.stateRecovery;
+  const error = state.consoleError || state.boardStatus?.error;
+  const lastSynced = state.lastSyncedAt ? clockLabel(state.lastSyncedAt) : '아직 없음';
+  root.hidden = false;
+  if (error) {
+    root.className = 'sync-banner stale';
+    root.setAttribute('role', 'alert');
+    root.innerHTML = `<i></i><div><strong>최신 상태 확인 실패 · 기존 trace 보존 중</strong><p>${escapeHtml(friendlyErrorMessage(error))} 상태 변경 버튼은 안전을 위해 잠겼습니다.</p></div><span>LAST SYNC ${escapeHtml(lastSynced)}</span><button type="button" class="secondary-button" data-retry-board>다시 동기화</button>`;
+    return;
+  }
+  root.setAttribute('role', 'status');
+  if (state.refreshing) {
+    root.className = 'sync-banner refreshing';
+    root.innerHTML = `<i></i><div><strong>Stale-while-revalidate</strong><p>기존 실행 흐름을 유지한 채 최신 Director·Worker 상태를 확인하고 있습니다.</p></div><span>LAST SYNC ${escapeHtml(lastSynced)}</span>`;
+    return;
+  }
+  if (recovery) {
+    const failures = Array.isArray(recovery.failures) ? recovery.failures.length : 0;
+    root.className = 'sync-banner recovered';
+    root.innerHTML = `<i></i><div><strong>State recovery · 백업 상태에서 복구됨</strong><p>주 상태 파일 검증에 실패해 checksum이 유효한 백업에서 Goal 감독 상태를 복원했습니다${failures ? ` · 감지 ${failures}건` : ''}.</p></div><span>RECOVERED ${escapeHtml(clockLabel(recovery.at))} · LAST SYNC ${escapeHtml(lastSynced)}</span>`;
+    return;
+  }
+  root.className = 'sync-banner healthy';
+  root.innerHTML = `<i></i><div><strong>상태 동기화됨</strong></div><span>LAST SYNC ${escapeHtml(lastSynced)}</span>`;
+}
+
 function renderDirectors() {
   const directors = state.summary?.directors || [];
   const groups = [
@@ -470,8 +536,9 @@ function renderDirectors() {
   $('owner-director-list').innerHTML = groups.filter(([, items]) => items.length).map(([label, items]) => `<section class="director-group"><h2>${label}</h2>${items.map(director => {
     const index = director.kind === 'skill' ? 'S' : director.id.split('-').at(-1);
     const goal = activeGoalForDirector(director);
+    const queued = queuedGoalsForDirector(director);
     const operationalStatus = goal?.status || director.status;
-    const subtitle = goal ? `${goalStatusLabel(goal.status)} · Cycle ${goal.cycleCount || 0}` : director.kind === 'skill' ? '스킬·운영 플로우 관리' : (director.projectId ? `${runtimeLabel(director)} · ${statusLabel(director.status)}` : '프로젝트 연결 필요');
+    const subtitle = goal ? `${goalStatusLabel(goal.status)}${goal.status === 'queued' ? ` · 대기 ${goal.queuePosition || 1}번째` : ` · Cycle ${goal.cycleCount || 0}`}${goal.status !== 'queued' && queued.length ? ` · 다음 ${queued.length}개` : ''}` : director.kind === 'skill' ? '스킬·운영 플로우 관리' : (director.projectId ? `${runtimeLabel(director)} · ${statusLabel(director.status)}` : '프로젝트 연결 필요');
     const accessibleName = `${director.name}, ${subtitle}, ${goal ? goalStatusLabel(goal.status) : statusLabel(director.status)}`;
     return `<button class="director-row ${director.id === state.selectedId ? 'active' : ''}" data-director="${escapeHtml(director.id)}" type="button" aria-label="${escapeHtml(accessibleName)}" data-tooltip="${escapeHtml(accessibleName)}">
       <span class="director-index">${escapeHtml(index)}</span>
@@ -490,6 +557,7 @@ function renderMissionHeader() {
   const goal = selectedGoal();
   const run = latestRun();
   const workflow = workflowFor(goal?.workflowId || run?.workflowId);
+  const queuedGoals = queuedGoalsForDirector(director);
   const taskIds = new Set(goal ? goalTaskIds(goal) : run?.taskIds || []);
   const relevantTasks = goal ? state.board.filter(task => taskIds.has(task.id)) : taskIds.size ? state.board.filter(task => taskIds.has(task.id)) : state.board;
   const activeTasks = relevantTasks.filter(task => task.status === 'running').length;
@@ -500,25 +568,34 @@ function renderMissionHeader() {
     : run ? (run.status === 'running' ? `판단 ${elapsedLabel(run.startedAt)}` : clockLabel(run.completedAt || run.createdAt)) : '대기';
   $('mission-title').textContent = goal?.objective || run?.prompt || (director?.cwd ? '새 목표를 기다리고 있습니다' : '첫 프로젝트를 연결하세요');
   $('mission-subtitle').textContent = goal
-    ? `${goalStatusLabel(goal.status)} · ${workflow?.name || goal.workflowId || '플로우 선택 중'} · ${goalTaskIds(goal).length}개 Worker 작업 · ${activeTasks}개 실행 중`
+    ? goal.status === 'queued'
+      ? `Director 실행 대기열 ${goal.queuePosition || 1}번째 · 앞선 Goal이 끝나면 자동 시작 · Worker는 아직 생성되지 않음`
+      : `${goalStatusLabel(goal.status)} · ${workflow?.name || goal.workflowId || '플로우 선택 중'} · ${goalTaskIds(goal).length}개 Worker 작업 · ${activeTasks}개 실행 중${queuedGoals.length ? ` · 다음 Goal ${queuedGoals.length}개 대기` : ''}`
     : run
       ? `${phaseLabel(run.phase)} · Director 판단 턴 ${run.status === 'completed' ? '완료' : statusLabel(run.status)} · ${run.taskIds?.length || 0}개 작업`
     : director?.cwd
       ? '기능, 버그, API 명세나 완료 기준을 보내면 Director가 실행과 검증 흐름을 만듭니다.'
       : '운영 환경에서 로컬 프로젝트를 연결한 뒤 목표를 보내면 실행 흐름이 시작됩니다.';
   const goalOccupiesDirector = goal && goalIsActive(goal);
-  const conversationDuringGoal = goalOccupiesDirector && $('owner-message-mode').value === 'conversation';
-  const canMessage = Boolean(director?.cwd) && director?.status !== 'running' && (!goalOccupiesDirector || conversationDuringGoal) && !state.busyActions.has('send-message');
+  const messageMode = $('owner-message-mode').value;
+  const conversationBlocked = messageMode === 'conversation' && director?.status === 'running';
+  const unavailable = controlPlaneUnavailable();
+  const canMessage = !unavailable && Boolean(director?.cwd) && !conversationBlocked && !state.busyActions.has('send-message');
   $('owner-message-input').disabled = !canMessage;
   $('owner-message-input').placeholder = director?.cwd
-    ? (goal?.status === 'awaiting_owner' ? '결정은 위 카드에서 답하고, 질문은 “답변만 받기”로 보낼 수 있습니다.' : goalOccupiesDirector && !conversationDuringGoal ? '현재 Goal 질문은 처리 방식을 “답변만 받기”로 바꾸세요.' : goalOccupiesDirector ? '현재 Goal의 상태·근거를 Director에게 질문하세요…' : director.status === 'running' ? 'Director가 현재 목표를 분석하고 있습니다…' : '목표, 제약, 완료 기준을 입력하세요…')
+    ? unavailable ? '최신 상태를 다시 확인한 뒤 요청을 보낼 수 있습니다.'
+      : conversationBlocked ? '현재 Director 판단 턴이 끝나면 질문을 보낼 수 있습니다.'
+        : messageMode !== 'conversation' && (goalOccupiesDirector || director.status === 'running') ? '새 목표를 입력하세요. 현재 Goal 뒤 Director 대기열에 안전하게 추가됩니다…'
+          : goal?.status === 'awaiting_owner' ? '결정은 위 카드에서 답하고, 별도 질문은 여기서 보낼 수 있습니다.'
+            : goalOccupiesDirector ? '현재 Goal의 상태·근거를 Director에게 질문하세요…'
+              : '목표, 제약, 완료 기준을 입력하세요…'
     : '먼저 프로젝트를 배정하세요.';
   $('owner-send-btn').disabled = !canMessage;
   $('owner-send-btn').textContent = state.busyActions.has('send-message') ? '전송 중…' : '보내기';
   const dispatch = $('owner-dispatch-btn');
   dispatch.textContent = state.busyActions.has('dispatch') ? 'Worker 시작 중…' : readyTasks ? `대기 Worker ${readyTasks}개 실행` : '대기 Worker 없음';
-  dispatch.disabled = !director?.cwd || director.kind !== 'project' || !readyTasks || state.busyActions.has('dispatch');
-  dispatch.title = !director?.cwd ? '프로젝트를 먼저 연결하세요.' : !readyTasks ? '지금 수동으로 시작할 대기 작업이 없습니다.' : `${director.name}의 대기 작업 ${readyTasks}개를 지금 실행합니다.`;
+  dispatch.disabled = unavailable || !director?.cwd || director.kind !== 'project' || !readyTasks || state.busyActions.has('dispatch');
+  dispatch.title = unavailable ? '최신 상태를 확인할 때까지 상태 변경이 잠겼습니다.' : !director?.cwd ? '프로젝트를 먼저 연결하세요.' : !readyTasks ? '지금 수동으로 시작할 대기 작업이 없습니다.' : `${director.name}의 대기 작업 ${readyTasks}개를 지금 실행합니다.`;
 }
 
 function renderGoalProgress() {
@@ -537,7 +614,7 @@ function renderGoalProgress() {
   const remediation = Number(goal.remediationCount || 0);
   const remediationLimit = Number(goal.maxRemediationLoops || 0);
   const turnCopy = run
-    ? run.status === 'running' ? `Director 판단 턴 실행 중 · ${phaseLabel(run.phase)}` : `최근 Director 판단 턴 ${statusLabel(run.status)} · 목표는 ${goalStatusLabel(goal.status)}`
+    ? goal.status === 'queued' ? `Director 실행 대기열 ${goal.queuePosition || run.queuePosition || 1}번째 · 판단 턴 미시작` : run.status === 'running' ? `Director 판단 턴 실행 중 · ${phaseLabel(run.phase)}` : `최근 Director 판단 턴 ${statusLabel(run.status)} · 목표는 ${goalStatusLabel(goal.status)}`
     : 'Director 판단 기록을 기다리는 중';
   root.hidden = false;
   root.className = `goal-progress ${goalStatusTone(goal.status)}`;
@@ -596,6 +673,12 @@ function renderCurrentFocus() {
     description = goal.ownerDecision?.evidence || '선택에 따라 구현 범위나 외부 영향이 달라져 Owner 확인 전까지 목표를 안전하게 멈췄습니다.';
     meta = `Cycle ${goal.cycleCount || 0}${goal.maxCycles ? ` / ${goal.maxCycles}` : ''}`;
     action = '<button type="button" class="primary-button" data-select-trace="owner-decision">판단하기</button>';
+  } else if (goal?.status === 'queued') {
+    status = 'queued';
+    kicker = 'GOAL QUEUED';
+    title = `Director 실행 대기열 ${goal.queuePosition || 1}번째`;
+    description = '앞선 Goal이 종료되면 이 목표의 분석 턴이 자동 시작됩니다. 아직 Worker나 실행 증거는 생성되지 않았습니다.';
+    meta = `queue ${goal.queuePosition || 1} · ${clockLabel(goal.createdAt)}`;
   } else if (task) {
     const taskAction = actionForTask(task.id);
     status = traceStatus(task.status);
@@ -670,20 +753,73 @@ function decisionOptionDescription(option) {
   return typeof option === 'object' ? option?.description || option?.impact || option?.tradeoff || '' : '';
 }
 
+function approvalKindLabel(kind) {
+  return ({
+    external_action: '외부 변경 실행',
+    skill_activation: '스킬 활성화',
+    material_decision: '중요 운영 결정',
+  })[kind] || kind || '일반 Owner 결정';
+}
+
+function effectLabel(effect) {
+  return ({
+    read_only: '읽기 전용',
+    workspace_write: '작업공간 변경',
+    external_mutation: '외부 변경',
+    skill_activation: '스킬 활성화',
+  })[effect] || effect || '영향 미기록';
+}
+
+function ownerDecisionContract(goal, { compact = false } = {}) {
+  const decision = goal?.ownerDecision || {};
+  const pending = goal?.pendingAuthorityPlan || {};
+  const actions = decision.plannedActions?.length
+    ? decision.plannedActions
+    : pending.plan?.actions?.length
+      ? pending.plan.actions
+      : decision.target || decision.effect || decision.writeScope
+        ? [decision]
+        : [];
+  const approvalKind = decision.approvalKind || pending.approvalKind || null;
+  const planDigest = decision.planDigest || pending.planDigest || null;
+  const candidateDigest = decision.candidateDigest || pending.candidateDigest || goal?.currentCandidate?.digest || null;
+  const throughWave = decision.throughWave ?? pending.throughWave ?? null;
+  if (!approvalKind && !planDigest && !candidateDigest && throughWave == null && !actions.length) return '';
+  const rows = actions.map((action, index) => {
+    const writeScope = normaliseTextList(action.writeScope || action.write_scope);
+    return `<article class="approval-action">
+      <header><span>ACTION ${index + 1}</span><strong>${escapeHtml(action.title || action.task || action.id || '계획된 실행')}</strong></header>
+      <dl><div><dt>EFFECT</dt><dd><b class="effect-badge ${escapeHtml(action.effect || 'unknown')}">${escapeHtml(effectLabel(action.effect))}</b><code>${escapeHtml(action.effect || 'not-recorded')}</code></dd></div><div><dt>TARGET</dt><dd><code>${escapeHtml(action.target || 'not-recorded')}</code></dd></div><div><dt>WRITE SCOPE</dt><dd>${writeScope.length ? `<ul>${writeScope.map(item => `<li><code>${escapeHtml(item)}</code></li>`).join('')}</ul>` : '<span class="scope-empty">변경 범위 미기록</span>'}</dd></div></dl>
+      ${!compact && action.task ? `<p>${escapeHtml(action.task)}</p>` : ''}
+    </article>`;
+  }).join('');
+  return `<section class="decision-contract ${compact ? 'compact' : ''}" aria-label="승인 실행 계약">
+    <header><div><span>APPROVAL CONTRACT</span><strong>이 답변으로 허용되는 정확한 실행 범위</strong></div><b>${escapeHtml(approvalKindLabel(approvalKind))}</b></header>
+    <dl class="approval-identifiers">
+      <div><dt>APPROVAL KIND</dt><dd><code>${escapeHtml(approvalKind || 'material_decision')}</code></dd></div>
+      <div><dt>THROUGH WAVE</dt><dd><code>${escapeHtml(throughWave == null ? 'not-bounded' : String(throughWave))}</code></dd></div>
+      <div><dt>PLAN DIGEST</dt><dd><code>${escapeHtml(planDigest || 'not-recorded')}</code></dd></div>
+      <div><dt>CANDIDATE DIGEST</dt><dd><code>${escapeHtml(candidateDigest || 'not-applicable')}</code></dd></div>
+    </dl>
+    ${rows ? `<div class="approval-actions">${rows}</div>` : '<p class="scope-empty">별도 실행 action이 없는 판단 요청입니다.</p>'}
+  </section>`;
+}
+
 function ownerDecisionForm(goal, { compact = false } = {}) {
   const decision = goal?.ownerDecision || {};
   const options = decision.options || [];
   const busy = state.busyActions.has(`decision:${goal.id}`);
+  const unavailable = controlPlaneUnavailable();
   const error = state.decisionGoalId === goal.id ? state.decisionError : null;
   return `<form class="owner-decision-form ${compact ? 'compact' : ''}" data-owner-decision-form data-goal-id="${escapeHtml(goal.id)}">
     ${options.length ? `<fieldset><legend>선택지</legend><div class="decision-options">${options.map(option => {
       const value = decisionOptionValue(option);
       const selected = state.decisionGoalId === goal.id && state.decisionOption === value;
-      return `<button type="button" class="decision-option ${selected ? 'selected' : ''}" data-owner-decision-option="${escapeHtml(value)}" aria-pressed="${selected}"><b>${escapeHtml(decisionOptionLabel(option))}</b>${decisionOptionDescription(option) ? `<small>${escapeHtml(decisionOptionDescription(option))}</small>` : ''}</button>`;
+      return `<button type="button" class="decision-option ${selected ? 'selected' : ''}" data-owner-decision-option="${escapeHtml(value)}" aria-pressed="${selected}" ${busy || unavailable ? 'disabled' : ''}><b>${escapeHtml(decisionOptionLabel(option))}</b>${decisionOptionDescription(option) ? `<small>${escapeHtml(decisionOptionDescription(option))}</small>` : ''}</button>`;
     }).join('')}</div></fieldset>` : ''}
-    <label><span>${options.length ? '선택 이유 또는 추가 지시' : 'Owner 답변'}</span><textarea rows="${compact ? 2 : 3}" data-owner-decision-input placeholder="결정과 필요한 제약을 구체적으로 남기세요." ${busy ? 'disabled' : ''}>${escapeHtml(state.decisionGoalId === goal.id ? state.decisionDraft : '')}</textarea></label>
+    <label><span>${options.length ? '선택 이유 또는 추가 지시' : 'Owner 답변'}</span><textarea rows="${compact ? 2 : 3}" data-owner-decision-input placeholder="결정과 필요한 제약을 구체적으로 남기세요." ${busy || unavailable ? 'disabled' : ''}>${escapeHtml(state.decisionGoalId === goal.id ? state.decisionDraft : '')}</textarea></label>
     ${error ? `<p class="decision-error" role="alert">${escapeHtml(friendlyErrorMessage(error))}</p>` : ''}
-    <div class="decision-submit"><small>답변을 보내면 Director가 새 판단 턴을 열어 목표를 계속 감독합니다.</small><button type="submit" data-owner-decision-submit ${busy ? 'disabled' : ''}>${busy ? '전달 중…' : '결정 전달'}</button></div>
+    <div class="decision-submit"><small>${unavailable ? '최신 상태를 확인할 때까지 중복·오판 승인을 막기 위해 제출이 잠겼습니다.' : '답변을 보내면 Director가 새 판단 턴을 열어 목표를 계속 감독합니다.'}</small><button type="submit" data-owner-decision-submit ${busy || unavailable ? 'disabled' : ''}>${busy ? '전달 중…' : unavailable ? '동기화 필요' : '결정 전달'}</button></div>
   </form>`;
 }
 
@@ -704,6 +840,7 @@ function renderOwnerGate() {
       }
       gate.innerHTML = `<header><div><span>OWNER DECISION · 목표 일시정지</span><strong>${escapeHtml(goal.ownerDecision?.question || 'Director가 중요한 판단을 기다리고 있습니다')}</strong></div><button type="button" class="quiet-button" data-select-trace="owner-decision">근거 크게 보기</button></header>
         ${goal.ownerDecision?.evidence ? `<p class="decision-evidence">${formatText(normaliseTextList(goal.ownerDecision.evidence).join('\n'))}</p>` : ''}
+        ${ownerDecisionContract(goal, { compact: true })}
         ${ownerDecisionForm(goal, { compact: true })}`;
       bindDecisionActions(gate);
       gate.querySelector('[data-select-trace]')?.addEventListener('click', event => selectTrace(event.currentTarget.dataset.selectTrace));
@@ -793,21 +930,31 @@ async function sendOwnerDecision(goalId, form) {
   }
 }
 
-function traceNode({ key, id = null, kind, title, description, status = 'queued', side = '', tags = [], marker = '·', depth = 0 }) {
+function traceCategory(key, status, explicit = null) {
+  if (explicit) return explicit;
+  if (['failed', 'blocked', 'cancelled', 'error'].includes(String(status))) return 'failure';
+  if (key === 'task' || key === 'wave') return 'worker';
+  if (key === 'assessment' || key === 'final') return 'gate';
+  return 'decision';
+}
+
+function traceNode({ key, id = null, kind, title, description, status = 'queued', side = '', tags = [], marker = '·', depth = 0, category = null, concealed = false, waveToggle = null }) {
   const selectionId = id ?? (key === 'task' ? marker : null);
   const selected = state.selection.type === key && (selectionId == null || state.selection.id === selectionId);
+  const resolvedCategory = traceCategory(key, status, category);
+  const filtered = !state.traceFilters.has(resolvedCategory);
   const data = key === 'task'
     ? `data-select-task="${escapeHtml(selectionId)}" data-trace-selection="task:${escapeHtml(selectionId)}"`
     : `data-select-trace="${escapeHtml(key)}" ${selectionId != null ? `data-trace-id="${escapeHtml(selectionId)}"` : ''} data-trace-selection="${escapeHtml(key)}:${escapeHtml(selectionId || '')}"`;
   const accessibleName = [title, kind, statusLabel(status), side, description].filter(Boolean).join(', ');
-  return `<article class="trace-node ${traceStatus(status)} depth-${Math.min(2, depth)} ${selected ? 'selected' : ''}">
+  return `<article class="trace-node ${traceStatus(status)} depth-${Math.min(2, depth)} ${selected ? 'selected' : ''}" data-trace-category="${escapeHtml(resolvedCategory)}" data-filtered="${filtered}" data-concealed="${concealed}" ${concealed || filtered ? 'hidden' : ''}>
     <span class="trace-marker">${escapeHtml(key === 'task' ? 'W' : marker)}</span>
     <div class="trace-body"><button class="trace-button" type="button" ${data} aria-label="${escapeHtml(accessibleName)}" ${selected ? 'aria-current="step"' : ''}>
       <span class="trace-title-row"><strong class="trace-title">${escapeHtml(title)}</strong><small class="trace-kind">${escapeHtml(kind)}</small></span>
       <span class="trace-description">${escapeHtml(description || '세부 정보를 준비하는 중입니다.')}</span>
       ${tags.length ? `<span class="trace-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>` : ''}
     </button></div>
-    <span class="trace-side"><b>${escapeHtml(statusLabel(status))}</b><small>${escapeHtml(side)}</small></span>
+    <div class="trace-side"><b>${escapeHtml(statusLabel(status))}</b><small>${escapeHtml(side)}</small>${waveToggle ? `<button type="button" class="wave-toggle" data-wave-toggle="${escapeHtml(waveToggle.id)}" aria-expanded="${waveToggle.expanded}" aria-label="${escapeHtml(waveToggle.expanded ? `${title} 접기` : `${title} 펼치기`)}">${waveToggle.expanded ? '접기' : '펼치기'}</button>` : ''}</div>
   </article>`;
 }
 
@@ -839,7 +986,14 @@ function directorTurnStatus(run, event, index) {
 
 function goalEventPresentation(event) {
   const kind = String(event?.kind || 'update').toLowerCase();
+  const phase = String(event?.phase || '').toLowerCase();
   const details = event?.details || {};
+  const ownerControlLabels = {
+    pause_requested: ['Owner가 Worker 일시정지 요청', 'OWNER CONTROL'],
+    paused_by_owner: ['Worker 일시정지 적용', 'OWNER CONTROL'],
+    pause_race_terminal: ['일시정지 전에 Worker 종료', 'OWNER CONTROL'],
+    resumed_by_owner: ['Owner가 Worker 재개', 'OWNER CONTROL'],
+  };
   const labels = {
     created: ['Goal 생성', 'OWNER'], goal_created: ['Goal 생성', 'OWNER'], owner: [event?.phase === 'owner_answered' ? 'Owner 결정 반영' : 'Goal 생성', 'OWNER'], clarified: ['명세 확인', 'DIRECTOR'],
     analysis: ['요구 분석 갱신', 'DIRECTOR'], analyzed: ['요구 분석 확정', 'DIRECTOR'], planned: ['실행 계획 확정', 'DIRECTOR'],
@@ -855,13 +1009,20 @@ function goalEventPresentation(event) {
     owner_decision: ['Owner 결정 반영', 'OWNER'], owner_answered: ['Owner 결정 반영', 'OWNER'],
     completed: ['Goal 완료 판정', 'DIRECTOR'], blocked: ['Goal 중단', 'DIRECTOR'], failed: ['Goal 실패', 'DIRECTOR'],
   };
-  const [title, category] = labels[kind] || [kind.replaceAll('_', ' '), 'GOAL EVENT'];
-  const status = event?.status || details.status || (kind === 'owner_decision' && event?.phase === 'awaiting_owner' ? 'awaiting_owner'
+  const [title, category] = ownerControlLabels[phase] || labels[kind] || [kind.replaceAll('_', ' '), 'GOAL EVENT'];
+  const status = event?.status || details.status || (phase === 'pause_requested' ? 'running'
+    : ['paused_by_owner', 'pause_race_terminal', 'resumed_by_owner'].includes(phase) ? 'completed'
+      : kind === 'owner_decision' && event?.phase === 'awaiting_owner' ? 'awaiting_owner'
     : kind === 'error' || kind.includes('fail') ? 'failed'
       : kind === 'terminal' ? event?.phase || 'completed'
         : kind.includes('block') ? 'blocked'
           : ['assessing_evidence', 'recovering', 'worker_progress', 'retry_scheduled'].includes(event?.phase) ? 'running' : 'completed');
-  return { title, category, status };
+  const traceCategory = kind === 'error' || kind.includes('fail') || ['failed', 'blocked', 'cancelled'].includes(status)
+    ? 'failure'
+    : ['task', 'wave', 'wave_started', 'wave_completed'].includes(kind) ? 'worker'
+      : category.includes('GATE') || ['verification', 'verifying', 'evaluating', 'evaluated', 'assessment'].includes(kind) ? 'gate'
+        : 'decision';
+  return { title, category, status, traceCategory };
 }
 
 function waveLabel(wave, index) {
@@ -871,6 +1032,45 @@ function waveLabel(wave, index) {
   if (kind.includes('review')) return `Wave ${number} · 전문 리뷰`;
   if (kind.includes('verif') || kind.includes('gate')) return `Wave ${number} · 완료 검증`;
   return `Wave ${number} · Worker 실행`;
+}
+
+function waveExpansionKey(goal, wave, index) {
+  return `${goal?.id || 'legacy'}:${String(wave?.id || index)}`;
+}
+
+function waveIsExpanded(goal, wave, index) {
+  const key = waveExpansionKey(goal, wave, index);
+  return state.waveExpansion.has(key) ? state.waveExpansion.get(key) : currentWave(goal) === wave;
+}
+
+function waveActionForTask(goal, wave, taskId) {
+  return (wave?.actions || []).find(action => action.taskId === taskId)
+    || actionForTask(taskId)
+    || goalTaskRecord(taskId, goal)
+    || null;
+}
+
+function taskDisplayName(goal, taskId) {
+  const waveAction = (goal?.waves || []).flatMap(wave => wave.actions || []).find(action => action.taskId === taskId);
+  const action = waveAction || actionForTask(taskId);
+  const record = goalTaskRecord(taskId, goal);
+  const task = state.board.find(candidate => candidate.id === taskId);
+  return action?.title || record?.title || task?.title || taskId;
+}
+
+function taskDependencyTags(goal, wave, action, taskId) {
+  const waveActions = wave?.actions || [];
+  const taskByAction = new Map(waveActions.filter(item => item.id && item.taskId).map(item => [item.id, item.taskId]));
+  const parentIds = [...new Set([
+    ...(action?.parentTaskIds || []),
+    ...(action?.dependencies || []).map(id => taskByAction.get(id)).filter(Boolean),
+  ])];
+  const childIds = waveActions.filter(item => (item.parentTaskIds || []).includes(taskId)
+    || (action?.id && (item.dependencies || []).includes(action.id))).map(item => item.taskId).filter(Boolean);
+  const tags = [];
+  if (parentIds.length) tags.push(`blocked by: ${parentIds.map(id => taskDisplayName(goal, id)).join(', ')}`);
+  if (childIds.length) tags.push(`unlocks: ${childIds.map(id => taskDisplayName(goal, id)).join(', ')}`);
+  return tags;
 }
 
 function renderLegacyTrace(run, root) {
@@ -920,15 +1120,16 @@ function renderGoalTrace(goal, root) {
   const seenTasks = new Set();
   for (const [index, wave] of (goal.waves || []).entries()) {
     const waveId = String(wave.id || index);
+    const expanded = waveIsExpanded(goal, wave, index);
     timeline.push({
       time: timeMs(wave.startedAt) || timeMs(goal.createdAt) + index + 1,
       order: index * 100,
-      html: traceNode({ key: 'wave', id: waveId, marker: `W${Number.isFinite(Number(wave.index)) ? wave.index : index + 1}`, kind: 'DIRECTOR WAVE', title: waveLabel(wave, index), description: `${(wave.taskIds || []).length}개 Worker 작업을 배치·감시합니다.`, status: wave.status || ((goal.currentWaveTaskIds || []).some(id => (wave.taskIds || []).includes(id)) ? goal.status : 'completed'), side: wave.startedAt ? elapsedLabel(wave.startedAt, wave.completedAt || Date.now()) : '', tags: [wave.kind, wave.id].filter(Boolean) }),
+      html: traceNode({ key: 'wave', id: waveId, marker: `W${Number.isFinite(Number(wave.index)) ? wave.index : index + 1}`, kind: 'DIRECTOR WAVE', title: waveLabel(wave, index), description: `${(wave.taskIds || []).length}개 Worker 작업을 배치·감시합니다. ${expanded ? '작업과 평가가 펼쳐져 있습니다.' : '접힌 wave입니다.'}`, status: wave.status || ((goal.currentWaveTaskIds || []).some(id => (wave.taskIds || []).includes(id)) ? goal.status : 'completed'), side: wave.startedAt ? elapsedLabel(wave.startedAt, wave.completedAt || Date.now()) : '', tags: [wave.kind, wave.id].filter(Boolean), waveToggle: { id: waveExpansionKey(goal, wave, index), expanded } }),
     });
     for (const [taskIndex, taskId] of (wave.taskIds || []).entries()) {
       if (seenTasks.has(taskId)) continue;
       seenTasks.add(taskId);
-      const action = actionForTask(taskId);
+      const action = waveActionForTask(goal, wave, taskId);
       const task = state.board.find(candidate => candidate.id === taskId);
       const record = goalTaskRecord(taskId, goal);
       const status = task?.status || record?.status || action?.status || (wave.status === 'completed' ? 'done' : 'queued');
@@ -937,13 +1138,13 @@ function renderGoalTrace(goal, root) {
       timeline.push({
         time: timeMs(started) || timeMs(wave.startedAt) || timeMs(goal.createdAt) + index + 1,
         order: index * 100 + taskIndex + 1,
-        html: traceNode({ key: 'task', marker: taskId, kind: state.summary?.workerProfiles?.[action?.target || record?.profile || task?.assignee]?.label || action?.target || record?.profile || task?.assignee || 'WORKER', title: action?.title || record?.title || task?.title || taskId, description: action?.task || sectionFromBody(task?.body, 'ACTION') || task?.result || normaliseTextList(record?.acceptance)[0] || 'Worker 작업 상세를 열어 공개 실행 근거를 확인하세요.', status, side: started ? elapsedLabel(started, ended || Date.now()) : action?.target || record?.profile || task?.assignee || '', tags: [taskId, ...(action?.skills || []), ...((action?.parentTaskIds || record?.parentTaskIds)?.length ? [`선행 ${(action?.parentTaskIds || record?.parentTaskIds).length}`] : [])], depth: 1 }),
+        html: traceNode({ key: 'task', marker: taskId, kind: state.summary?.workerProfiles?.[action?.target || record?.profile || task?.assignee]?.label || action?.target || record?.profile || task?.assignee || 'WORKER', title: action?.title || record?.title || task?.title || taskId, description: action?.task || sectionFromBody(task?.body, 'ACTION') || task?.result || normaliseTextList(record?.acceptance)[0] || 'Worker 작업 상세를 열어 공개 실행 근거를 확인하세요.', status, side: started ? elapsedLabel(started, ended || Date.now()) : action?.target || record?.profile || task?.assignee || '', tags: [taskId, ...(action?.skills || []), ...taskDependencyTags(goal, wave, action, taskId)], depth: 1, concealed: !expanded && state.traceFilters.has('worker') }),
       });
     }
     if (wave.assessment) timeline.push({
       time: timeMs(wave.completedAt) || timeMs(wave.startedAt) || timeMs(goal.createdAt) + index + 1,
       order: index * 100 + 90,
-      html: traceNode({ key: 'assessment', id: waveId, marker: 'A', kind: 'SUPERVISOR', title: `${waveLabel(wave, index)} 평가`, description: typeof wave.assessment === 'string' ? wave.assessment : wave.assessment.summary || wave.assessment.decision || '평가 근거가 기록되었습니다.', status: wave.assessment.status || wave.status || 'completed', side: clockLabel(wave.completedAt), tags: normaliseTextList(wave.assessment.missingGates || wave.assessment.missingCriteria).slice(0, 3) }),
+      html: traceNode({ key: 'assessment', id: waveId, marker: 'A', kind: 'SUPERVISOR', title: `${waveLabel(wave, index)} 평가`, description: typeof wave.assessment === 'string' ? wave.assessment : wave.assessment.summary || wave.assessment.decision || '평가 근거가 기록되었습니다.', status: wave.assessment.status || wave.status || 'completed', side: clockLabel(wave.completedAt), tags: normaliseTextList(wave.assessment.missingGates || wave.assessment.missingCriteria).slice(0, 3), concealed: !expanded && state.traceFilters.has('worker') }),
     });
   }
   for (const { event, id, index } of goalEventEntries(goal)) {
@@ -952,7 +1153,7 @@ function renderGoalTrace(goal, root) {
     timeline.push({
       time: timeMs(event.at || event.createdAt) || timeMs(goal.createdAt) + index,
       order: 10000 + index,
-      html: traceNode({ key: 'goal-event', id, marker: 'D', kind: presentation.category, title: presentation.title, description: event.message || 'Director 감독 이벤트가 기록되었습니다.', status: presentation.status, side: clockLabel(event.at || event.createdAt), tags: [event.phase, event.kind].filter(Boolean) }),
+      html: traceNode({ key: 'goal-event', id, marker: 'D', kind: presentation.category, title: presentation.title, description: event.message || 'Director 감독 이벤트가 기록되었습니다.', status: presentation.status, side: clockLabel(event.at || event.createdAt), tags: [event.phase, event.kind].filter(Boolean), category: presentation.traceCategory }),
     });
   }
   for (const { run: turn, event, index, id } of directorTurnEntries(goal)) {
@@ -974,7 +1175,12 @@ function renderTrace() {
   const run = latestRun();
   const goal = selectedGoal();
   const root = $('owner-trace-list');
-  if (state.boardStatus?.error) {
+  document.querySelectorAll('[data-trace-filter]').forEach(button => {
+    const active = state.traceFilters.has(button.dataset.traceFilter);
+    button.setAttribute('aria-pressed', String(active));
+    button.classList.toggle('active', active);
+  });
+  if (state.boardStatus?.error && !run && !goal) {
     root.innerHTML = `<div class="trace-empty" role="alert"><strong>작업 보드를 불러오지 못했습니다</strong><span>${escapeHtml(friendlyErrorMessage(state.boardStatus.error))}</span><button class="secondary-button" type="button" data-retry-board>다시 시도</button></div>`;
     $('trace-summary').innerHTML = '<span class="blocked"><i></i>보드 오류</span>';
     return;
@@ -990,10 +1196,19 @@ function renderTrace() {
   const statuses = goal ? renderGoalTrace(goal, root) : renderLegacyTrace(run, root);
   root.querySelectorAll('[data-select-trace]').forEach(button => button.addEventListener('click', () => selectTrace(button.dataset.selectTrace, button.dataset.traceId || null)));
   root.querySelectorAll('[data-select-task]').forEach(button => button.addEventListener('click', () => selectTask(button.dataset.selectTask)));
+  root.querySelectorAll('[data-wave-toggle]').forEach(button => button.addEventListener('click', () => {
+    const opener = activeElementIdentity();
+    state.waveExpansion.set(button.dataset.waveToggle, button.getAttribute('aria-expanded') !== 'true');
+    renderTrace();
+    restoreActiveElement(opener);
+  }));
   const running = statuses.filter(status => status === 'running').length;
   const blocked = statuses.filter(status => ['blocked', 'review', 'scheduled', 'failed'].includes(status)).length;
   const done = statuses.filter(status => ['done', 'archived'].includes(status)).length;
-  $('trace-summary').innerHTML = `${goal ? `<span class="${goalStatusTone(goal.status)}"><i></i>${escapeHtml(goalStatusLabel(goal.status))}</span>` : ''}<span class="running"><i></i>${running} 실행</span><span><i></i>${done} 완료</span><span class="blocked"><i></i>${blocked} 확인</span>`;
+  const filtered = root.querySelectorAll('.trace-node[data-filtered="true"]').length;
+  const visible = root.querySelectorAll('.trace-node:not([hidden])').length;
+  if (!visible) root.insertAdjacentHTML('beforeend', '<div class="trace-filter-empty"><strong>선택한 필터에 표시할 이벤트가 없습니다.</strong><span>위 필터를 다시 켜면 기존 trace가 그대로 나타납니다.</span></div>');
+  $('trace-summary').innerHTML = `${goal ? `<span class="${goalStatusTone(goal.status)}"><i></i>${escapeHtml(goalStatusLabel(goal.status))}</span>` : ''}<span class="running"><i></i>${running} 실행</span><span><i></i>${done} 완료</span><span class="blocked"><i></i>${blocked} 확인</span>${filtered ? `<span><i></i>${filtered} 숨김</span>` : ''}${state.goalDetailLoading && state.goalDetailLoadingId === goal?.id ? '<span class="running"><i></i>상세 이력 동기화</span>' : ''}${state.boardStatus?.error ? '<span class="blocked"><i></i>stale board</span>' : ''}${selectedGoalDetailError(goal) ? '<span class="blocked"><i></i>상세 이력 stale</span>' : ''}`;
 }
 
 function goalTaskLinks(taskIds) {
@@ -1027,6 +1242,7 @@ function renderGoalOverviewInspector(goal, run) {
   const latestEvent = goal.events?.at(-1);
   $('inspector-title').textContent = 'Goal 감독 현황';
   return `<div class="inspector-hero goal-hero"><span class="goal-state ${goalStatusTone(goal.status)}"><i></i>${escapeHtml(goalStatusLabel(goal.status))}</span><h3>${escapeHtml(goal.objective)}</h3><p>${escapeHtml(latestEvent?.message || analysis?.requestSummary || 'Director가 완료 기준을 향해 목표를 감독합니다.')}</p><div class="inspector-meta"><code>${escapeHtml(goal.id)}</code><span>${escapeHtml(goal.workflowId || run?.workflowId || '플로우 선택 중')}</span><span>Cycle ${escapeHtml(goal.cycleCount || 0)}${goal.maxCycles ? ` / ${escapeHtml(goal.maxCycles)}` : ''}</span><span>재작업 ${escapeHtml(goal.remediationCount || 0)}${goal.maxRemediationLoops ? ` / ${escapeHtml(goal.maxRemediationLoops)}` : ''}</span></div></div>
+    ${selectedGoalDetailError(goal) ? inlineErrorHtml('Goal 전체 이력 동기화에 실패해 기존 trace를 유지합니다', selectedGoalDetailError(goal), 'data-retry-goal') : ''}
     ${detailGroup('완료 기준', listHtml(normaliseTextList(goalCriteria(goal, run)), 'Director가 성공 조건을 정리하는 중입니다.'))}
     ${detailGroup('현재 감독 단계', `<div class="supervision-state"><strong>${escapeHtml(wave ? waveLabel(wave, (goal.waves || []).indexOf(wave)) : goalStatusLabel(goal.status))}</strong><p>${escapeHtml(run?.status === 'completed' && goalIsActive(goal) ? '최근 Director 판단 턴은 완료됐습니다. Goal은 종료되지 않았으며 Worker 결과 뒤 새 평가 턴이 자동으로 이어집니다.' : run?.status === 'running' ? `Director 판단 턴 실행 중 · ${phaseLabel(run.phase)}` : latestEvent?.message || '다음 상태 전환을 기다리는 중입니다.')}</p></div>`)}
     ${wave ? detailGroup('현재 Wave Worker', goalTaskLinks(wave.taskIds || goal.currentWaveTaskIds)) : ''}
@@ -1144,17 +1360,76 @@ function renderOwnerDecisionInspector(goal) {
   if (!decision) return '<div class="inspector-loading">현재 대기 중인 Owner 판단이 없습니다.</div>';
   return `<div class="inspector-hero decision-hero"><span class="goal-state blocked"><i></i>GOAL PAUSED</span><h3>${escapeHtml(decision.question || 'Director가 Owner 결정을 기다립니다')}</h3><p>권한·범위·외부 영향처럼 Director가 임의로 정하면 안 되는 지점입니다. 답변 뒤 새 판단 턴이 열립니다.</p><div class="inspector-meta"><code>${escapeHtml(goal.id)}</code><span>${escapeHtml(clockLabel(decision.askedAt))}</span><span>Cycle ${escapeHtml(goal.cycleCount || 0)}</span></div></div>
     ${detailGroup('왜 지금 물어보는가', structuredDetailsHtml(decision.evidence))}
+    ${ownerDecisionContract(goal)}
     ${ownerDecisionForm(goal)}`;
+}
+
+function finalGateAudit(goal) {
+  if (goal?.finalAudit) return goal.finalAudit.gateAudit || goal.finalAudit;
+  if (goal?.finalReport && typeof goal.finalReport === 'object' && goal.finalReport.gateAudit) return goal.finalReport.gateAudit;
+  const terminalAudit = [...(goal?.events || [])].reverse().find(event => event?.details?.gateAudit)?.details?.gateAudit;
+  if (terminalAudit) return terminalAudit;
+  return [...(goal?.waves || [])].reverse().find(wave => wave?.assessment?.gateAudit)?.assessment?.gateAudit || null;
+}
+
+function criterionEvidenceMatrix(goal, audit) {
+  const criteria = normaliseTextList(goalCriteria(goal));
+  const audited = new Map((audit?.acceptance?.criteria || []).map(item => [String(item.criterion || '').trim().replace(/\s+/g, ' ').toLowerCase(), item]));
+  if (!criteria.length) return '<p class="detail-empty">성공 조건 기록이 없습니다.</p>';
+  const rows = criteria.map(criterion => {
+    const result = audited.get(criterion.trim().replace(/\s+/g, ' ').toLowerCase());
+    const met = result?.met === true && normaliseTextList(result.evidence).length > 0;
+    const status = result ? (met ? 'met' : 'not-met') : 'unknown';
+    const evidence = normaliseTextList(result?.evidence);
+    return `<tr><th scope="row">${escapeHtml(criterion)}</th><td><span class="matrix-verdict ${status}">${result ? (met ? 'MET' : 'NOT MET') : 'NO AUDIT'}</span></td><td>${evidence.length ? `<ul>${evidence.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<span class="matrix-empty">근거 없음</span>'}</td></tr>`;
+  }).join('');
+  return `<div class="evidence-matrix"><table><thead><tr><th>SUCCESS CRITERION</th><th>VERDICT</th><th>EXACT GATE EVIDENCE</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function gateProfileMatrix(goal, audit) {
+  const workflow = workflowFor(goal?.workflowId);
+  const profiles = audit?.requiredProfiles || workflow?.policy?.requiredProfiles || [];
+  if (!profiles.length) return '<p class="detail-empty">필수 검증 프로필 기록이 없습니다.</p>';
+  const missing = new Set(audit?.missingProfiles || []);
+  const stale = new Set(audit?.staleProfiles || []);
+  const rejected = new Set(audit?.rejectedProfiles || []);
+  const credited = audit?.creditedTaskIds || {};
+  const rows = profiles.map(profile => {
+    const taskId = credited[profile] || null;
+    const freshness = stale.has(profile) ? 'STALE' : rejected.has(profile) ? 'REJECTED' : missing.has(profile) ? 'MISSING' : taskId ? 'CURRENT' : 'UNKNOWN';
+    const passes = taskId && !missing.has(profile) && !stale.has(profile) && !rejected.has(profile)
+      && (profile !== 'quality-gate-reviewer' || audit?.gateConsistency?.satisfied !== false);
+    const verdict = passes ? 'PASS' : missing.has(profile) || stale.has(profile) || rejected.has(profile) ? 'FAIL' : 'UNKNOWN';
+    const label = state.summary?.workerProfiles?.[profile]?.label || profile;
+    return `<tr><th scope="row"><span>${escapeHtml(label)}</span><code>${escapeHtml(profile)}</code></th><td>${taskId ? `<button type="button" data-goal-task="${escapeHtml(taskId)}"><code>${escapeHtml(taskId)}</code></button>` : '<span class="matrix-empty">없음</span>'}</td><td><span class="matrix-freshness ${freshness.toLowerCase()}">${freshness}</span></td><td><span class="matrix-verdict ${verdict.toLowerCase()}">${verdict}</span></td></tr>`;
+  }).join('');
+  const consistency = audit?.gateConsistency;
+  const reasons = normaliseTextList(consistency?.reasons);
+  return `<div class="evidence-matrix profile-matrix"><table><thead><tr><th>REQUIRED PROFILE</th><th>CREDITED TASK</th><th>FRESHNESS</th><th>GATE VERDICT</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${consistency ? `<div class="gate-consistency ${consistency.satisfied ? 'pass' : 'fail'}"><strong>Gate consistency ${consistency.satisfied ? 'PASS' : 'FAIL'}</strong>${reasons.length ? `<span>${escapeHtml(reasons.join(' · '))}</span>` : ''}</div>` : ''}`;
+}
+
+function candidateAuditSummary(goal, audit) {
+  const candidate = audit?.hostCandidate || goal?.currentCandidate;
+  const gateTaskId = audit?.approvedGateTaskId || audit?.acceptance?.gateTaskId;
+  const receipts = audit?.hostReceipts;
+  if (!candidate && !gateTaskId && !receipts) return '<p class="detail-empty">후보 digest와 Gate task 기록이 없습니다.</p>';
+  return `<dl class="candidate-audit"><div><dt>CANDIDATE DIGEST</dt><dd><code>${escapeHtml(candidate?.digest || 'not-recorded')}</code></dd></div><div><dt>REVISION</dt><dd><code>${escapeHtml(candidate?.revision || 'not-recorded')}</code></dd></div><div><dt>DIRTY / FILES</dt><dd>${escapeHtml(candidate ? `${Boolean(candidate.dirty)} / ${candidate.fileCount ?? 'unknown'}` : 'not-recorded')}</dd></div><div><dt>APPROVED GATE TASK</dt><dd>${gateTaskId ? `<button type="button" data-goal-task="${escapeHtml(gateTaskId)}"><code>${escapeHtml(gateTaskId)}</code></button>` : '<span class="matrix-empty">없음</span>'}</dd></div></dl>
+    ${receipts ? `<div class="host-receipt-summary ${receipts.satisfied ? 'pass' : 'fail'}"><header><strong>HOST RECEIPTS ${receipts.satisfied ? 'SATISFIED' : 'INCOMPLETE'}</strong><span>executionAttested: ${receipts.executionAttested === true ? 'true' : 'false'}</span></header><dl><div><dt>OBSERVED TASKS</dt><dd>${escapeHtml((receipts.observedTaskIds || []).join(', ') || 'none')}</dd></div><div><dt>MISSING TASKS</dt><dd>${escapeHtml((receipts.missingTaskIds || []).join(', ') || 'none')}</dd></div></dl><p>${escapeHtml(receipts.limitation || 'Host receipt는 관찰된 Hermes 기록을 증명하며 Worker가 작성한 실행 주장 자체를 증명하지 않습니다.')}</p></div>` : ''}`;
 }
 
 function renderFinalInspector(goal) {
   $('inspector-title').textContent = goal?.status === 'completed' ? 'Goal 완료 보고' : 'Goal 중단 보고';
   if (!goal) return '<div class="inspector-loading">Goal 기록이 없습니다.</div>';
   const complete = goal.status === 'completed';
+  const audit = finalGateAudit(goal);
   return `<div class="inspector-hero"><span class="goal-state ${goalStatusTone(goal.status)}"><i></i>${escapeHtml(goalStatusLabel(goal.status))}</span><h3>${escapeHtml(complete ? '완료 기준과 품질 게이트 판정' : '진행 중단과 남은 위험')}</h3><p>${escapeHtml(typeof goal.finalReport === 'string' ? goal.finalReport : goal.finalReport?.summary || goal.error || (complete ? 'Director가 전체 목표 완료를 판정했습니다.' : 'Director가 더 진행할 수 없는 이유를 기록했습니다.'))}</p><div class="inspector-meta"><code>${escapeHtml(goal.id)}</code><span>Cycle ${escapeHtml(goal.cycleCount || 0)}</span><span>재작업 ${escapeHtml(goal.remediationCount || 0)}</span><span>${escapeHtml(clockLabel(goal.completedAt || goal.updatedAt))}</span></div></div>
+    ${detailGroup('성공 조건별 완료 판정', criterionEvidenceMatrix(goal, audit))}
+    ${detailGroup('필수 Profile · Freshness · Gate 판정', gateProfileMatrix(goal, audit))}
+    ${detailGroup('검증 후보와 최종 Gate', candidateAuditSummary(goal, audit))}
     ${detailGroup('최종 보고', structuredDetailsHtml(goal.finalReport || goal.error))}
     ${detailGroup('누적 검증 증거', structuredDetailsHtml(goal.evidence))}
-    ${detailGroup('완료 기준', listHtml(normaliseTextList(goalCriteria(goal))))}`;
+    ${!audit ? '<div class="audit-warning" role="note">Legacy Goal이라 구조화된 finalAudit이 없습니다. 완료 선언과 증거 원문은 보이지만 fresh gate 충족 여부는 이 화면이 추정하지 않습니다.</div>' : ''}`;
 }
 
 function eventDescription(event) {
@@ -1206,19 +1481,23 @@ function renderTaskInspector() {
   const lastRun = runs.at(-1);
   const taskAction = action?.task || sectionFromBody(task.body, 'ACTION') || task.body || '영속 Goal Worker 작업';
   const acceptance = action?.acceptance || record?.acceptance || sectionFromBody(task.body, 'ACCEPTANCE').split(/\r?\n/).map(line => line.replace(/^[-*]\s*/, '')).filter(Boolean);
-  const statusUncertain = Boolean(state.taskError || state.taskLoading);
+  const statusUncertain = Boolean(state.taskError || state.taskLoading || controlPlaneUnavailable());
   const staleNotice = state.taskError ? inlineErrorHtml('최신 Worker 상태를 확인하지 못했습니다', state.taskError, 'data-retry-task') : '';
-  const canIntervene = !statusUncertain && ['running', 'ready', 'todo', 'blocked', 'scheduled', 'review'].includes(task.status);
+  const canIntervene = ['running', 'ready', 'todo', 'blocked', 'scheduled', 'review'].includes(task.status);
   const taskBusy = state.busyActions.has(`control:${task.id}`);
   const interventionBusy = state.busyActions.has(`intervention:${task.id}`);
-  const control = !statusUncertain && task.status === 'running'
-    ? `<button class="danger-button" type="button" data-worker-control="pause" ${taskBusy ? 'disabled' : ''}>${taskBusy ? '처리 중…' : '즉시 일시정지'}</button>`
+  const control = task.status === 'running'
+    ? `<button class="danger-button" type="button" data-worker-control="pause" ${taskBusy || statusUncertain ? 'disabled' : ''}>${taskBusy ? '처리 중…' : statusUncertain ? '동기화 필요' : '즉시 일시정지'}</button>`
     : ['blocked', 'scheduled'].includes(task.status)
-      ? `<button class="resume-button" type="button" data-worker-control="resume" ${taskBusy ? 'disabled' : ''}>${taskBusy ? '처리 중…' : '재개'}</button>` : '';
-  const intervention = canIntervene ? `<section class="worker-control"><header><div><span>OWNER 개입</span><strong>실행 중 방향을 바꿀 수 있습니다</strong></div>${control}</header><textarea id="worker-intervention-input" rows="3" aria-label="Worker에게 전달할 추가 지시" placeholder="예: 그 파일은 건드리지 말고 API 계약부터 확인해. 이 지시는 실행 중 Worker에 바로 전달됩니다." ${interventionBusy ? 'disabled' : ''}>${escapeHtml(state.interventionDraft)}</textarea><div><small>실행 중에는 약 6초 이내 현재 Worker 세션에 주입됩니다.</small><button type="button" data-send-intervention ${interventionBusy ? 'disabled' : ''}>${interventionBusy ? '전달 중…' : '지시 추가'}</button></div></section>` : '';
+      ? `<button class="resume-button" type="button" data-worker-control="resume" ${taskBusy || statusUncertain ? 'disabled' : ''}>${taskBusy ? '처리 중…' : statusUncertain ? '동기화 필요' : '재개'}</button>` : '';
+  const receipt = state.interventionReceipt?.taskId === task.id ? state.interventionReceipt : null;
+  const intervention = canIntervene ? `<section class="worker-control ${statusUncertain ? 'locked' : ''}"><header><div><span>OWNER 개입</span><strong>${statusUncertain ? '최신 상태 확인 전에는 조작할 수 없습니다' : '추가 지시를 실행 큐에 등록합니다'}</strong></div>${control}</header><textarea id="worker-intervention-input" rows="3" aria-label="Worker에게 전달할 추가 지시" placeholder="예: 그 파일은 건드리지 말고 API 계약부터 확인해." ${interventionBusy || statusUncertain ? 'disabled' : ''}>${escapeHtml(state.interventionDraft)}</textarea>${receipt ? `<p class="intervention-receipt"><b>ACCEPTED / QUEUED</b><span>${escapeHtml(clockLabel(receipt.at))} · Worker 반영 여부는 다음 공개 체크포인트에서 확인하세요.</span></p>` : ''}<div><small>${statusUncertain ? '기존 trace는 보존됩니다. 동기화에 성공하면 상태 변경 버튼이 다시 열립니다.' : '서버가 지시를 접수해 큐에 기록합니다. 실제 Worker 반영은 다음 동기화 이후 확인됩니다.'}</small><button type="button" data-send-intervention ${interventionBusy || statusUncertain ? 'disabled' : ''}>${interventionBusy ? '접수 중…' : statusUncertain ? '동기화 필요' : '지시 등록'}</button></div></section>` : '';
+  const hostReceipt = record?.hostReceipt;
+  const hostReceiptHtml = hostReceipt ? `<div class="host-receipt ${hostReceipt.executionAttested === true ? 'attested' : 'observed'}"><header><strong>${hostReceipt.executionAttested === true ? 'HOST EXECUTION ATTESTED' : 'HOST RECEIPT · EXECUTION NOT ATTESTED'}</strong><span>${hostReceipt.executionAttested === true ? '실행 증명 포함' : '관찰·기록만 확인됨'}</span></header>${structuredDetailsHtml(hostReceipt)}</div>` : '';
   return `${staleNotice}<div class="inspector-hero"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(taskAction)}</p><div class="inspector-meta"><span>Worker 실행</span><code>${escapeHtml(task.id)}</code><span>${escapeHtml(task.assignee || '미배정')}</span><span>${escapeHtml(statusLabel(task.status))}</span>${task.started_at ? `<span>${escapeHtml(elapsedLabel(task.started_at, task.completed_at || Date.now()))}</span>` : ''}</div></div>
     ${intervention}
     ${detailGroup('공개 추론·실행 trace', renderPublicTrace(details, state.taskTrace?.log), 'public-trace-group')}
+    ${hostReceipt ? detailGroup('Host 관찰 영수증', hostReceiptHtml) : ''}
     ${detailGroup('완료 기준', listHtml(acceptance))}
     ${summary ? detailGroup('최근 결과 요약', `<p>${formatText(summary)}</p>`) : ''}
     ${lastRun?.metadata?.verification ? detailGroup('검증', `<p>${formatText(lastRun.metadata.verification)}</p>`) : ''}`;
@@ -1237,6 +1516,7 @@ function bindInspectorActions() {
   $('owner-inspector').querySelector('[data-send-intervention]')?.addEventListener('click', sendIntervention);
   $('owner-inspector').querySelectorAll('[data-worker-control]').forEach(button => button.addEventListener('click', () => controlWorker(button.dataset.workerControl)));
   $('owner-inspector').querySelectorAll('[data-retry-task]').forEach(button => button.addEventListener('click', () => refreshSelectedTask({ force: true })));
+  $('owner-inspector').querySelectorAll('[data-retry-goal]').forEach(button => button.addEventListener('click', () => refreshSelectedGoalDetail({ force: true })));
   $('owner-inspector').querySelectorAll('[data-goal-task]').forEach(button => button.addEventListener('click', () => selectTask(button.dataset.goalTask)));
   $('owner-inspector').querySelectorAll('[data-select-trace]').forEach(button => button.addEventListener('click', () => selectTrace(button.dataset.selectTrace, button.dataset.traceId || null)));
   bindDecisionActions($('owner-inspector'));
@@ -1309,6 +1589,7 @@ function renderWorkflowCatalog() {
 function renderAll() {
   const activeElement = activeElementIdentity();
   renderTopbar();
+  renderSyncBanner();
   renderDirectors();
   renderMissionHeader();
   renderCurrentFocus();
@@ -1337,8 +1618,39 @@ async function loadBoard() {
     state.boardStatus = result.status || null;
   } catch (error) {
     if (state.selectedId !== director.id) return;
-    state.board = [];
-    state.boardStatus = { error: error.message };
+    state.boardStatus = { ...(state.boardStatus || {}), error: error.message, stale: true };
+  }
+}
+
+async function refreshSelectedGoalDetail({ force = false } = {}) {
+  const goal = selectedGoalSummary();
+  const directorId = state.selectedId;
+  if (!goal?.id) return;
+  if (state.goalDetailLoading && state.goalDetailLoadingId === goal.id) return;
+  if (!force && state.goalDetailId === goal.id && Date.now() - state.goalDetailLoadedAt < TASK_POLL_INTERVAL_MS) return;
+  const goalId = goal.id;
+  state.goalDetailLoading = true;
+  state.goalDetailLoadingId = goalId;
+  try {
+    const detail = await api(`/api/directors/${encodeURIComponent(directorId)}/goals/${encodeURIComponent(goalId)}`);
+    if (state.selectedId !== directorId || selectedGoalSummary()?.id !== goalId) return;
+    state.goalDetail = detail;
+    state.goalDetailId = goalId;
+    state.goalDetailError = null;
+    state.goalDetailErrorId = null;
+    state.goalDetailLoadedAt = Date.now();
+  } catch (error) {
+    if (state.selectedId !== directorId || selectedGoalSummary()?.id !== goalId) return;
+    state.goalDetailError = error.message;
+    state.goalDetailErrorId = goalId;
+  } finally {
+    if (state.goalDetailLoadingId === goalId) {
+      state.goalDetailLoading = false;
+      state.goalDetailLoadingId = null;
+      renderTrace();
+      renderInspector();
+      renderConversation();
+    }
   }
 }
 
@@ -1374,24 +1686,37 @@ async function refreshSelectedTask({ force = false } = {}) {
 }
 
 async function performLoadConsole({ quiet = false } = {}) {
+  state.refreshing = true;
+  renderSyncBanner();
   try {
+    const summary = await api('/api/directors');
+    state.summary = summary;
     state.consoleError = null;
-    state.summary = await api('/api/directors');
     if (!state.summary.directors.some(director => director.id === state.selectedId)) state.selectedId = state.summary.directors[0]?.id;
     await loadBoard();
+    if (state.boardStatus?.error) state.staleSince ||= Date.now();
+    else {
+      state.lastSyncedAt = Date.now();
+      state.staleSince = 0;
+    }
     renderAll();
     $('connection-state').className = 'signal online';
     if ($('connection-state').lastElementChild.textContent !== '로컬 연결') $('connection-state').lastElementChild.textContent = '로컬 연결';
     if ($('connection-state').getAttribute('aria-label') !== 'Praetorium 로컬 서버 연결됨') $('connection-state').setAttribute('aria-label', 'Praetorium 로컬 서버 연결됨');
+    void refreshSelectedGoalDetail();
     void refreshSelectedTask();
   } catch (error) {
     state.consoleError = error.message;
+    state.staleSince ||= Date.now();
     $('connection-state').className = 'signal offline';
     if ($('connection-state').lastElementChild.textContent !== '연결 끊김') $('connection-state').lastElementChild.textContent = '연결 끊김';
     const connectionErrorLabel = `Praetorium 로컬 서버 연결 끊김: ${error.message}`;
     if ($('connection-state').getAttribute('aria-label') !== connectionErrorLabel) $('connection-state').setAttribute('aria-label', connectionErrorLabel);
-    renderCurrentFocus();
+    renderAll();
     if (!quiet) toast(error.message, 'error');
+  } finally {
+    state.refreshing = false;
+    renderSyncBanner();
   }
 }
 
@@ -1412,7 +1737,13 @@ async function selectDirector(id) {
   state.taskError = null;
   state.taskTraceError = null;
   state.taskLoadedAt = 0;
+  state.goalDetail = null;
+  state.goalDetailId = null;
+  state.goalDetailError = null;
+  state.goalDetailErrorId = null;
+  state.goalDetailLoadedAt = 0;
   state.interventionDraft = '';
+  state.interventionReceipt = null;
   state.decisionDraft = '';
   state.decisionOption = '';
   state.decisionGoalId = null;
@@ -1421,6 +1752,7 @@ async function selectDirector(id) {
   renderAll();
   await loadBoard();
   renderAll();
+  void refreshSelectedGoalDetail({ force: true });
 }
 
 function selectTrace(type, id = null) {
@@ -1443,6 +1775,7 @@ async function selectTask(taskId) {
   state.taskLoadedAt = 0;
   if (changedTask) {
     state.interventionDraft = '';
+    state.interventionReceipt = null;
     state.rawLogOpen = null;
   }
   renderTrace();
@@ -1460,12 +1793,13 @@ async function sendIntervention() {
   const button = $('owner-inspector').querySelector('[data-send-intervention]');
   if (!button || button.disabled || state.busyActions.has(`intervention:${taskId}`)) return;
   try {
-    await withBusy(button, '전달 중…', () => api(`/api/directors/${encodeURIComponent(state.selectedId)}/tasks/${encodeURIComponent(taskId)}/interventions`, {
+    const result = await withBusy(button, '접수 중…', () => api(`/api/directors/${encodeURIComponent(state.selectedId)}/tasks/${encodeURIComponent(taskId)}/interventions`, {
       method: 'POST', body: JSON.stringify({ message }),
     }), `intervention:${taskId}`);
     input.value = '';
     state.interventionDraft = '';
-    toast('Owner 지시를 Worker 실행에 전달했습니다.', 'success');
+    state.interventionReceipt = { taskId, at: result?.at || new Date().toISOString(), status: 'accepted/queued' };
+    toast('Owner 지시가 accepted / queued 상태로 기록됐습니다. Worker 반영은 다음 동기화에서 확인하세요.', 'success');
     state.taskLoadedAt = 0;
     await refreshSelectedTask({ force: true });
   } catch (error) { toast(error.message, 'error'); }
@@ -1974,6 +2308,12 @@ function init() {
   });
   $('owner-refresh-btn').addEventListener('click', () => loadConsole());
   $('owner-dispatch-btn').addEventListener('click', dispatchNow);
+  document.querySelectorAll('[data-trace-filter]').forEach(button => button.addEventListener('click', () => {
+    const category = button.dataset.traceFilter;
+    if (state.traceFilters.has(category)) state.traceFilters.delete(category);
+    else state.traceFilters.add(category);
+    renderTrace();
+  }));
   $('workflow-library-btn').addEventListener('click', () => $('workflow-dialog').showModal());
   $('project-settings-btn').addEventListener('click', () => openManagement('projects'));
   $('inspector-expand').addEventListener('click', () => openFocus($('inspector-title').textContent));

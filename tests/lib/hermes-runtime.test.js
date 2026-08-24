@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { adaptiveWorkerLimit, HermesRuntime, _test } from '../../lib/hermes-runtime.js';
+import { Worker } from 'node:worker_threads';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { acquireProcessLease, adaptiveWorkerLimit, HermesRuntime, _test } from '../../lib/hermes-runtime.js';
 
 describe('HermesRuntime helpers', () => {
   it('extracts the last JSON line from Hermes output', () => {
@@ -39,19 +43,216 @@ describe('HermesRuntime helpers', () => {
     assert.deepEqual(result.args.slice(-3), ['--max', '0', '--json']);
   });
 
-  it('strips inherited remote surfaces from Hermes child environments', () => {
+  it('strips inherited remote surfaces and ambient credentials while preserving runtime essentials', () => {
     const env = _test.localOnlyEnv({
       PATH: 'safe',
+      HOME: 'C:\\Users\\owner',
+      LOCALAPPDATA: 'C:\\Users\\owner\\AppData\\Local',
+      CODEX_HOME: 'C:\\Users\\owner\\.codex',
+      HERMES_HOME: 'C:\\Users\\owner\\.hermes',
       TELEGRAM_BOT_TOKEN: 'secret',
       GATEWAY_PROXY_URL: 'https://remote.invalid',
+      GITHUB_TOKEN: 'github-secret',
+      GH_TOKEN: 'gh-secret',
+      AWS_REGION: 'ap-northeast-2',
+      AWS_SECRET_ACCESS_KEY: 'aws-secret',
+      NPM_TOKEN: 'npm-secret',
+      OPENAI_API_KEY: 'openai-secret',
+      DATABASE_URL: 'postgres://secret',
       API_SERVER_ENABLED: 'true',
       WHATSAPP_ENABLED: 'true',
     });
     assert.equal(env.PATH, 'safe');
+    assert.equal(env.HOME, 'C:\\Users\\owner');
+    assert.equal(env.LOCALAPPDATA, 'C:\\Users\\owner\\AppData\\Local');
+    assert.equal(env.CODEX_HOME, 'C:\\Users\\owner\\.codex');
+    assert.equal(env.HERMES_HOME, 'C:\\Users\\owner\\.hermes');
     assert.equal(env.TELEGRAM_BOT_TOKEN, undefined);
     assert.equal(env.GATEWAY_PROXY_URL, undefined);
+    assert.equal(env.GITHUB_TOKEN, undefined);
+    assert.equal(env.GH_TOKEN, undefined);
+    assert.equal(env.AWS_REGION, undefined);
+    assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
+    assert.equal(env.NPM_TOKEN, undefined);
+    assert.equal(env.OPENAI_API_KEY, undefined);
+    assert.equal(env.DATABASE_URL, undefined);
     assert.equal(env.API_SERVER_ENABLED, 'false');
     assert.equal(env.WHATSAPP_ENABLED, 'false');
+  });
+
+  it('holds one atomic process lease, recovers a stale PID, and releases only its own token', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'praetorium-lease-'));
+    const leaseFile = join(directory, 'server.lease');
+    const alive = new Set([101]);
+    const first = acquireProcessLease({ leaseFile, pid: 101, isAlive: pid => alive.has(Number(pid)) });
+    assert.throws(
+      () => acquireProcessLease({ leaseFile, pid: 202, isAlive: pid => alive.has(Number(pid)) }),
+      error => error?.code === 'PRAETORIUM_LEASE_HELD',
+    );
+    assert.equal(JSON.parse(readFileSync(leaseFile, 'utf8')).token, first.owner.token);
+
+    alive.delete(101);
+    alive.add(202);
+    const recovered = acquireProcessLease({ leaseFile, pid: 202, isAlive: pid => alive.has(Number(pid)) });
+    assert.equal(recovered.recovered.pid, 101);
+    assert.equal(first.release(), false, 'the stale owner must not unlink its replacement');
+    assert.equal(JSON.parse(readFileSync(leaseFile, 'utf8')).token, recovered.owner.token);
+    assert.equal(recovered.release(), true);
+    assert.equal(recovered.release(), false);
+  });
+
+  it('distinguishes a reused live PID by process creation identity', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'praetorium-pid-reuse-'));
+    const leaseFile = join(directory, 'server.lease');
+    const identities = new Map([[515, 'windows-start-ticks:100']]);
+    const options = {
+      leaseFile,
+      pid: 515,
+      isAlive: candidate => Number(candidate) === 515,
+      getIdentity: candidate => identities.get(Number(candidate)) || null,
+    };
+    const first = acquireProcessLease(options);
+    assert.equal(first.owner.processIdentity, 'windows-start-ticks:100');
+
+    identities.set(515, 'windows-start-ticks:200');
+    const replacement = acquireProcessLease(options);
+    assert.equal(replacement.recovered.token, first.owner.token);
+    assert.equal(replacement.owner.processIdentity, 'windows-start-ticks:200');
+    assert.equal(first.release(), false, 'the old PID generation must not release the replacement');
+    assert.equal(replacement.release(), true);
+  });
+
+  it('recovers a legacy v2.1 lease when its live PID was created after the lease', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'praetorium-legacy-pid-reuse-'));
+    const leaseFile = join(directory, 'server.lease');
+    const legacyCreatedAt = '2026-01-01T00:00:00.000Z';
+    const toWindowsTicks = iso => (
+      (BigInt(Date.parse(iso)) * 10000n) + 621355968000000000n
+    ).toString();
+    writeFileSync(leaseFile, `${JSON.stringify({
+      schema: 'praetorium-process-lease.v1', kind: 'server', pid: 616,
+      token: 'legacy-owner', createdAt: legacyCreatedAt,
+    })}\n`, 'utf8');
+    const starts = new Map([
+      [616, `windows-start-ticks:${toWindowsTicks('2026-01-01T00:01:00.000Z')}`],
+      [717, `windows-start-ticks:${toWindowsTicks('2025-12-31T23:59:00.000Z')}`],
+    ]);
+    const lease = acquireProcessLease({
+      leaseFile,
+      pid: 717,
+      isAlive: candidate => starts.has(Number(candidate)),
+      getIdentity: candidate => starts.get(Number(candidate)) || null,
+    });
+    assert.equal(lease.recovered.token, 'legacy-owner');
+    assert.equal(lease.release(), true);
+  });
+
+  it('keeps a legacy v2.1 lease fail-closed when the PID predates its lease', () => {
+    const owner = {
+      schema: 'praetorium-process-lease.v1', kind: 'server', pid: 818,
+      token: 'legacy-live-owner', createdAt: '2026-01-01T00:01:00.000Z',
+    };
+    const startTicks = (
+      (BigInt(Date.parse('2026-01-01T00:00:00.000Z')) * 10000n) + 621355968000000000n
+    ).toString();
+    assert.equal(_test.ownerIsAlive(owner, {
+      isAlive: () => true,
+      getIdentity: () => `windows-start-ticks:${startTicks}`,
+    }), true);
+  });
+
+  it('linearizes competing stale-guard recoveries without unlinking either owner record', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'praetorium-guard-journal-'));
+    const guardFile = join(directory, 'server.lease.guard');
+    const base = {
+      schema: 'praetorium-process-lease.v1', kind: 'guard', op: 'claim',
+      pid: 601, token: 'stale-owner', expectedToken: null,
+    };
+    _test.appendGuardRecord(guardFile, base);
+    _test.appendGuardRecord(guardFile, {
+      ...base, pid: 602, token: 'recovery-winner', expectedToken: 'stale-owner',
+    });
+    _test.appendGuardRecord(guardFile, {
+      ...base, pid: 603, token: 'recovery-loser', expectedToken: 'stale-owner',
+    });
+
+    const journal = _test.readGuardJournal(guardFile);
+    assert.equal(journal.active.token, 'recovery-winner');
+    assert.deepEqual(
+      journal.records.map(record => record.token),
+      ['stale-owner', 'recovery-winner', 'recovery-loser'],
+    );
+    const raw = readFileSync(guardFile, 'utf8');
+    assert.match(raw, /stale-owner/);
+    assert.match(raw, /recovery-winner/);
+    assert.match(raw, /recovery-loser/);
+  });
+
+  it('allows exactly one contender to win a concurrent stale-lease recovery', { timeout: 15000 }, async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'praetorium-concurrent-recovery-'));
+    const leaseFile = join(directory, 'server.lease');
+    writeFileSync(leaseFile, `${JSON.stringify({
+      schema: 'praetorium-process-lease.v1', kind: 'server',
+      pid: 2147480000, token: 'dead-server', createdAt: new Date(0).toISOString(),
+    })}\n`, 'utf8');
+    const runtimeUrl = new URL('../../lib/hermes-runtime.js', import.meta.url).href;
+    const contender = `
+      const { parentPort, workerData } = require('node:worker_threads');
+      (async () => {
+        const { acquireProcessLease } = await import(workerData.runtimeUrl);
+        try {
+          const lease = acquireProcessLease({
+            leaseFile: workerData.leaseFile,
+            pid: workerData.pid,
+            isAlive: candidate => workerData.livePids.includes(Number(candidate)),
+            getIdentity: candidate => 'thread-start:' + Number(candidate),
+          });
+          parentPort.postMessage('ACQUIRED');
+          setTimeout(() => { lease.release(); process.exit(0); }, 400);
+        } catch (error) {
+          parentPort.postMessage(String(error.code || 'ERROR'));
+        }
+      })().catch(error => { throw error; });
+    `;
+    const run = pid => new Promise((resolve, reject) => {
+      const worker = new Worker(contender, {
+        eval: true,
+        workerData: { runtimeUrl, leaseFile, pid, livePids: [901, 902] },
+      });
+      worker.once('message', resolve);
+      worker.once('error', reject);
+    });
+
+    const results = await Promise.all([run(901), run(902)]);
+    assert.equal(results.filter(result => result === 'ACQUIRED').length, 1, JSON.stringify(results));
+    assert.equal(results.filter(result => result === 'PRAETORIUM_LEASE_HELD').length, 1, JSON.stringify(results));
+  });
+
+  it('acquires the server lease before constructing the durable Director service', () => {
+    const source = readFileSync(join(process.cwd(), 'server.js'), 'utf8');
+    const lease = source.indexOf('acquireProcessLease({ leaseFile:');
+    const stateRecovery = source.indexOf('new DirectorService({');
+    assert.ok(lease >= 0 && stateRecovery >= 0 && lease < stateRecovery);
+  });
+
+  it('recovers an incomplete stale lease document under the guard', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'praetorium-corrupt-lease-'));
+    const leaseFile = join(directory, 'server.lease');
+    writeFileSync(leaseFile, '{"schema":', 'utf8');
+    const lease = acquireProcessLease({ leaseFile, pid: 303, isAlive: () => false });
+    assert.equal(lease.recovered.corrupt, true);
+    assert.equal(JSON.parse(readFileSync(leaseFile, 'utf8')).pid, 303);
+    assert.equal(lease.release(), true);
+  });
+
+  it('fails closed instead of racing recovery through a corrupt guard', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'praetorium-corrupt-guard-'));
+    const leaseFile = join(directory, 'server.lease');
+    writeFileSync(`${leaseFile}.guard`, '{"schema":', 'utf8');
+    assert.throws(
+      () => acquireProcessLease({ leaseFile, pid: 404, isAlive: () => false }),
+      error => error?.code === 'PRAETORIUM_LEASE_GUARD_CORRUPT',
+    );
   });
 
   it('derives the narrow Hermes data root used for board sandbox access', () => {

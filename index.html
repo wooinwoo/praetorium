@@ -66,6 +66,8 @@
         <section class="current-focus" id="current-focus"></section>
         <span id="status-announcer" class="visually-hidden" aria-live="polite"></span>
 
+        <section class="sync-banner" id="sync-banner" role="status" aria-live="polite" hidden></section>
+
         <section class="goal-progress" id="goal-progress" aria-label="지속형 Goal 진행 상태" hidden></section>
 
         <section class="owner-gate" id="owner-gate" hidden>
@@ -76,7 +78,15 @@
         <section class="trace-section">
           <header class="section-header">
             <div><h2>실행 흐름</h2><p>요구사항부터 구현과 검증까지 시간순으로 추적합니다.</p></div>
-            <div class="trace-summary" id="trace-summary"></div>
+            <div class="trace-toolbar">
+              <div class="trace-summary" id="trace-summary"></div>
+              <div class="trace-filters" role="group" aria-label="실행 흐름 필터">
+                <button type="button" data-trace-filter="decision" aria-pressed="true">결정</button>
+                <button type="button" data-trace-filter="worker" aria-pressed="true">Worker</button>
+                <button type="button" data-trace-filter="gate" aria-pressed="true">Gate</button>
+                <button type="button" data-trace-filter="failure" aria-pressed="true">실패</button>
+              </div>
+            </div>
           </header>
           <div class="trace-list" id="owner-trace-list"></div>
         </section>

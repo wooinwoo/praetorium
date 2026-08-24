@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   WORKFLOW_POLICIES,
@@ -20,6 +21,46 @@ const REVIEW_KIND = Object.freeze({
   'test-gap-reviewer': 'test-gap',
   'adversarial-reviewer': 'adversarial',
 });
+
+function sha256Json(value) {
+  return `sha256:${createHash('sha256').update(JSON.stringify(value ?? null)).digest('hex')}`;
+}
+
+function observedReceipt(item, candidateDigest = DIGEST_V1) {
+  const creditedEvidence = {
+    taskId: String(item.taskId || ''),
+    profile: String(item.profile || '').trim(),
+    status: String(item.status || ''),
+    completedAt: item.completedAt || null,
+    waveIndex: item.waveIndex !== null && item.waveIndex !== undefined && item.waveIndex !== ''
+      && Number.isFinite(Number(item.waveIndex)) ? Number(item.waveIndex) : null,
+    report: item.report || null,
+    summary: String(item.summary || ''),
+  };
+  const emptyHash = sha256Json(null);
+  return {
+    schema: 'hermes-board-observation.v1',
+    source: 'praetorium-host',
+    observedAt: '2026-08-24T00:10:00.000Z',
+    observationSucceeded: true,
+    taskId: item.taskId,
+    status: item.status,
+    candidateDigest,
+    taskLogObserved: false,
+    executionAttested: false,
+    hashes: {
+      task: emptyHash,
+      validation: emptyHash,
+      summary: emptyHash,
+      comments: emptyHash,
+      events: emptyHash,
+      runs: emptyHash,
+      log: null,
+      creditedEvidence: sha256Json(creditedEvidence),
+    },
+    counts: { comments: 0, events: 0, runs: 0 },
+  };
+}
 
 function writeEvidence({
   taskId = 'task-write-v1', profile = 'codex-implementer', waveIndex = 1,
@@ -190,6 +231,40 @@ describe('workflow gate policy', () => {
     const revisionOnlyAudit = auditQuickFix(revisionOnly);
     assert.equal(revisionOnlyAudit.satisfied, false);
     assert.ok(revisionOnlyAudit.gateConsistency.reasons.includes('host-gate-digest-mismatch'));
+  });
+
+  it('requires host-observation receipts when the supervisor asks for provenance', () => {
+    const evidence = validQuickFixEvidence();
+    const missing = evaluateWorkflowGates('quick-fix', evidence, {
+      expectedCandidate: { digest: DIGEST_V1 }, requireHostReceipts: true,
+    });
+    assert.equal(missing.satisfied, false);
+    assert.equal(missing.hostReceipts.satisfied, false);
+    assert.equal(missing.hostReceipts.missingTaskIds.length, evidence.length);
+
+    for (const item of evidence) item.hostReceipt = observedReceipt(item);
+    const observed = evaluateWorkflowGates('quick-fix', evidence, {
+      expectedCandidate: { digest: DIGEST_V1 }, requireHostReceipts: true,
+    });
+    assert.equal(observed.satisfied, true);
+    assert.equal(observed.hostReceipts.satisfied, true);
+    assert.equal(observed.hostReceipts.executionAttested, false);
+
+    evidence[0].report = { forged: true };
+    const tampered = evaluateWorkflowGates('quick-fix', evidence, {
+      expectedCandidate: { digest: DIGEST_V1 }, requireHostReceipts: true,
+    });
+    assert.equal(tampered.satisfied, false);
+    assert.ok(tampered.hostReceipts.missingTaskIds.includes(evidence[0].taskId));
+
+    const extraHistorical = writeEvidence({ taskId: 'old-write', waveIndex: 0, completedAt: '2026-08-23T00:00:00.000Z' });
+    const withUnobservedHistory = evaluateWorkflowGates('quick-fix', [extraHistorical, ...validQuickFixEvidence().map(item => ({
+      ...item, hostReceipt: observedReceipt(item),
+    }))], {
+      expectedCandidate: { digest: DIGEST_V1 }, requireHostReceipts: true,
+    });
+    assert.equal(withUnobservedHistory.satisfied, true);
+    assert.equal(withUnobservedHistory.hostReceipts.satisfied, true);
   });
 
   it('invalidates pre-remediation reviews and accepts only fresh reports for the new candidate', () => {
