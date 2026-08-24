@@ -4,7 +4,7 @@
   "version": "2.0.0",
   "identifier": "com.praetorium.local",
   "build": {
-    "frontendDist": "http://localhost:3847"
+    "frontendDist": "http://localhost:3848"
   },
   "app": {
     "withGlobalTauri": false,
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src http://127.0.0.1:3847 http://localhost:3847; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+      "csp": "default-src 'self'; connect-src http://127.0.0.1:3848 http://localhost:3848; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
     }
   },
   "bundle": {

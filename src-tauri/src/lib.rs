@@ -82,7 +82,7 @@ pub fn run() {
     let child = start_server(&server_dir)
         .expect("Failed to start node server. Is Node.js installed?");
 
-    if !wait_for_server(3847, 8000) {
+    if !wait_for_server(3848, 8000) {
         eprintln!("Warning: Server did not respond within 8 seconds");
     }
 
