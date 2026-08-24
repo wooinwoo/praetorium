@@ -4,8 +4,10 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HermesRuntime } from './lib/hermes-runtime.js';
+import { WslRuntime } from './lib/wsl-runtime.js';
 import { DirectorService } from './lib/director-service.js';
 import { DATA_DIR, MAX_PROJECTS, PORT, PROJECTS_ROOT, addProject, deleteProject, getProjects } from './lib/praetorium-config.js';
+import { PROFILE_CATALOG } from './lib/workflow-catalog.js';
 import { LOCAL_BIND_ADDRESS, isIgnoredBindRequest, isLoopbackAddress, isLoopbackHost } from './lib/local-only.js';
 import { register as registerDirectors } from './routes/directors.js';
 
@@ -74,10 +76,16 @@ function sameOrigin(req) {
   catch { return false; }
 }
 
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
 const directorState = join(DATA_DIR, 'directors.json');
 
+const wslRuntime = new WslRuntime();
+const hermesRuntime = new HermesRuntime({ wslRuntime });
 const directorService = new DirectorService({
-  runtime: new HermesRuntime(),
+  runtime: hermesRuntime,
   stateFile: directorState,
   projectsRoot: PROJECTS_ROOT,
   getProjects,
@@ -90,6 +98,7 @@ registerDirectors({ addRoute, json, readBody, directorService });
 addRoute('GET', '/api/health', (_req, res) => json(res, {
   status: 'ok',
   version: VERSION,
+  pid: process.pid,
   localOnly: true,
   uptime: Math.round(process.uptime()),
   projects: getProjects().length,
@@ -98,37 +107,103 @@ addRoute('GET', '/api/health', (_req, res) => json(res, {
 
 addRoute('GET', '/api/projects', (_req, res) => json(res, getProjects()));
 
+addRoute('GET', '/api/runtimes', async (req, res) => {
+  try {
+    const result = await hermesRuntime.describeTargets({ force: req.query.force === 'true' });
+    for (const target of result.targets.filter(item => item.kind === 'wsl' && !item.system)) {
+      if (!target.home) continue;
+      try {
+        const source = await wslRuntime.toWslPath(target.distro, ROOT);
+        target.setupCommand = [
+          `curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/v2026.8.19/scripts/install.sh | bash -s -- --branch v2026.8.19 --skip-setup --skip-browser --skip-computer-use --non-interactive`,
+          `${shellQuote(`${target.home}/.hermes/node/bin/node`)} ${shellQuote(`${source}/scripts/bootstrap-wsl-runtime.mjs`)} --workdir ${shellQuote(`${target.home}/projects`)}`,
+        ].join('\n');
+      } catch { /* runtime diagnosis remains useful when wslpath is unavailable */ }
+    }
+    json(res, result);
+  }
+  catch (error) { json(res, { error: error.message }, 500); }
+});
+
+addRoute('GET', '/api/profiles', (_req, res) => json(res, PROFILE_CATALOG));
+
+addRoute('POST', '/api/system/shutdown', async (_req, res) => {
+  const readiness = await directorService.beginShutdown();
+  if (!readiness.safe) return json(res, readiness, 409);
+  json(res, readiness, 202);
+  setImmediate(() => {
+    directorService.stopScheduler();
+    server.close(() => process.exit(0));
+  });
+});
+
+addRoute('POST', '/api/projects/validate', async (req, res) => {
+  try {
+    const body = await readBody(req);
+    if (body.runtime !== 'wsl') {
+      const path = resolve(String(body.path || ''));
+      const info = await stat(path);
+      return json(res, { valid: info.isDirectory(), exists: info.isDirectory(), path, runtime: 'windows' });
+    }
+    json(res, { ...(await wslRuntime.validateProject(body)), runtime: 'wsl' });
+  } catch (error) { json(res, { valid: false, error: error.message }, 400); }
+});
+
 addRoute('POST', '/api/projects', async (req, res) => {
   try {
-    const project = addProject(await readBody(req));
+    const body = await readBody(req);
+    if (body.runtime === 'wsl') {
+      const validated = await wslRuntime.validateProject(body);
+      if (!validated.valid) throw new Error('선택한 WSL 배포판에 프로젝트 경로가 없습니다.');
+      body.path = validated.path;
+      body.distro = validated.distro;
+    }
+    const project = addProject(body);
     directorService.syncProjects();
     json(res, project, 201);
   } catch (error) { json(res, { error: error.message }, 400); }
 });
 
-addRoute('DELETE', '/api/projects/:id', (req, res) => {
-  if (!deleteProject(req.params.id)) return json(res, { error: 'Project not found' }, 404);
-  directorService.syncProjects();
-  json(res, { deleted: true });
+addRoute('DELETE', '/api/projects/:id', async (req, res) => {
+  try {
+    if (!await directorService.detachProject(req.params.id, deleteProject)) return json(res, { error: 'Project not found' }, 404);
+    json(res, { deleted: true });
+  } catch (error) { json(res, { error: error.message }, 409); }
 });
 
-addRoute('POST', '/api/projects/discover', async (_req, res) => {
+addRoute('POST', '/api/projects/discover', async (req, res) => {
   try {
+    const body = await readBody(req);
     const configured = getProjects();
-    const known = new Set(configured.map(project => project.path.toLowerCase()));
-    const entries = await readdir(PROJECTS_ROOT, { withFileTypes: true });
+    const runtime = body.runtime === 'wsl' ? 'wsl' : 'windows';
+    const known = new Set(configured.map(project => `${project.runtime}:${project.distro || ''}:${project.path}`.toLowerCase()));
     let added = 0;
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (configured.length + added >= MAX_PROJECTS) break;
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-      const candidate = resolve(PROJECTS_ROOT, entry.name);
-      if (known.has(candidate.toLowerCase())) continue;
-      try {
-        await stat(join(candidate, '.git'));
-        addProject({ name: entry.name, path: candidate });
-        known.add(candidate.toLowerCase());
+    if (runtime === 'wsl') {
+      const candidates = await wslRuntime.discoverProjects({ distro: body.distro, root: body.root });
+      for (const candidate of candidates) {
+        if (configured.length + added >= MAX_PROJECTS) break;
+        const key = `wsl:${body.distro}:${candidate}`.toLowerCase();
+        if (known.has(key)) continue;
+        addProject({ name: candidate.split('/').at(-1), path: candidate, runtime: 'wsl', distro: body.distro });
+        known.add(key);
         added += 1;
-      } catch { /* not an immediate Git repository */ }
+      }
+    } else {
+      const root = body.root ? resolve(String(body.root)) : PROJECTS_ROOT;
+      const entries = await readdir(root, { withFileTypes: true });
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (configured.length + added >= MAX_PROJECTS) break;
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        const candidate = resolve(root, entry.name);
+        const key = `windows::${candidate}`.toLowerCase();
+        if (known.has(key)) continue;
+        try {
+          await stat(join(candidate, '.git'));
+          addProject({ name: entry.name, path: candidate, runtime: 'windows' });
+          known.add(key);
+          added += 1;
+        } catch { /* not an immediate Git repository */ }
+      }
     }
     directorService.syncProjects();
     json(res, { added, projects: getProjects() });

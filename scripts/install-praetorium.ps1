@@ -2,7 +2,7 @@
 param(
     [string]$ProjectsRoot = 'C:\projects',
     [string]$Repository = 'wooinwoo/praetorium',
-    [string]$Version = 'v2.0.0',
+    [string]$Version = 'v2.1.0',
     [string]$SourceRoot = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'PraetoriumData\source'),
     [switch]$SkipAppInstall,
     [switch]$SkipLaunch
@@ -14,7 +14,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 $HermesTag = 'v2026.8.19'
 $HermesVersion = 'Hermes Agent v0.20.5'
-$HermesInstallerUrl = "https://raw.githubusercontent.com/NousResearch/hermes-agent/$HermesTag/install.ps1"
+$HermesInstallerUrl = "https://raw.githubusercontent.com/NousResearch/hermes-agent/$HermesTag/scripts/install.ps1"
 $HermesInstallerSha256 = '74225BF244253BFA5BC2B1D16FA3BB8618E199A53D1C0344B37AB9930696D3BA'
 $CodexVersion = '0.149.0'
 
@@ -162,16 +162,20 @@ function Start-And-VerifyPraetorium {
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
         Start-Sleep -Milliseconds 500
         try {
-            $health = Invoke-RestMethod -Uri 'http://127.0.0.1:3847/api/health' -TimeoutSec 2
+            $health = Invoke-RestMethod -Uri 'http://127.0.0.1:3848/api/health' -TimeoutSec 2
             break
         } catch { }
     }
-    if (-not $health -or $health.status -ne 'ok') { throw 'Praetorium did not become healthy on loopback port 3847.' }
+    $expectedVersion = $Version.TrimStart('v')
+    if (-not $health -or $health.status -ne 'ok' -or $health.version -ne $expectedVersion) {
+        throw "Praetorium did not report expected version $expectedVersion on loopback port 3848."
+    }
 
-    $listeners = @(Get-NetTCPConnection -LocalPort 3847 -State Listen -ErrorAction SilentlyContinue)
+    $listeners = @(Get-NetTCPConnection -LocalPort 3848 -State Listen -ErrorAction SilentlyContinue)
     if (-not $listeners.Count) { throw 'Praetorium health passed, but no listening socket was found.' }
     $unsafe = @($listeners | Where-Object { $_.LocalAddress -notin @('127.0.0.1', '::1') })
     if ($unsafe.Count) { throw "Unsafe non-loopback listener detected: $($unsafe.LocalAddress -join ', ')" }
+    if ($listeners.OwningProcess -notcontains [int]$health.pid) { throw 'Praetorium health PID does not own the loopback listener.' }
     Write-Host 'Verified: Praetorium listens only on loopback and reports healthy.' -ForegroundColor Green
 }
 

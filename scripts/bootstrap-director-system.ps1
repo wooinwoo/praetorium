@@ -85,7 +85,7 @@ function Set-DotEnvFlags {
     # Remove active messaging, webhook, API-server, proxy, and gateway
     # configuration. Commented examples remain intact. The owner console uses
     # child-process stdio only, so none of these are required.
-    $remotePattern = '^\s*(?!#)(?:API_SERVER_|WEBHOOK_|GATEWAY_|RELAY_|TELEGRAM_|DISCORD_|SLACK_|WHATSAPP_|MATRIX_|MATTERMOST_|SIGNAL_|IMESSAGE_|EMAIL_|QQ_|LINE_|DINGTALK_|WECOM_|MSTEAMS_|MS_TEAMS_)[A-Z0-9_]*\s*='
+    $remotePattern = '^\s*(?!#)(?:export\s+)?(?:API_SERVER_|WEBHOOK_|GATEWAY_|RELAY_|TELEGRAM_|DISCORD_|SLACK_|WHATSAPP_|MATRIX_|MATTERMOST_|SIGNAL_|IMESSAGE_|EMAIL_|QQ_|LINE_|DINGTALK_|WECOM_|MSTEAMS_|MS_TEAMS_)[A-Z0-9_]*\s*='
     $clean = [Collections.Generic.List[string]]::new()
     foreach ($line in $lines) {
         if ($line -notmatch $remotePattern) {

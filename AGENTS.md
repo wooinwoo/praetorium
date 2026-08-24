@@ -99,8 +99,8 @@ cargo check --manifest-path .\src-tauri\Cargo.toml
 npm run tauri build -- --bundles nsis
 ```
 
-Before a release, validate skill files, parse PowerShell scripts, verify hostile Host requests receive 403, confirm port `3847` has no non-loopback listener, and exercise a real Director → Worker workflow. The exercise must confirm live comments, task evidence, raw log visibility, and safe pause/resume without modifying a read-only target unexpectedly.
+Before a release, validate skill files, parse PowerShell scripts, verify hostile Host requests receive 403, confirm port `3848` has no non-loopback listener, and exercise a real Director → Worker workflow. The exercise must confirm live comments, task evidence, raw log visibility, and safe pause/resume without modifying a read-only target unexpectedly.
 
 ## Current release state
 
-`v2.0.0` is the last published binary baseline. `main` contains the trace-first console, staged Director analysis, validated workflow/task materialization, Worker evidence/log endpoints, live Owner steering, pause/resume controls, and expanded orchestration skills. Build and publish a new versioned installer before claiming those post-2.0 features are available through the one-line release installer.
+`v2.0.0` is the last published binary baseline. The current source version is `v2.1.0` and adds per-project Windows/WSL execution plus environment, runtime, and role-profile management. Build, verify, and publish a new versioned installer before claiming these features are available through the release installer.

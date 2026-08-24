@@ -5,6 +5,7 @@ Praetorium is a local-only Owner Console for directing several real Codex workst
 - One Owner Console
 - Three project Directors
 - One Skill Director
+- Per-project native Windows or WSL2 execution
 - Dynamically sized, isolated implementation and review workers
 - Hermes profiles and Kanban state
 - Codex app-server inference over child-process stdio
@@ -13,23 +14,25 @@ Praetorium never starts a remote-control service. Its small HTTP server is force
 
 ## Install on the company Windows PC
 
-The only expected interactive step is `codex login` when the machine has not already been authenticated.
+`v2.0.0` is the last published binary baseline. The current `v2.1.0` source adds native WSL2 projects and the environment-management console; build it locally until the Owner publishes a signed release tag. The only expected interactive step is `codex login` when the machine has not already been authenticated.
 
 ```powershell
-$installer = Join-Path $env:TEMP 'install-praetorium.ps1'
-Invoke-WebRequest https://raw.githubusercontent.com/wooinwoo/praetorium/v2.0.0/scripts/install-praetorium.ps1 -OutFile $installer
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -ProjectsRoot C:\projects
+git clone https://github.com/wooinwoo/praetorium.git
+cd praetorium
+npm ci
+npm test
+npm run tauri build -- --bundles nsis
 ```
 
-The installer:
+The versioned bootstrap script (`scripts/install-praetorium.ps1`) used for published releases:
 
 1. installs Git and Node.js through winget when missing;
 2. installs Codex CLI `0.149.0` and verifies the local Codex login;
 3. downloads and checksum-verifies Hermes `v2026.8.19` / Agent `v0.20.5`;
-4. checks out the exact Praetorium `v2.0.0` release;
+4. checks out the exact requested Praetorium release;
 5. installs 14 role profiles, 12 skills, four boards, and the pinned Codex runtime bridges;
 6. downloads the Windows release installer and verifies its SHA-256 file;
-7. installs and launches Praetorium, then rejects the installation if port `3847` is not loopback-only.
+7. installs and launches Praetorium, then rejects the installation if port `3848` is not loopback-only.
 
 Praetorium is a standalone product and repository. Its durable project and Director state lives in `%LOCALAPPDATA%\PraetoriumData`, outside the desktop shell installation, so reinstalling or uninstalling the shell does not erase orchestration state.
 
@@ -37,7 +40,7 @@ Praetorium is a standalone product and repository. Its durable project and Direc
 
 ```text
 Owner
-└─ Praetorium Owner Console (127.0.0.1:3847)
+└─ Praetorium Owner Console (127.0.0.1:3848)
    ├─ Project Director 1 → isolated implementer/review/fix workers
    ├─ Project Director 2 → independent worker pool and quality loop
    ├─ Project Director 3 → independent worker pool and quality loop
@@ -50,7 +53,7 @@ Hermes stores durable profiles, boards, tasks, results, and worker lifecycle sta
 
 ## Owner Console
 
-Open the desktop app or browse locally to `http://127.0.0.1:3847`.
+Open the desktop app or browse locally to `http://127.0.0.1:3848`.
 
 The single product screen contains the three project Directors, Skill Director, current objective, execution trace, Owner decision queue, detail inspector, and Director conversation. There are no worker tabs to manage.
 
@@ -75,7 +78,13 @@ The Owner can intervene without opening a Worker tab:
 - resume a paused task and return it to automatic dispatch;
 - enlarge the Inspector or change global text scale for long traces.
 
-Project slots are populated from existing configuration. On a fresh install, Praetorium discovers up to three immediate Git repositories under `PRAETORIUM_PROJECTS_ROOT` (default `C:\projects`). The Project dialog can replace or rediscover assignments.
+Project slots are populated from existing configuration. On a fresh install, Praetorium discovers up to three immediate Git repositories under `PRAETORIUM_PROJECTS_ROOT` (default `C:\projects`). Environment Management can validate, discover, and connect either a Windows absolute path or a Linux path inside a selected WSL2 distribution.
+
+For WSL2 projects, Praetorium does not run Windows tools against a UNC share. Every Director, Kanban, and Worker command is launched through `wsl.exe --distribution <name> --cd <linux-path>` and uses that distribution's own pinned Hermes, Codex, profiles, boards, permissions, and shell toolchain. The Runtimes screen distinguishes a readable path from a fully prepared execution runtime and provides the pinned setup commands when work is required.
+
+Each WSL distribution has its own Codex login. The WSL bootstrap installs a native pinned launcher backed by Hermes-managed Linux Node, verifies `codex login status`, and opens the one-time login flow when that distribution is not authenticated. A distribution is never reported as ready from versions and profiles alone.
+
+The Roles screen exposes all 14 installed profiles with model, reasoning effort, sandbox authority, assigned skill, purpose, and per-runtime installation status. Runtime and role configuration is therefore inspectable without opening Hermes files by hand.
 
 ## Roles and skills
 
@@ -111,6 +120,8 @@ Praetorium is designed for background operation without approval popups inside t
 
 Worker intervention does not broaden authority. A mid-run Owner note may narrow or redirect work inside the existing project objective, but new external authority, destructive operations, remote access, or publication still requires an explicit Owner decision.
 
+Praetorium exit and update are session-safe. Tray Quit asks the backend for a fresh Director/Worker activity check and refuses to exit while execution is active. The NSIS updater aborts when Praetorium or its loopback server is still running; it never uses force-kill or child-tree termination.
+
 The pinned bridge applies only to Hermes Agent `v0.20.5` and fails closed on an unknown layout. It removes a redundant Hermes OAuth preflight while leaving the real Codex app-server login check intact, fixes the narrow Windows Kanban writable-root override, and makes the selected project override static profile working directories.
 
 ## Local development
@@ -125,7 +136,7 @@ npm test
 npm start
 ```
 
-The development server is available only at `http://127.0.0.1:3847`. Static UI changes are served directly; Node service changes require a restart. Persistent Director and project state is read from `%LOCALAPPDATA%\PraetoriumData`, while Hermes boards and logs remain in the local Hermes data directory.
+The development server is available only at `http://127.0.0.1:3848`. Static UI changes are served directly; Node service changes require a restart. Persistent Director and project state is read from `%LOCALAPPDATA%\PraetoriumData`, while Hermes boards and logs remain in the selected Windows or WSL Hermes data directory.
 
 Useful verification commands:
 
@@ -135,7 +146,7 @@ npm test
 git diff --check
 ```
 
-The test suite covers Director control-envelope validation, bounded handoff, durable task materialization, board caching, worker concurrency, local-only policy, live task evidence, Owner intervention, pause/resume commands, and route behavior.
+The test suite covers Director control-envelope validation, stable project-to-Director assignment, bounded handoff, durable task materialization, board caching, worker concurrency, local-only policy, WSL launch boundaries, live task evidence, Owner intervention, pause/resume commands, and route behavior.
 
 Bootstrap profiles and skills:
 
@@ -158,6 +169,9 @@ npm run tauri build -- --bundles nsis
 - State-changing requests require a same-host Origin when an Origin or Referer is present.
 - Hermes child processes use argument arrays with `shell: false`.
 - Director state and project assignment are written atomically; interrupted runs recover as failed on restart.
+- Project identities are unique and Director slots are stable, so deleting and later reconnecting a same-named repository cannot inherit another project's board or execution history.
+- Project removal refreshes Hermes state and fails closed while any non-terminal task remains.
+- App exit and update never force-terminate the Node/Hermes/Codex process tree.
 - Existing user project changes are never reset or discarded by the installer.
 - Worker logs and comments are read from local Hermes Kanban state and are never relayed to a remote Praetorium service.
 
@@ -168,11 +182,13 @@ npm run tauri build -- --bundles nsis
 - `lib/director-actions.js`: strict Director analysis and action-envelope extraction/validation
 - `lib/workflow-catalog.js`: six built-in workflows, twelve operating skills, approved Worker profiles
 - `lib/hermes-runtime.js`: local Hermes process adapter, task evidence/logs, comments, pause/resume primitives
+- `lib/wsl-runtime.js`: WSL2 distribution discovery, project validation, readiness diagnostics, and injection-safe native launch bridge
 - `routes/directors.js`: local Director, board, trace, intervention, and control HTTP API
 - `.agents/skills/`: Director, reviewer, remediation, release, and quality-gate skills
 - `.agents/hermes-profiles/`: Director and Worker role profiles
 - `scripts/bootstrap-director-system.ps1`: deterministic local profile, skill, and board setup
 - `scripts/patch-hermes-codex-runtime.ps1`: pinned Hermes/Codex bridge patches
+- `scripts/bootstrap-wsl-runtime.mjs`: idempotent WSL profile, skill, board, and local-only policy bootstrap
 - `src-tauri/`: Windows/macOS desktop shell and installer packaging
 
 Repository automation instructions live in `AGENTS.md`; `CLAUDE.md` points Claude-based coding sessions to the same source of truth.
@@ -181,6 +197,6 @@ Repository automation instructions live in `AGENTS.md`; `CLAUDE.md` points Claud
 
 Tags matching `v*` run the active test suite and build Windows NSIS and macOS DMG artifacts. Release assets include SHA-256 checksum files. The company-PC bootstrap currently supports Windows; macOS packaging remains available for the desktop shell.
 
-The `v2.0.0` installer is the last published binary baseline. The trace-first console and live Worker intervention described above are currently on `main`; create a new versioned release before using the one-line installer to deploy those post-2.0 changes on another machine. For development or continuation now, clone `main` and run the local-development steps above.
+The `v2.0.0` installer is the last published binary baseline. The current source version is `v2.1.0`; create a reviewed release before advertising or using the versioned bootstrap installer on another machine. For development or continuation now, clone the working branch and run the local-development steps above.
 
 License and internal deployment policy follow the repository and company policy.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DirectorService } from '../../lib/director-service.js';
+import { DirectorService, _test } from '../../lib/director-service.js';
 
 function conversationOutput(text = 'done') {
   return `${text}\n<PRAETORIUM_CONTROL>${JSON.stringify({
@@ -67,6 +67,16 @@ describe('DirectorService', () => {
     assert.equal(directors[1].status, 'unassigned');
   });
 
+  it('keeps a WSL project in its Linux path and selected distribution', () => {
+    const svc = service({ getProjects: () => [{
+      id: 'linux-app', name: 'Linux App', path: '/home/owner/projects/linux-app', runtime: 'wsl', distro: 'Ubuntu',
+    }] });
+    const director = svc.listDirectors()[0];
+    assert.equal(director.cwd, '/home/owner/projects/linux-app');
+    assert.equal(director.runtime, 'wsl');
+    assert.equal(director.distro, 'Ubuntu');
+  });
+
   it('limits the owner console to three project Directors', () => {
     const svc = service({ getProjects: () => Array.from({ length: 6 }, (_, index) => ({
       id: `project-${index + 1}`,
@@ -76,10 +86,42 @@ describe('DirectorService', () => {
     assert.equal(svc.listDirectors().filter(d => d.kind === 'project').length, 3);
   });
 
+  it('does not cross-wire project history when a middle assignment is removed and replaced', async () => {
+    let projects = [
+      { id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha', slot: 1 },
+      { id: 'beta', name: 'Beta', path: 'C:\\projects\\beta', slot: 2 },
+      { id: 'gamma', name: 'Gamma', path: 'C:\\projects\\gamma', slot: 3 },
+    ];
+    const svc = service({ getProjects: () => projects });
+    const betaRun = svc.submitMessage('project-director-2', 'beta history', { mode: 'conversation' });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(svc.getRun(betaRun.id).projectId, 'beta');
+
+    projects = projects.filter(project => project.id !== 'beta');
+    svc.syncProjects();
+    assert.equal(svc.getDirector('project-director-2').projectId, null);
+    assert.equal(svc.getDirector('project-director-3').projectId, 'gamma');
+
+    projects.push({ id: 'delta', name: 'Delta', path: 'C:\\projects\\delta', slot: 2 });
+    svc.syncProjects();
+    assert.equal(svc.getDirector('project-director-2').projectId, 'delta');
+    assert.deepEqual(svc.listRuns({ projectId: 'delta' }), []);
+    assert.equal(svc.listRuns({ projectId: 'beta' })[0].prompt, 'beta history');
+  });
+
+  it('keeps long unique project identities on separate Hermes boards', () => {
+    const base = 'project-name-that-fills-the-whole-identifier-limit-x';
+    const first = _test.defaultState([{ id: `${base}-11111111`, name: 'First', path: 'C:\\projects\\first' }]).directors[0];
+    const second = _test.defaultState([{ id: `${base}-22222222`, name: 'Second', path: 'C:\\projects\\second' }]).directors[0];
+    assert.notEqual(first.board, second.board);
+    assert.ok(first.board.length <= 48);
+    assert.ok(second.board.length <= 48);
+  });
+
   it('persists registry state atomically', () => {
     const svc = service();
     const parsed = JSON.parse(readFileSync(svc.stateFile, 'utf8'));
-    assert.equal(parsed.schema, 1);
+    assert.equal(parsed.schema, 2);
     assert.equal(parsed.directors.length, 4);
   });
 
@@ -150,6 +192,47 @@ describe('DirectorService', () => {
     assert.deepEqual(svc.getBoard('project-director-1'), [{ id: 'worker-1', status: 'running' }]);
     assert.equal(listCalls, 1);
     assert.equal(svc.getBoardStatus('project-director-1').refreshing, false);
+  });
+
+  it('fails closed when project removal discovers non-terminal work outside the cache', async () => {
+    const svc = service({ runtime: runtime({ listTasks: async () => [{ id: 't_blocked', status: 'blocked' }] }) });
+    await assert.rejects(svc.detachProject('alpha', () => true), /미완료 작업 1개/);
+  });
+
+  it('refuses shutdown when a fresh board read finds a running Worker', async () => {
+    const svc = service({ runtime: runtime({ listTasks: async () => [{ id: 't_running', status: 'running' }] }) });
+    const readiness = await svc.beginShutdown();
+    assert.equal(readiness.safe, false);
+    assert.match(readiness.reason, /Worker 실행 1개/);
+  });
+
+  it('blocks a new Director while project detachment waits on a fresh board read', async () => {
+    let releaseList;
+    const listing = new Promise(resolve => { releaseList = resolve; });
+    const svc = service({ runtime: runtime({ listTasks: async () => listing }) });
+    const detaching = svc.detachProject('alpha', () => true);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.throws(() => svc.submitMessage('project-director-1', 'start during detach'), /배정 제거 확인 중/);
+    releaseList([]);
+    assert.equal(await detaching, true);
+  });
+
+  it('blocks new work and in-flight dispatch while shutdown checks fresh boards', async () => {
+    let releaseList;
+    let dispatches = 0;
+    const listing = new Promise(resolve => { releaseList = resolve; });
+    const svc = service({ runtime: runtime({
+      listTasks: async () => listing,
+      dispatch: async () => { dispatches += 1; return { json: { spawned: 1 } }; },
+    }) });
+    const ticking = svc.tickDirector('project-director-1');
+    const checking = svc.beginShutdown();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.throws(() => svc.submitMessage('project-director-1', 'start during shutdown'), /종료 확인 중/);
+    releaseList([{ id: 't_ready', status: 'ready' }]);
+    assert.deepEqual(await ticking, { skipped: true });
+    assert.equal((await checking).safe, true);
+    assert.equal(dispatches, 0);
   });
 
   it('ticks project boards independently when one board is slow', async () => {

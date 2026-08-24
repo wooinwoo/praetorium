@@ -5,6 +5,10 @@ const TASK_POLL_INTERVAL_MS = 2800;
 const state = {
   summary: null,
   projects: [],
+  runtimes: [],
+  profiles: [],
+  selectedProfileId: null,
+  managementTab: 'projects',
   selectedId: 'project-director-1',
   board: [],
   boardStatus: null,
@@ -13,6 +17,7 @@ const state = {
   taskTrace: null,
   taskLoading: false,
   taskLoadedAt: 0,
+  inspectorRenderKey: null,
   loading: null,
   timer: null,
 };
@@ -71,6 +76,12 @@ function statusLabel(status) {
   })[status] || status || '대기';
 }
 
+function runtimeLabel(value) {
+  return value?.runtime === 'wsl' || value?.kind === 'wsl'
+    ? `WSL · ${value.distro || '배포판 미지정'}`
+    : 'Windows';
+}
+
 function traceStatus(status) {
   if (['done', 'completed', 'archived', 'delegated'].includes(status)) return 'done';
   if (['running', 'analyzing', 'directing', 'materializing', 'dispatching'].includes(status)) return 'running';
@@ -89,10 +100,11 @@ function toast(message, kind = 'info') {
 
 async function api(path, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 10000);
   try {
+    const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
     const response = await fetch(path, {
-      ...options,
+      ...fetchOptions,
       signal: options.signal || controller.signal,
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     });
@@ -112,7 +124,10 @@ function selectedDirector() {
 }
 
 function selectedRuns() {
-  return (state.summary?.recentRuns || []).filter(run => run.directorId === state.selectedId);
+  const director = selectedDirector();
+  return (state.summary?.recentRuns || []).filter(run => director?.kind === 'project'
+    ? run.projectId === director.projectId
+    : run.directorId === state.selectedId);
 }
 
 function latestRun() {
@@ -161,7 +176,14 @@ function renderTopbar() {
   const sessions = state.summary?.sessions || { total: 0 };
   $('active-project-name').textContent = director?.kind === 'skill' ? 'Skill governance' : (director?.name || 'Project').replace(/ Director$/, '');
   $('active-project-path').textContent = director?.cwd || '프로젝트 미배정';
-  $('session-count').lastElementChild.textContent = `${sessions.total || 0} sessions`;
+  const runtimeBadge = $('mission-runtime-badge');
+  runtimeBadge.textContent = runtimeLabel(director).toUpperCase();
+  runtimeBadge.className = `runtime-badge ${director?.runtime === 'wsl' ? 'wsl' : 'windows'}`;
+  const sessionSignal = $('session-count');
+  sessionSignal.className = `signal ${sessions.total ? 'active' : 'idle'}`;
+  sessionSignal.lastElementChild.textContent = sessions.total
+    ? `${sessions.total} 실행 중 · D${sessions.directors || 0} W${sessions.workers || 0}`
+    : '실행 대기';
   $('director-count').textContent = state.summary?.directors?.length || 0;
 }
 
@@ -169,14 +191,16 @@ function renderDirectors() {
   const directors = state.summary?.directors || [];
   $('owner-director-list').innerHTML = directors.map(director => {
     const index = director.kind === 'skill' ? 'S' : director.id.split('-').at(-1);
-    const subtitle = director.kind === 'skill' ? '공용 역량·워크플로' : (director.projectId || '프로젝트 미배정');
-    return `<button class="director-row ${director.id === state.selectedId ? 'active' : ''}" data-director="${escapeHtml(director.id)}" type="button">
+    const subtitle = director.kind === 'skill' ? '공용 역량·워크플로' : (director.projectId ? `${director.projectId} · ${runtimeLabel(director)}` : '프로젝트 미배정');
+    const accessibleName = `${director.name}, ${subtitle}, ${statusLabel(director.status)}`;
+    return `<button class="director-row ${director.id === state.selectedId ? 'active' : ''}" data-director="${escapeHtml(director.id)}" type="button" aria-label="${escapeHtml(accessibleName)}" data-tooltip="${escapeHtml(accessibleName)}">
       <span class="director-index">${escapeHtml(index)}</span>
       <span class="director-copy"><strong>${escapeHtml(director.name)}</strong><small>${escapeHtml(subtitle)}</small></span>
       <i class="status-dot ${traceStatus(director.status)}" title="${escapeHtml(statusLabel(director.status))}"></i>
     </button>`;
   }).join('');
   document.querySelectorAll('[data-director]').forEach(button => {
+    if (button.dataset.director === state.selectedId) button.setAttribute('aria-current', 'true');
     button.addEventListener('click', () => selectDirector(button.dataset.director));
   });
 }
@@ -328,7 +352,7 @@ function renderOverviewInspector() {
   const director = selectedDirector();
   const run = latestRun();
   $('inspector-title').textContent = 'Director 개요';
-  return `<div class="inspector-hero"><span class="overline">${escapeHtml(director?.kind === 'skill' ? 'SKILL DIRECTOR' : 'PROJECT DIRECTOR')}</span><h3>${escapeHtml(director?.name || 'Director')}</h3><p>${escapeHtml(director?.cwd || '프로젝트가 배정되지 않았습니다.')}</p><div class="inspector-meta"><span>${escapeHtml(statusLabel(director?.status))}</span><code>${escapeHtml(director?.board || '')}</code></div></div>
+  return `<div class="inspector-hero"><h3>${escapeHtml(director?.name || 'Director')}</h3><p>${escapeHtml(director?.cwd || '프로젝트가 배정되지 않았습니다.')}</p><div class="inspector-meta"><span>${escapeHtml(director?.kind === 'skill' ? 'Skill Director' : 'Project Director')}</span><span>${escapeHtml(runtimeLabel(director))}</span><span>${escapeHtml(statusLabel(director?.status))}</span><code>${escapeHtml(director?.board || '')}</code></div></div>
     ${detailGroup('현재 목표', run ? `<p>${formatText(run.prompt)}</p>` : '<p class="detail-empty">새 목표를 기다리는 중입니다.</p>')}
     ${run ? detailGroup('현재 운영 상태', `<p>${escapeHtml(phaseLabel(run.phase))} · ${run.taskIds?.length || 0} tasks · ${elapsedLabel(run.startedAt, run.completedAt || Date.now())}</p>`) : ''}
     ${detailGroup('Owner 개입', '<p>Director 분석·계획과 모든 Worker 실행을 같은 trace에서 선택할 수 있습니다. 실행 중 Worker를 열면 추가 지시와 일시정지 제어가 나타납니다.</p>')}`;
@@ -336,15 +360,15 @@ function renderOverviewInspector() {
 
 function renderObjectiveInspector(run) {
   $('inspector-title').textContent = 'Owner 목표';
-  return `<div class="inspector-hero"><span class="overline">OWNER OBJECTIVE</span><h3>${escapeHtml(run?.prompt || '목표 없음')}</h3><p>Director가 이 목표를 성공 조건과 Worker 작업으로 변환합니다.</p><div class="inspector-meta"><code>${escapeHtml(run?.id || '')}</code><span>${escapeHtml(clockLabel(run?.createdAt))}</span></div></div>`;
+  return `<div class="inspector-hero"><h3>${escapeHtml(run?.prompt || '목표 없음')}</h3><p>Director가 이 목표를 성공 조건과 Worker 작업으로 변환합니다.</p><div class="inspector-meta"><span>Owner 목표</span><code>${escapeHtml(run?.id || '')}</code><span>${escapeHtml(clockLabel(run?.createdAt))}</span></div></div>`;
 }
 
 function renderAnalysisInspector(run) {
   $('inspector-title').textContent = 'Director 분석';
   const analysis = run?.analysis;
-  if (!analysis) return `<div class="inspector-hero"><span class="overline">DIRECTOR ANALYSIS</span><h3>판단 근거를 구성하는 중</h3><p>요구, 성공 조건, 확인된 근거, 위험과 대안을 공개 체크포인트로 정리합니다.</p></div><div class="inspector-loading">${escapeHtml(run?.progressEvents?.at(-1)?.message || '대기 중…')}</div>`;
+  if (!analysis) return `<div class="inspector-hero"><h3>판단 근거를 구성하는 중</h3><p>요구, 성공 조건, 확인된 근거, 위험과 대안을 공개 체크포인트로 정리합니다.</p><div class="inspector-meta"><span>Director 분석</span></div></div><div class="inspector-loading">${escapeHtml(run?.progressEvents?.at(-1)?.message || '대기 중…')}</div>`;
   const candidates = (analysis.workflowCandidates || []).map(candidate => `<div class="candidate-row ${candidate.id === analysis.recommendedWorkflow ? 'recommended' : ''}"><b>${escapeHtml(workflowFor(candidate.id)?.name || candidate.id)}</b><span>${escapeHtml(candidate.fit)}<small>${escapeHtml(candidate.tradeoff)}</small></span></div>`).join('');
-  return `<div class="inspector-hero"><span class="overline">PUBLIC DECISION JOURNAL</span><h3>${escapeHtml(analysis.requestSummary)}</h3><p>내부 사고문장이 아닌 검증 가능한 판단 근거와 운영 결정을 공개합니다.</p><div class="inspector-meta"><span>${escapeHtml(workflowFor(analysis.recommendedWorkflow)?.name || analysis.recommendedWorkflow)}</span><code>analysis.v1</code></div></div>
+  return `<div class="inspector-hero"><h3>${escapeHtml(analysis.requestSummary)}</h3><p>내부 사고문장이 아닌 검증 가능한 판단 근거와 운영 결정을 공개합니다.</p><div class="inspector-meta"><span>공개 판단 기록</span><span>${escapeHtml(workflowFor(analysis.recommendedWorkflow)?.name || analysis.recommendedWorkflow)}</span><code>analysis.v1</code></div></div>
     ${detailGroup('성공 조건', listHtml(analysis.successCriteria))}
     ${detailGroup('확인된 근거', listHtml(analysis.evidence))}
     ${detailGroup('제약', listHtml(analysis.constraints))}
@@ -358,10 +382,10 @@ function renderAnalysisInspector(run) {
 
 function renderPlanInspector(run) {
   $('inspector-title').textContent = '실행 계획';
-  if (!run?.workflowId && !run?.actions?.length) return `<div class="inspector-hero"><span class="overline">DIRECTOR PLAN</span><h3>Worker 구성과 의존성을 설계하는 중</h3><p>${escapeHtml(run?.progressEvents?.at(-1)?.message || '분석 결과를 실행 가능한 작업 그래프로 변환합니다.')}</p></div>`;
+  if (!run?.workflowId && !run?.actions?.length) return `<div class="inspector-hero"><h3>Worker 구성과 의존성을 설계하는 중</h3><p>${escapeHtml(run?.progressEvents?.at(-1)?.message || '분석 결과를 실행 가능한 작업 그래프로 변환합니다.')}</p><div class="inspector-meta"><span>Director 계획</span></div></div>`;
   const workflow = workflowFor(run.workflowId);
   const actions = (run.actions || []).map((action, index) => `<article class="plan-action"><span>${index + 1}</span><div><strong>${escapeHtml(action.title)}</strong><p>${escapeHtml(action.task)}</p><small>${escapeHtml(action.target)}${action.parentTaskIds?.length ? ` · 선행 ${escapeHtml(action.parentTaskIds.join(', '))}` : ' · 즉시 실행 가능'}</small></div></article>`).join('');
-  return `<div class="inspector-hero"><span class="overline">EXECUTION PLAN</span><h3>${escapeHtml(workflow?.name || run.workflowId || '대화')}</h3><p>${escapeHtml(workflow?.description || 'Director 응답')}</p><div class="inspector-meta"><span>${run.actions?.length || 0} tasks</span><code>${escapeHtml(run.workflowId || 'conversation')}</code></div></div>
+  return `<div class="inspector-hero"><h3>${escapeHtml(workflow?.name || run.workflowId || '대화')}</h3><p>${escapeHtml(workflow?.description || 'Director 응답')}</p><div class="inspector-meta"><span>실행 계획</span><span>${run.actions?.length || 0} tasks</span><code>${escapeHtml(run.workflowId || 'conversation')}</code></div></div>
     ${detailGroup('운영 판단', listHtml(run.publicDecisions))}
     ${detailGroup('작업 그래프', `<div class="plan-actions">${actions || '<p class="detail-empty">Worker 작업 없음</p>'}</div>`)}`;
 }
@@ -414,7 +438,7 @@ function renderTaskInspector() {
     : ['blocked', 'scheduled'].includes(task.status)
       ? '<button class="resume-button" type="button" data-worker-control="resume">재개</button>' : '';
   const intervention = canIntervene ? `<section class="worker-control"><header><div><span>OWNER STEERING</span><strong>실행 중 방향을 바꿀 수 있습니다</strong></div>${control}</header><textarea id="worker-intervention-input" rows="3" placeholder="예: 그 파일은 건드리지 말고 API 계약부터 확인해. 이 지시는 실행 중 Worker에 바로 전달됩니다."></textarea><div><small>실행 중에는 약 6초 이내 현재 Worker 세션에 주입됩니다.</small><button type="button" data-send-intervention>지시 추가</button></div></section>` : '';
-  return `<div class="inspector-hero"><span class="overline">LIVE WORKER TRACE</span><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(taskAction)}</p><div class="inspector-meta"><code>${escapeHtml(task.id)}</code><span>${escapeHtml(task.assignee || '미배정')}</span><span>${escapeHtml(statusLabel(task.status))}</span>${task.started_at ? `<span>${escapeHtml(elapsedLabel(task.started_at, task.completed_at || Date.now()))}</span>` : ''}</div></div>
+  return `<div class="inspector-hero"><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(taskAction)}</p><div class="inspector-meta"><span>Worker 실행</span><code>${escapeHtml(task.id)}</code><span>${escapeHtml(task.assignee || '미배정')}</span><span>${escapeHtml(statusLabel(task.status))}</span>${task.started_at ? `<span>${escapeHtml(elapsedLabel(task.started_at, task.completed_at || Date.now()))}</span>` : ''}</div></div>
     ${intervention}
     ${detailGroup('공개 추론·실행 trace', renderPublicTrace(details, state.taskTrace?.log), 'public-trace-group')}
     ${detailGroup('완료 기준', listHtml(acceptance))}
@@ -429,6 +453,11 @@ function bindInspectorActions() {
 
 function renderInspector({ force = false } = {}) {
   if (!force && document.activeElement?.id === 'worker-intervention-input') return;
+  const scroller = document.querySelector('.inspector-scroll');
+  const renderKey = `${state.selectedId}:${state.selection.type}:${state.selection.id || ''}`;
+  const preserve = state.inspectorRenderKey === renderKey;
+  const previousTop = scroller?.scrollTop || 0;
+  const stickToBottom = Boolean(scroller && scroller.scrollHeight - scroller.clientHeight - previousTop < 32);
   const run = latestRun();
   let html;
   if (state.selection.type === 'objective') html = renderObjectiveInspector(run);
@@ -438,6 +467,10 @@ function renderInspector({ force = false } = {}) {
   else html = renderOverviewInspector();
   $('owner-inspector').innerHTML = html;
   bindInspectorActions();
+  state.inspectorRenderKey = renderKey;
+  if (scroller) requestAnimationFrame(() => {
+    scroller.scrollTop = preserve ? (stickToBottom ? scroller.scrollHeight : previousTop) : 0;
+  });
 }
 
 function renderConversation() {
@@ -526,6 +559,7 @@ async function loadConsole(options = {}) {
 }
 
 async function selectDirector(id) {
+  if (window.matchMedia('(max-width: 820px)').matches) setInspectorOpen(false);
   state.selectedId = id;
   state.selection = { type: 'overview', id: null };
   state.taskDetail = null;
@@ -540,6 +574,7 @@ function selectTrace(type) {
   state.selection = { type, id: null };
   renderTrace();
   renderInspector({ force: true });
+  if (window.matchMedia('(max-width: 820px)').matches) setInspectorOpen(true);
 }
 
 async function selectTask(taskId) {
@@ -549,6 +584,7 @@ async function selectTask(taskId) {
   state.taskLoadedAt = 0;
   renderTrace();
   renderInspector({ force: true });
+  if (window.matchMedia('(max-width: 820px)').matches) setInspectorOpen(true);
   await refreshSelectedTask({ force: true });
 }
 
@@ -605,10 +641,15 @@ async function dispatchNow() {
 
 function renderProjects() {
   $('project-capacity').textContent = `${state.projects.length} / ${MAX_PROJECTS}`;
-  $('project-list').innerHTML = state.projects.length ? state.projects.map((project, index) => `<article class="project-row"><span class="project-slot">${index + 1}</span><span><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.path)}</small></span><button type="button" data-remove-project="${escapeHtml(project.id)}">제거</button></article>`).join('') : '<div class="project-empty">배정된 프로젝트가 없습니다.</div>';
+  $('project-list').innerHTML = state.projects.length ? state.projects.map((project, index) => {
+    const runtime = state.runtimes.find(item => item.id === (project.runtime === 'wsl' ? `wsl:${project.distro}` : 'windows'));
+    const readiness = runtime ? (runtime.ready ? '실행 준비됨' : runtime.error || '런타임 확인 필요') : '런타임 진단 전';
+    return `<article class="project-row"><span class="project-slot">${escapeHtml(project.slot || index + 1)}</span><span class="project-row-copy"><span><strong>${escapeHtml(project.name)}</strong><b class="runtime-badge ${project.runtime}">${escapeHtml(runtimeLabel(project))}</b></span><small>${escapeHtml(project.path)}</small><em class="readiness ${runtime?.ready ? 'ready' : 'warning'}">${escapeHtml(readiness)}</em></span><button type="button" data-remove-project="${escapeHtml(project.id)}" aria-label="${escapeHtml(project.name)} 배정 제거">배정 제거</button></article>`;
+  }).join('') : '<div class="project-empty"><strong>아직 연결된 프로젝트가 없습니다.</strong><span>아래에서 실행 환경과 절대 경로를 확인한 뒤 첫 Director에 연결하세요.</span></div>';
   document.querySelectorAll('[data-remove-project]').forEach(button => button.addEventListener('click', () => removeProject(button.dataset.removeProject)));
   $('add-project-btn').disabled = state.projects.length >= MAX_PROJECTS;
   $('discover-projects-btn').disabled = state.projects.length >= MAX_PROJECTS;
+  syncProjectForm();
 }
 
 async function loadProjects() {
@@ -616,20 +657,72 @@ async function loadProjects() {
   renderProjects();
 }
 
-async function addProject() {
-  const name = $('project-name').value.trim();
-  const path = $('project-path').value.trim();
-  if (!name || !path) return toast('이름과 절대 경로를 입력하세요.', 'error');
+function usableWslTargets() {
+  return state.runtimes.filter(target => target.kind === 'wsl' && !target.system);
+}
+
+function syncProjectForm() {
+  const runtime = $('project-runtime').value;
+  const wsl = runtime === 'wsl';
+  $('project-distro-field').hidden = !wsl;
+  $('project-distro').disabled = !wsl;
+  $('project-path').placeholder = wsl ? '/home/owner/projects/praetorium' : 'C:\\projects\\praetorium';
+  $('project-path-help').textContent = wsl ? '선택한 배포판 안에서 존재하는 Linux 절대 경로를 입력하세요.' : 'Windows에서 존재하는 폴더를 입력하세요.';
+  const target = state.runtimes.find(item => item.id === (wsl ? `wsl:${$('project-distro').value}` : 'windows'));
+  $('discovery-root').placeholder = wsl ? `${target?.home || '/home/owner'}/projects` : 'C:\\projects';
+}
+
+function projectPayload() {
+  return {
+    name: $('project-name').value.trim(),
+    path: $('project-path').value,
+    runtime: $('project-runtime').value,
+    distro: $('project-runtime').value === 'wsl' ? $('project-distro').value : null,
+  };
+}
+
+async function withBusy(button, label, action) {
+  if (button.disabled) return;
+  const previous = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  try { return await action(); }
+  finally { button.disabled = false; button.textContent = previous; }
+}
+
+async function validateProject() {
+  const payload = projectPayload();
+  if (!payload.path || (payload.runtime === 'wsl' && !payload.distro)) return toast('실행 환경과 절대 경로를 입력하세요.', 'error');
   try {
-    await api('/api/projects', { method: 'POST', body: JSON.stringify({ name, path }) });
+    const result = await withBusy($('validate-project-btn'), '확인 중…', () => api('/api/projects/validate', {
+      method: 'POST', body: JSON.stringify(payload), timeoutMs: 30000,
+    }));
+    $('project-path').value = result.path;
+    if (!$('project-name').value && result.name) $('project-name').value = result.name;
+    $('project-path-help').textContent = result.git ? '경로와 Git 저장소를 확인했습니다.' : '경로를 확인했습니다. Git 저장소는 아니지만 연결할 수 있습니다.';
+    toast('프로젝트 경로를 확인했습니다.', 'success');
+  } catch (error) {
+    $('project-path-help').textContent = error.message;
+    toast(error.message, 'error');
+  }
+}
+
+async function addProject() {
+  const payload = projectPayload();
+  if (!payload.name || !payload.path) return toast('이름과 절대 경로를 입력하세요.', 'error');
+  if (payload.runtime === 'wsl' && !payload.distro) return toast('WSL 배포판을 선택하세요.', 'error');
+  try {
+    await withBusy($('add-project-btn'), '연결 중…', () => api('/api/projects', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 30000 }));
     $('project-name').value = '';
     $('project-path').value = '';
     await Promise.all([loadProjects(), loadConsole({ quiet: true })]);
-    toast('Project Director에 배정했습니다.', 'success');
+    toast(`${runtimeLabel(payload)} 프로젝트를 Project Director에 연결했습니다.`, 'success');
   } catch (error) { toast(error.message, 'error'); }
 }
 
 async function removeProject(id) {
+  const project = state.projects.find(item => item.id === id);
+  if (!project || !window.confirm(`${project.name}의 Director 배정만 제거할까요? 프로젝트 파일과 Git 상태는 변경하지 않습니다.`)) return;
   try {
     await api(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
     await Promise.all([loadProjects(), loadConsole({ quiet: true })]);
@@ -638,10 +731,95 @@ async function removeProject(id) {
 }
 
 async function discoverProjects() {
+  const runtime = $('project-runtime').value;
+  const payload = {
+    runtime,
+    distro: runtime === 'wsl' ? $('project-distro').value : null,
+    root: $('discovery-root').value || null,
+  };
+  if (runtime === 'wsl' && !payload.distro) return toast('검색할 WSL 배포판을 선택하세요.', 'error');
   try {
-    const result = await api('/api/projects/discover', { method: 'POST', body: '{}' });
+    const result = await withBusy($('discover-projects-btn'), '검색 중…', () => api('/api/projects/discover', {
+      method: 'POST', body: JSON.stringify(payload), timeoutMs: 45000,
+    }));
     await Promise.all([loadProjects(), loadConsole({ quiet: true })]);
     toast(result.added ? `${result.added}개 프로젝트를 자동 배정했습니다.` : '추가할 프로젝트를 찾지 못했습니다.', result.added ? 'success' : 'info');
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+function renderRuntimes() {
+  $('runtime-count').textContent = String(state.runtimes.filter(target => !target.system).length);
+  $('runtime-list').innerHTML = state.runtimes.length ? state.runtimes.map(target => {
+    const profileTotal = state.profiles.length || 14;
+    const profileCount = target.profiles?.filter(name => state.profiles.some(profile => profile.id === name)).length || 0;
+    const system = target.system ? '<span class="runtime-system">시스템 배포판</span>' : '';
+    const codex = target.codex?.version ? `${target.codex.version} · ${target.codex.authenticated ? '로그인됨' : '로그인 필요'}` : '설치되지 않음';
+    return `<article class="runtime-row ${target.ready ? 'ready' : 'warning'}"><div class="runtime-state"><i></i><span>${target.ready ? 'READY' : target.system ? 'SYSTEM' : 'SETUP'}</span></div><div class="runtime-copy"><header><h4>${escapeHtml(target.label)}</h4>${system}</header><p>${escapeHtml(target.error || 'Praetorium 실행 요구사항을 모두 충족합니다.')}</p><dl><div><dt>Hermes</dt><dd>${escapeHtml(target.hermes?.version || '설치되지 않음')}</dd></div><div><dt>Codex</dt><dd>${escapeHtml(codex)}</dd></div><div><dt>역할</dt><dd>${profileCount} / ${profileTotal}</dd></div></dl></div>${target.kind === 'wsl' && !target.ready && !target.system && target.setupCommand ? `<button type="button" class="secondary-button" data-runtime-setup="${escapeHtml(target.id)}">준비 방법</button>` : ''}</article>`;
+  }).join('') : '<div class="project-empty"><strong>진단 가능한 런타임이 없습니다.</strong><span>Windows에서 WSL2 배포판이 설치되어 있는지 확인하세요.</span></div>';
+  document.querySelectorAll('[data-runtime-setup]').forEach(button => button.addEventListener('click', () => showRuntimeGuide(button.dataset.runtimeSetup)));
+  renderProjects();
+  renderProfiles();
+}
+
+function showRuntimeGuide(id) {
+  const target = state.runtimes.find(item => item.id === id);
+  if (!target?.setupCommand) return;
+  $('runtime-guide').hidden = false;
+  $('runtime-guide-copy').textContent = `${target.label} 터미널에서 아래 두 명령을 순서대로 실행하면 고정 버전과 Praetorium 역할 프로필을 준비합니다.`;
+  $('runtime-setup-command').textContent = target.setupCommand;
+  $('runtime-guide').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function loadRuntimes({ force = false } = {}) {
+  $('runtime-list').innerHTML = '<div class="panel-loading">Windows와 WSL 런타임을 진단하는 중입니다.</div>';
+  const result = await api(`/api/runtimes${force ? '?force=true' : ''}`, { timeoutMs: 60000 });
+  state.runtimes = result.targets || [];
+  const distro = $('project-distro');
+  const selected = distro.value;
+  distro.innerHTML = usableWslTargets().map(target => `<option value="${escapeHtml(target.distro)}">${escapeHtml(target.distro)}${target.ready ? ' · 준비됨' : ' · 설정 필요'}</option>`).join('');
+  if (usableWslTargets().some(target => target.distro === selected)) distro.value = selected;
+  $('project-runtime').querySelector('option[value="wsl"]').disabled = !usableWslTargets().length;
+  renderRuntimes();
+  syncProjectForm();
+}
+
+function renderProfiles() {
+  $('profile-count').textContent = String(state.profiles.length || 14);
+  if (!state.profiles.length) return;
+  if (!state.selectedProfileId || !state.profiles.some(profile => profile.id === state.selectedProfileId)) state.selectedProfileId = state.profiles[0].id;
+  const groupNames = { director: 'Directors', worker: 'Implementation', review: 'Review & gate' };
+  $('profile-list').innerHTML = Object.entries(groupNames).map(([group, label]) => {
+    const profiles = state.profiles.filter(profile => profile.group === group);
+    return `<section><h4>${label}</h4>${profiles.map(profile => `<button type="button" class="profile-row ${profile.id === state.selectedProfileId ? 'active' : ''}" data-profile="${escapeHtml(profile.id)}"><span><strong>${escapeHtml(profile.label)}</strong><small>${escapeHtml(profile.id)}</small></span><b>${escapeHtml(profile.access)}</b></button>`).join('')}</section>`;
+  }).join('');
+  document.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => { state.selectedProfileId = button.dataset.profile; renderProfiles(); }));
+  const profile = state.profiles.find(item => item.id === state.selectedProfileId);
+  const installations = state.runtimes.filter(target => !target.system).map(target => `<li><span>${escapeHtml(target.label)}</span><b class="readiness ${target.profiles?.includes(profile.id) ? 'ready' : 'warning'}">${target.profiles?.includes(profile.id) ? '설치됨' : '없음'}</b></li>`).join('');
+  $('profile-detail').innerHTML = `<header><div><h3>${escapeHtml(profile.label)}</h3><code>${escapeHtml(profile.id)}</code></div><span class="access-badge ${profile.access === 'read-only' ? 'readonly' : 'write'}">${escapeHtml(profile.access)}</span></header><p>${escapeHtml(profile.description)}</p><dl><div><dt>모델</dt><dd>${escapeHtml(profile.model)}</dd></div><div><dt>추론 강도</dt><dd>${escapeHtml(profile.reasoning)}</dd></div><div><dt>기본 스킬</dt><dd>${escapeHtml(profile.skill || '작업에서 지정')}</dd></div><div><dt>역할 유형</dt><dd>${escapeHtml(profile.kind)}</dd></div></dl><section><h4>런타임 설치 상태</h4><ul>${installations || '<li><span>진단 전</span></li>'}</ul></section>`;
+}
+
+async function loadProfiles() {
+  state.profiles = await api('/api/profiles');
+  renderProfiles();
+}
+
+function setManagementTab(tab) {
+  state.managementTab = tab;
+  document.querySelectorAll('[data-management-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.managementTab === tab)));
+  document.querySelectorAll('[data-management-panel]').forEach(panel => {
+    const active = panel.dataset.managementPanel === tab;
+    panel.hidden = !active;
+    panel.classList.toggle('active', active);
+  });
+  const body = document.querySelector('.management-body');
+  if (body) body.scrollTop = 0;
+}
+
+async function openManagement(tab = 'projects') {
+  setManagementTab(tab);
+  $('project-dialog').showModal();
+  try {
+    await Promise.all([loadProjects(), loadProfiles(), loadRuntimes()]);
   } catch (error) { toast(error.message, 'error'); }
 }
 
@@ -666,6 +844,19 @@ function initScale() {
   apply();
 }
 
+function setInspectorOpen(open) {
+  document.body.classList.toggle('inspector-open', open);
+  $('inspector-toggle').setAttribute('aria-expanded', String(open));
+  if (open) requestAnimationFrame(() => $('command-pane')?.focus?.());
+}
+
+function activeScrollSurface() {
+  if ($('project-dialog').open) return $('project-dialog').querySelector('.management-body');
+  if ($('focus-dialog').open) return $('focus-dialog-content');
+  if (document.activeElement?.closest('.command-pane') || document.body.classList.contains('inspector-open')) return document.querySelector('.inspector-scroll');
+  return document.querySelector('.mission-pane');
+}
+
 function init() {
   initTheme();
   initScale();
@@ -676,15 +867,42 @@ function init() {
   $('owner-refresh-btn').addEventListener('click', () => loadConsole());
   $('owner-dispatch-btn').addEventListener('click', dispatchNow);
   $('workflow-library-btn').addEventListener('click', () => $('workflow-dialog').showModal());
-  $('project-settings-btn').addEventListener('click', async () => { await loadProjects(); $('project-dialog').showModal(); });
+  $('project-settings-btn').addEventListener('click', () => openManagement('projects'));
   $('inspector-expand').addEventListener('click', () => openFocus($('inspector-title').textContent));
+  $('inspector-toggle').addEventListener('click', () => setInspectorOpen(!document.body.classList.contains('inspector-open')));
+  $('inspector-close').addEventListener('click', () => setInspectorOpen(false));
   $('add-project-btn').addEventListener('click', addProject);
+  $('validate-project-btn').addEventListener('click', validateProject);
   $('discover-projects-btn').addEventListener('click', discoverProjects);
+  $('project-runtime').addEventListener('change', syncProjectForm);
+  $('project-distro').addEventListener('change', syncProjectForm);
+  $('refresh-runtimes-btn').addEventListener('click', () => withBusy($('refresh-runtimes-btn'), '진단 중…', () => loadRuntimes({ force: true })).catch(error => toast(error.message, 'error')));
+  $('copy-runtime-command').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('runtime-setup-command').textContent); toast('WSL 준비 명령을 복사했습니다.', 'success'); }
+    catch { toast('클립보드에 복사하지 못했습니다. 명령을 직접 선택해 복사하세요.', 'error'); }
+  });
+  document.querySelectorAll('[data-management-tab]').forEach(button => button.addEventListener('click', () => setManagementTab(button.dataset.managementTab)));
+  $('project-dialog').querySelector('.management-tabs').addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    const tabs = [...document.querySelectorAll('[data-management-tab]')];
+    const current = tabs.indexOf(document.activeElement);
+    if (current < 0) return;
+    event.preventDefault();
+    const next = tabs[(current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    next.focus();
+    setManagementTab(next.dataset.managementTab);
+  });
   document.addEventListener('keydown', event => {
-    if (event.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) {
+    if (event.altKey && (event.key === 'End' || event.key === 'Home')) {
+      event.preventDefault();
+      const surface = activeScrollSurface();
+      surface?.scrollTo({ top: event.key === 'End' ? surface.scrollHeight : 0, behavior: 'smooth' });
+    } else if (event.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) {
       event.preventDefault(); $('owner-message-input').focus();
     } else if (event.key.toLowerCase() === 'r' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) {
       void loadConsole();
+    } else if (event.key === 'Escape' && document.body.classList.contains('inspector-open')) {
+      setInspectorOpen(false);
     } else if (event.key === 'Escape' && state.selection.type !== 'overview' && !$('focus-dialog').open) {
       state.selection = { type: 'overview', id: null }; renderTrace(); renderInspector({ force: true });
     }
