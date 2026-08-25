@@ -12,6 +12,7 @@ Read [the review contract](../../skill-references/review-contract.md) to validat
 ## Gate rules
 
 - Confirm all inputs refer to the exact candidate revision or artifact digest.
+- Copy every Goal success criterion verbatim and in the original order into `acceptance`; shortened, reordered, or paraphrased labels are not accepted by the host.
 - Stop for any required missing, stale, `fail`, or `inconclusive` report.
 - Stop for any unresolved blocking finding, failed acceptance criterion, or required check without evidence.
 - A `warn` permits advancement only when every finding is non-blocking and residual risk is explicitly recorded.

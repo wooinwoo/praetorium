@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { acquireProcessLease, HermesRuntime } from './lib/hermes-runtime.js';
 import { WslRuntime } from './lib/wsl-runtime.js';
 import { DirectorService } from './lib/director-service.js';
-import { DATA_DIR, MAX_PROJECTS, PORT, PROJECTS_ROOT, addProject, deleteProject, getProjects } from './lib/praetorium-config.js';
+import { DATA_DIR, MAX_PROJECTS, PORT, PROJECTS_ROOT, addProject, deleteProject, getProjects, projectKey } from './lib/praetorium-config.js';
 import { PROFILE_CATALOG } from './lib/workflow-catalog.js';
 import { LOCAL_BIND_ADDRESS, isIgnoredBindRequest, isLoopbackAddress, isLoopbackHost } from './lib/local-only.js';
 import { register as registerDirectors } from './routes/directors.js';
@@ -116,10 +116,22 @@ addRoute('GET', '/api/projects', (_req, res) => json(res, getProjects()));
 addRoute('GET', '/api/runtimes', async (req, res) => {
   try {
     const result = await hermesRuntime.describeTargets({ force: req.query.force === 'true' });
+    result.profileTotal = PROFILE_CATALOG.length;
     for (const target of result.targets.filter(item => item.kind === 'wsl' && !item.system)) {
+      if (target.wslVersion === 1) {
+        target.setupLabel = 'Windows PowerShell';
+        target.setupCommand = `wsl.exe --set-version "${target.distro}" 2`;
+        continue;
+      }
+      if (target.wslVersion !== 2) {
+        target.setupLabel = 'Windows PowerShell';
+        target.setupCommand = 'wsl.exe --update\nwsl.exe --list --verbose';
+        continue;
+      }
       if (!target.home) continue;
       try {
         const source = await wslRuntime.toWslPath(target.distro, ROOT);
+        target.setupLabel = `${target.label} 터미널`;
         target.setupCommand = [
           `curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/v2026.8.19/scripts/install.sh | bash -s -- --branch v2026.8.19 --skip-setup --skip-browser --skip-computer-use --non-interactive`,
           `${shellQuote(`${target.home}/.hermes/node/bin/node`)} ${shellQuote(`${source}/scripts/bootstrap-wsl-runtime.mjs`)} --workdir ${shellQuote(`${target.home}/projects`)}`,
@@ -154,7 +166,15 @@ addRoute('POST', '/api/projects/validate', async (req, res) => {
       const info = await stat(path);
       return json(res, { valid: info.isDirectory(), exists: info.isDirectory(), path, runtime: 'windows' });
     }
-    json(res, { ...(await wslRuntime.validateProject(body)), runtime: 'wsl' });
+    const validated = await wslRuntime.validateProject(body);
+    if (!validated.valid) {
+      return json(res, {
+        ...validated,
+        runtime: 'wsl',
+        error: '선택한 WSL 배포판에 프로젝트 경로가 없습니다.',
+      }, 400);
+    }
+    json(res, { ...validated, runtime: 'wsl' });
   } catch (error) { json(res, { valid: false, error: error.message }, 400); }
 });
 
@@ -185,13 +205,13 @@ addRoute('POST', '/api/projects/discover', async (req, res) => {
     const body = await readBody(req);
     const configured = getProjects();
     const runtime = body.runtime === 'wsl' ? 'wsl' : 'windows';
-    const known = new Set(configured.map(project => `${project.runtime}:${project.distro || ''}:${project.path}`.toLowerCase()));
+    const known = new Set(configured.map(projectKey));
     let added = 0;
     if (runtime === 'wsl') {
       const candidates = await wslRuntime.discoverProjects({ distro: body.distro, root: body.root });
       for (const candidate of candidates) {
         if (configured.length + added >= MAX_PROJECTS) break;
-        const key = `wsl:${body.distro}:${candidate}`.toLowerCase();
+        const key = projectKey({ runtime: 'wsl', distro: body.distro, path: candidate });
         if (known.has(key)) continue;
         addProject({ name: candidate.split('/').at(-1), path: candidate, runtime: 'wsl', distro: body.distro });
         known.add(key);
@@ -204,7 +224,7 @@ addRoute('POST', '/api/projects/discover', async (req, res) => {
         if (configured.length + added >= MAX_PROJECTS) break;
         if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
         const candidate = resolve(root, entry.name);
-        const key = `windows::${candidate}`.toLowerCase();
+        const key = projectKey({ runtime: 'windows', path: candidate });
         if (known.has(key)) continue;
         try {
           await stat(join(candidate, '.git'));

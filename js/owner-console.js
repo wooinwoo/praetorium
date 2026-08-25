@@ -1,7 +1,7 @@
 const MAX_PROJECTS = 3;
 const POLL_INTERVAL_MS = 3000;
 const TASK_POLL_INTERVAL_MS = 2800;
-const NARROW_VIEW_QUERY = '(max-width: 860px)';
+const NARROW_VIEW_QUERY = '(max-width: 1040px)';
 const TRACE_LIVE_LIMIT = 160;
 const TRACE_LOAD_STEP = 160;
 const DIRECTOR_INFERENCE_STALE_MS = 600000;
@@ -15,7 +15,7 @@ const renderedHtml = new WeakMap();
 
 function loadUiPreferences() {
   const fallback = {
-    collapsed: { 'active-goal': false, 'goal-queue': true, activity: true, attention: false, 'owner-gate': false, inspector: true },
+    collapsed: { 'active-goal': false, 'goal-queue': true, activity: false, attention: false, 'owner-gate': false, inspector: true },
     dimensions: { activityHeight: DEFAULT_ACTIVITY_HEIGHT, inspectorWidth: DEFAULT_INSPECTOR_WIDTH },
     detailExpansion: {},
     waveExpansion: {},
@@ -58,6 +58,8 @@ const state = {
   runtimes: [],
   runtimesLoaded: false,
   runtimesError: null,
+  wslError: null,
+  runtimeProfileTotal: null,
   runtimeRequestId: 0,
   profiles: [],
   profilesLoaded: false,
@@ -179,6 +181,7 @@ function applyPanelPreferences() {
   setPanelDimension('inspector', panelDimension('inspector'), { persist: false, storePreference: false });
   setPanelDimension('activity', panelDimension('activity'), { persist: false, storePreference: false });
   if (!window.matchMedia(NARROW_VIEW_QUERY).matches) document.body.classList.toggle('inspector-collapsed', panelIsCollapsed('inspector'));
+  document.body.classList.toggle('activity-collapsed', panelIsCollapsed('activity'));
   document.body.classList.toggle('inspector-fullscreen', Boolean(state.uiPreferences.inspectorFullscreen));
   const expand = $('inspector-expand');
   if (expand) {
@@ -2875,7 +2878,9 @@ function renderProjects() {
   }
   $('project-list').innerHTML = state.projects.length ? state.projects.map((project, index) => {
     const runtime = state.runtimes.find(item => item.id === (project.runtime === 'wsl' ? `wsl:${project.distro}` : 'windows'));
-    const readiness = runtime ? (runtime.ready ? '실행 준비됨' : runtime.error || '런타임 확인 필요') : '런타임 진단 전';
+    const readiness = runtime
+      ? (runtime.ready ? '실행 준비됨' : runtime.error || '런타임 확인 필요')
+      : state.runtimesLoaded && project.runtime === 'wsl' ? '선택한 WSL 배포판을 찾을 수 없음' : '런타임 진단 전';
     return `<article class="project-row"><span class="project-slot">${escapeHtml(project.slot || index + 1)}</span><span class="project-row-copy"><span><strong>${escapeHtml(project.name)}</strong><b class="runtime-badge ${project.runtime}">${escapeHtml(runtimeLabel(project))}</b></span><small>${escapeHtml(project.path)}</small><em class="readiness ${runtime?.ready ? 'ready' : 'warning'}">${escapeHtml(readiness)}</em></span><button type="button" data-remove-project="${escapeHtml(project.id)}" aria-label="${escapeHtml(project.name)} 배정 제거">배정 제거</button></article>`;
   }).join('') : '<div class="project-empty"><strong>아직 연결된 프로젝트가 없습니다.</strong><span>실행 환경과 절대 경로를 확인한 뒤 첫 디렉터에 연결하세요.</span><button type="button" class="secondary-button" data-focus-project-editor>첫 프로젝트 연결</button></div>';
   document.querySelectorAll('[data-remove-project]').forEach(button => button.addEventListener('click', () => removeProject(button.dataset.removeProject)));
@@ -2903,7 +2908,7 @@ async function loadProjects() {
 }
 
 function usableWslTargets() {
-  return state.runtimes.filter(target => target.kind === 'wsl' && !target.system);
+  return state.runtimes.filter(target => target.kind === 'wsl' && !target.system && target.wslVersion === 2);
 }
 
 function syncProjectForm({ resetValidation = false } = {}) {
@@ -3017,13 +3022,22 @@ function renderRuntimes() {
     $('runtime-list').innerHTML = '<div class="panel-loading">Windows와 WSL 런타임을 진단하는 중입니다.</div>';
     return;
   }
-  $('runtime-list').innerHTML = state.runtimes.length ? state.runtimes.map(target => {
-    const profileTotal = state.profilesLoaded ? state.profiles.length : '—';
-    const profileCount = state.profilesLoaded ? target.profiles?.filter(name => state.profiles.some(profile => profile.id === name)).length || 0 : '—';
+  const wslError = state.wslError
+    ? `<div class="inline-error runtime-diagnostic" role="alert"><strong>WSL 진단 실패</strong><p>${escapeHtml(state.wslError)}</p><small>Windows에서 WSL2 설치와 배포판 상태를 확인한 뒤 다시 진단하세요.</small></div>`
+    : '';
+  const rows = state.runtimes.length ? state.runtimes.map(target => {
+    const profileTotal = state.profilesLoaded ? state.profiles.length : state.runtimeProfileTotal ?? '—';
+    const profileCount = state.profilesLoaded
+      ? target.profiles?.filter(name => state.profiles.some(profile => profile.id === name)).length || 0
+      : Array.isArray(target.profiles) ? target.profiles.length : '—';
     const system = target.system ? '<span class="runtime-system">시스템 배포판</span>' : '';
     const codex = target.codex?.version ? `${target.codex.version} · ${target.codex.authenticated ? '로그인됨' : '로그인 필요'}` : '설치되지 않음';
-    return `<article class="runtime-row ${target.ready ? 'ready' : 'warning'}"><div class="runtime-state"><i></i><span>${target.ready ? '준비됨' : target.system ? '시스템' : '설정 필요'}</span></div><div class="runtime-copy"><header><h4>${escapeHtml(target.label)}</h4>${system}</header><p>${escapeHtml(target.error || 'Praetorium 실행 요구사항을 모두 충족합니다.')}</p><dl><div><dt>Hermes</dt><dd>${escapeHtml(target.hermes?.version || '설치되지 않음')}</dd></div><div><dt>Codex</dt><dd>${escapeHtml(codex)}</dd></div><div><dt>역할</dt><dd>${profileCount} / ${profileTotal}</dd></div></dl></div>${target.kind === 'wsl' && !target.ready && !target.system && target.setupCommand ? `<button type="button" class="secondary-button" data-runtime-setup="${escapeHtml(target.id)}">준비 방법</button>` : ''}</article>`;
-  }).join('') : '<div class="project-empty"><strong>진단 가능한 런타임이 없습니다.</strong><span>Windows에서 WSL2 배포판이 설치되어 있는지 확인하세요.</span></div>';
+    const distro = target.kind === 'wsl'
+      ? `<div><dt>배포판</dt><dd>WSL ${escapeHtml(target.wslVersion || '확인 불가')}${target.state ? ` · ${escapeHtml(target.state)}` : ''}${target.default ? ' · 기본' : ''}</dd></div>`
+      : '';
+    return `<article class="runtime-row ${target.ready ? 'ready' : 'warning'}"><div class="runtime-state"><i></i><span>${target.ready ? '준비됨' : target.system ? '시스템' : '설정 필요'}</span></div><div class="runtime-copy"><header><h4>${escapeHtml(target.label)}</h4>${system}</header><p>${escapeHtml(target.error || 'Praetorium 실행 요구사항을 모두 충족합니다.')}</p><dl>${distro}<div><dt>Hermes</dt><dd>${escapeHtml(target.hermes?.version || '설치되지 않음')}</dd></div><div><dt>Codex</dt><dd>${escapeHtml(codex)}</dd></div><div><dt>역할</dt><dd>${profileCount} / ${profileTotal}</dd></div></dl></div>${target.kind === 'wsl' && !target.ready && !target.system && target.setupCommand ? `<button type="button" class="secondary-button" data-runtime-setup="${escapeHtml(target.id)}">준비 방법</button>` : ''}</article>`;
+  }).join('') : '<div class="project-empty"><strong>진단 가능한 런타임이 없습니다.</strong><span>Windows 런타임 설치 상태를 확인하세요.</span></div>';
+  $('runtime-list').innerHTML = `${wslError}${rows}`;
   const guidedTarget = state.runtimes.find(target => target.id === state.runtimeGuideId);
   if (!guidedTarget || guidedTarget.ready || !guidedTarget.setupCommand) {
     state.runtimeGuideId = null;
@@ -3075,7 +3089,11 @@ function showRuntimeGuide(id) {
   if (!target?.setupCommand) return;
   state.runtimeGuideId = id;
   $('runtime-guide').hidden = false;
-  $('runtime-guide-copy').textContent = `${target.label} 터미널에서 아래 두 명령을 순서대로 실행하면 고정 버전과 Praetorium 역할 프로필을 준비합니다.`;
+  $('runtime-guide-copy').textContent = target.wslVersion === 1
+    ? `${target.setupLabel || 'Windows PowerShell'}에서 아래 명령을 실행해 이 배포판을 WSL2로 변환하세요. 변환이 끝나면 다시 진단해 다음 준비 단계를 확인할 수 있습니다.`
+    : target.wslVersion !== 2
+      ? `${target.setupLabel || 'Windows PowerShell'}에서 WSL을 업데이트하고 배포판 버전을 다시 확인하세요.`
+      : `${target.setupLabel || `${target.label} 터미널`}에서 아래 두 명령을 순서대로 실행하면 고정 버전과 Praetorium 역할 프로필을 준비합니다.`;
   $('runtime-setup-command').textContent = target.setupCommand;
   $('runtime-guide').scrollIntoView({ behavior: preferredScrollBehavior(), block: 'nearest' });
 }
@@ -3086,22 +3104,31 @@ async function loadRuntimes({ force = false } = {}) {
   $('runtime-guide').hidden = true;
   state.runtimesLoaded = false;
   state.runtimesError = null;
+  state.wslError = null;
+  state.runtimeProfileTotal = null;
   renderRuntimes();
   try {
     const result = await api(`/api/runtimes${force ? '?force=true' : ''}`, { timeoutMs: 60000 });
     if (requestId !== state.runtimeRequestId) return;
     state.runtimes = result.targets || [];
+    state.wslError = result.wslError || null;
+    state.runtimeProfileTotal = Number.isInteger(result.profileTotal) ? result.profileTotal : null;
     state.runtimesLoaded = true;
     const distro = $('project-distro');
     const selected = distro.value;
     distro.innerHTML = usableWslTargets().map(target => `<option value="${escapeHtml(target.distro)}">${escapeHtml(target.distro)}${target.ready ? ' · 준비됨' : ' · 설정 필요'}</option>`).join('');
     if (usableWslTargets().some(target => target.distro === selected)) distro.value = selected;
     $('project-runtime').querySelector('option[value="wsl"]').disabled = !usableWslTargets().length;
+    if (!usableWslTargets().length && $('project-runtime').value === 'wsl') $('project-runtime').value = 'windows';
     syncProjectForm();
   } catch (error) {
     if (requestId !== state.runtimeRequestId) return;
     state.runtimes = [];
     state.runtimesError = error.message;
+    $('project-distro').innerHTML = '';
+    $('project-runtime').querySelector('option[value="wsl"]').disabled = true;
+    if ($('project-runtime').value === 'wsl') $('project-runtime').value = 'windows';
+    syncProjectForm();
     throw error;
   } finally {
     if (requestId === state.runtimeRequestId) renderRuntimes();
@@ -3268,20 +3295,20 @@ function initTheme() {
 }
 
 function initScale() {
-  let scale = Math.max(1, Math.min(1.35, Number(localStorage.getItem('praetorium-scale')) || 1));
+  let scale = Math.max(.9, Math.min(1.25, Number(localStorage.getItem('praetorium-scale')) || 1));
   const apply = () => {
     document.documentElement.style.setProperty('--ui-scale', scale);
     localStorage.setItem('praetorium-scale', String(scale));
     const percent = Math.round(scale * 100);
-    $('text-scale-down').disabled = scale <= 1;
-    $('text-scale-up').disabled = scale >= 1.35;
+    $('text-scale-down').disabled = scale <= .9;
+    $('text-scale-up').disabled = scale >= 1.25;
     $('text-scale-down').title = `현재 ${percent}% · 글자 작게`;
     $('text-scale-up').title = `현재 ${percent}% · 글자 크게`;
     $('text-scale-down').setAttribute('aria-label', `현재 글자 크기 ${percent}%, 작게`);
     $('text-scale-up').setAttribute('aria-label', `현재 글자 크기 ${percent}%, 크게`);
   };
-  $('text-scale-down').addEventListener('click', () => { scale = Math.max(1, +(scale - .05).toFixed(2)); apply(); });
-  $('text-scale-up').addEventListener('click', () => { scale = Math.min(1.35, +(scale + .05).toFixed(2)); apply(); });
+  $('text-scale-down').addEventListener('click', () => { scale = Math.max(.9, +(scale - .05).toFixed(2)); apply(); });
+  $('text-scale-up').addEventListener('click', () => { scale = Math.min(1.25, +(scale + .05).toFixed(2)); apply(); });
   apply();
 }
 
@@ -3363,7 +3390,14 @@ function activeScrollSurface() {
   if ($('project-dialog').open) return $('project-dialog').querySelector('.management-body');
   if ($('focus-dialog').open) return $('focus-dialog-content');
   if ($('workflow-dialog').open) return $('owner-workflow-list');
-  if (document.activeElement?.closest('.command-pane') || document.body.classList.contains('inspector-open')) return document.querySelector('.inspector-scroll');
+  const activity = document.querySelector('.trace-section');
+  if (document.activeElement?.closest('.trace-section') && !panelIsCollapsed('activity')) {
+    return activity?.querySelector('.panel-content');
+  }
+  const inspectorOverlay = window.matchMedia(NARROW_VIEW_QUERY).matches && document.body.classList.contains('inspector-open');
+  if (document.activeElement?.closest('.command-pane') || inspectorOverlay || state.uiPreferences.inspectorFullscreen) {
+    return document.querySelector('.inspector-scroll');
+  }
   return document.querySelector('.mission-pane');
 }
 

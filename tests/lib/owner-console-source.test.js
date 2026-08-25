@@ -133,8 +133,9 @@ test('Owner console provides readable evidence text and modal semantics on narro
   assert.match(js, /pane\.setAttribute\('role', 'dialog'\)/);
   assert.match(js, /pane\.setAttribute\('aria-modal', 'true'\)/);
   assert.match(js, /function trapInspectorFocus/);
-  assert.match(js, /Math\.max\(1, Math\.min\(1\.35/);
-  assert.match(css, /\.raw-worker-log pre[\s\S]*font: 12px\/1\.6/);
+  assert.match(js, /Math\.max\(\.9, Math\.min\(1\.25/);
+  assert.match(css, /font-size: calc\(14px \* var\(--ui-scale\)\)/);
+  assert.match(css, /\.raw-worker-log pre[\s\S]*font: \.857rem\/1\.6/);
   assert.match(js, /아직 판단 턴을 시작하지 않았습니다/);
 });
 
@@ -195,6 +196,8 @@ test('Owner console keeps the Goal, public judgement, current Wave, and gate hie
   assert.match(js, /function renderCurrentWave/);
   assert.match(js, /function renderGateRunway/);
   assert.match(js, /function initPanelSplitter/);
+  assert.match(js, /const inspectorOverlay = window\.matchMedia\(NARROW_VIEW_QUERY\)\.matches/);
+  assert.match(js, /state\.uiPreferences\.inspectorFullscreen/);
   assert.match(js, /setPointerCapture/);
   assert.match(js, /releasePointerCapture/);
   assert.match(js, /splitter\.addEventListener\('dblclick'/);
@@ -203,6 +206,37 @@ test('Owner console keeps the Goal, public judgement, current Wave, and gate hie
   assert.match(css, /\.inspector-splitter[\s\S]*cursor: ew-resize/);
   assert.match(css, /\.trace-splitter[\s\S]*cursor: ns-resize/);
   assert.match(css, /body\.inspector-fullscreen \.command-pane/);
+  assert.match(css, /calc\(var\(--activity-height, 216px\) \+ 32px\)/);
+  assert.match(css, /body\.activity-collapsed \.mission-pane/);
+  assert.match(css, /@media \(min-width: 1041px\)[\s\S]*grid-template-columns: var\(--rail\) minmax\(0, 1fr\) var\(--inspector-width\)/);
+  assert.match(css, /\.danger-button[\s\S]*var\(--red\)/);
+  assert.match(css, /\.intervention-receipt\.failed/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*min-height: 44px/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.activity-title h2 \{ display: none; \}/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.project-editor-grid \{ grid-template-columns: minmax\(0, 1fr\)/);
+});
+
+test('Session status stays visible, activity opens on first run, and Alt+End follows trace focus', async () => {
+  const [css, js] = await Promise.all([source('css/owner-console.css'), source('js/owner-console.js')]);
+  assert.match(js, /collapsed: \{ 'active-goal': false, 'goal-queue': true, activity: false/);
+  assert.match(js, /document\.activeElement\?\.closest\('\.trace-section'\)[\s\S]*activity\?\.querySelector\('\.panel-content'\)/);
+  assert.match(css, /@media \(max-width: 1180px\)[\s\S]*#connection-state \{ display: none; \}/);
+  assert.doesNotMatch(css, /\.topbar-actions \.signal:first-child \{ display: none; \}/);
+});
+
+test('Runtime management exposes WSL2 metadata, failures, and shell-specific recovery', async () => {
+  const [js, css] = await Promise.all([source('js/owner-console.js'), source('css/owner-console.css')]);
+  assert.match(js, /state\.wslError = result\.wslError \|\| null/);
+  assert.match(js, /state\.runtimeProfileTotal = Number\.isInteger\(result\.profileTotal\)/);
+  assert.match(js, /WSL 진단 실패/);
+  assert.match(js, /target\.wslVersion === 1/);
+  assert.match(js, /!target\.system && target\.wslVersion === 2/);
+  assert.match(js, /target\.setupLabel/);
+  assert.match(js, /<dt>배포판<\/dt>/);
+  assert.match(css, /\.runtime-guide pre[\s\S]*overflow-wrap: anywhere/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.runtime-row \{ grid-template-columns: 44px minmax\(0, 1fr\)/);
+  assert.match(css, /\[hidden\] \{ display: none !important; \}/);
+  assert.match(css, /\.panel-toggle\.icon i[\s\S]*border-right/);
 });
 
 test('Owner console persists collapse, size, detail, wave, conversation, and evidence view preferences', async () => {

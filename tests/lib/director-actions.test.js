@@ -202,7 +202,7 @@ describe('Director action control', () => {
     assert.equal(approvedShape.actions[0].effect, 'external_mutation');
   });
 
-  it('requires workspace writers to declare literal repository-relative candidate paths', () => {
+  it('requires every write authority to declare literal repository-relative candidate paths', () => {
     for (const scope of [['dist/**'], ['../outside'], ['.'], ['node_modules/pkg'], ['C:\\temp\\artifact']]) {
       assert.throws(() => validateDirectorControl(control({
         actions: [{ ...control().actions[0], write_scope: scope }],
@@ -212,6 +212,13 @@ describe('Director action control', () => {
       actions: [{ ...control().actions[0], write_scope: ['src/index.js', 'dist/app.js', 'literal $file name.js'] }],
     }));
     assert.deepEqual(accepted.actions[0].writeScope, ['dist/app.js', 'literal $file name.js', 'src/index.js']);
+    assert.throws(() => validateDirectorControl(control({
+      workflow_id: 'high-risk-change',
+      actions: [{
+        ...control().actions[0], title: 'Publish release', task: 'Publish the exact release.',
+        effect: 'external_mutation', write_scope: ['https://registry.example.invalid/release'],
+      }],
+    })), /repository-relative literal paths/i);
   });
 
   it('rejects object-shaped string lists before they can hide deterministic risk', () => {

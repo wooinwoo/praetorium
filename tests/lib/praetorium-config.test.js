@@ -28,6 +28,17 @@ describe('Praetorium project configuration', () => {
     });
   });
 
+  it('preserves WSL path case while deduplicating Windows paths case-insensitively', () => {
+    assert.notEqual(
+      _test.projectKey({ runtime: 'wsl', distro: 'Ubuntu', path: '/home/owner/App' }),
+      _test.projectKey({ runtime: 'wsl', distro: 'ubuntu', path: '/home/owner/app' }),
+    );
+    assert.equal(
+      _test.projectKey({ runtime: 'windows', path: 'C:\\Projects\\App' }),
+      _test.projectKey({ runtime: 'windows', path: 'c:\\projects\\app' }),
+    );
+  });
+
   it('keeps explicit Director slots stable while filling legacy gaps', () => {
     assert.deepEqual(_test.assignProjectSlots([
       { id: 'a', slot: 2 }, { id: 'b' }, { id: 'c', slot: 2 },

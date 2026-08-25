@@ -235,15 +235,21 @@ describe('Windows candidate snapshot', () => {
     const secondCommit = await git(repo, 'rev-parse', 'HEAD');
     assert.notEqual(secondCommit, firstCommit);
 
+    let submoduleStatusCalls = 0;
+    const observedSpawn = (command, args, options) => {
+      if (command === 'git' && args[2] === 'submodule') submoduleStatusCalls += 1;
+      return spawn(command, args, options);
+    };
     await git(repo, 'update-index', '--add', '--cacheinfo', `160000,${firstCommit},vendor/submodule`);
-    const firstIndex = await snapshot(repo);
+    const firstIndex = await snapshotWindowsCandidate({ cwd: repo, spawnImpl: observedSpawn });
     await git(repo, 'update-index', '--add', '--cacheinfo', `160000,${secondCommit},vendor/submodule`);
-    const secondIndex = await snapshot(repo);
+    const secondIndex = await snapshotWindowsCandidate({ cwd: repo, spawnImpl: observedSpawn });
 
     assert.equal(firstIndex.revision, secondCommit);
     assert.equal(secondIndex.revision, secondCommit);
     assert.equal(firstIndex.fileCount, secondIndex.fileCount);
     assert.notEqual(secondIndex.digest, firstIndex.digest);
+    assert.equal(submoduleStatusCalls, 0, 'a bare gitlink without .gitmodules must not launch a recursive submodule probe');
   });
 
   it('fails closed when an initialized submodule has opaque dirty content', () => {

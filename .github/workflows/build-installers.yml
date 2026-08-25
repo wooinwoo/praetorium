@@ -79,6 +79,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test Tauri shell
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
       - name: Build Tauri app
         run: npm run tauri build -- --bundles ${{ matrix.bundles }} --verbose
 

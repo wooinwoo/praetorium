@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { normalizeWslPath, WslRuntime, _test } from '../../lib/wsl-runtime.js';
 
@@ -13,6 +14,65 @@ describe('WSL runtime boundary', () => {
   it('parses the UTF-16 output emitted by wsl.exe on Windows', () => {
     const output = Buffer.from('Ubuntu\r\ndocker-desktop\r\n', 'utf16le');
     assert.deepEqual(_test.parseWslList(output), ['Ubuntu', 'docker-desktop']);
+  });
+
+  it('parses WSL2 version, state, default, and system metadata from the verbose list', () => {
+    const output = Buffer.from('  NAME                   STATE           VERSION\r\n* Ubuntu                 Running         2\r\n  Docker Dev             Stopped         1\r\n  docker-desktop         Running         2\r\n', 'utf16le');
+    assert.deepEqual(_test.parseWslVerbose(output), [
+      { name: 'Ubuntu', state: 'Running', version: 2, default: true, system: false },
+      { name: 'Docker Dev', state: 'Stopped', version: 1, default: false, system: false },
+      { name: 'docker-desktop', state: 'Running', version: 2, default: false, system: true },
+    ]);
+  });
+
+  it('falls back to the quiet list when verbose metadata is unavailable', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    const calls = [];
+    runtime._run = async args => {
+      calls.push(args);
+      if (args.includes('--verbose')) throw new Error('unsupported option');
+      return { stdout: Buffer.from('Ubuntu\r\n', 'utf16le') };
+    };
+    assert.deepEqual(await runtime.listDistributions(), [
+      { name: 'Ubuntu', state: null, version: null, default: false, system: false },
+    ]);
+    assert.deepEqual(calls, [['--list', '--verbose'], ['--list', '--quiet']]);
+  });
+
+  it('fails closed for WSL1 and does not execute commands inside system distributions', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    let probes = 0;
+    runtime.listDistributions = async () => [
+      { name: 'Legacy', state: 'Stopped', version: 1, default: false, system: false },
+      { name: 'docker-desktop', state: 'Running', version: 2, default: false, system: true },
+    ];
+    runtime._run = async () => { probes += 1; throw new Error('must not probe'); };
+    const targets = await runtime.listTargets();
+    assert.equal(probes, 0);
+    assert.equal(targets[0].ready, false);
+    assert.match(targets[0].error, /WSL2/);
+    assert.equal(targets[1].system, true);
+    assert.match(targets[1].error, /시스템 배포판/);
+  });
+
+  it('rejects WSL1 and system distributions before project API probes', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    let probes = 0;
+    runtime.listDistributions = async () => [
+      { name: 'Legacy', state: 'Stopped', version: 1, default: false, system: false },
+      { name: 'docker-desktop', state: 'Running', version: 2, default: false, system: true },
+    ];
+    runtime._run = async () => { probes += 1; throw new Error('must not probe'); };
+
+    await assert.rejects(
+      runtime.validateProject({ distro: 'Legacy', path: '/home/owner/app' }),
+      /WSL1.*WSL2/,
+    );
+    await assert.rejects(
+      runtime.discoverProjects({ distro: 'docker-desktop', root: '/home/owner/projects' }),
+      /시스템 배포판/,
+    );
+    assert.equal(probes, 0);
   });
 
   it('builds a native WSL launch without interpolating project input into shell code', async () => {
@@ -51,6 +111,9 @@ describe('WSL runtime boundary', () => {
 
   it('discovers direct and one-level grouped Git repositories', async () => {
     const runtime = new WslRuntime({ platform: 'win32' });
+    runtime.listDistributions = async () => [
+      { name: 'Ubuntu', state: 'Running', version: 2, default: true, system: false },
+    ];
     runtime.inspect = async () => ({ home: '/home/owner' });
     const calls = [];
     runtime._run = async args => {
@@ -65,6 +128,21 @@ describe('WSL runtime boundary', () => {
     assert.deepEqual(calls[1].slice(-8), [
       '/home/owner/projects', '-mindepth', '2', '-maxdepth', '3', '-name', '.git', '-print0',
     ]);
+  });
+
+  it('reports a missing WSL project path as invalid and the HTTP boundary rejects it', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    runtime.listDistributions = async () => [
+      { name: 'Ubuntu', state: 'Running', version: 2, default: true, system: false },
+    ];
+    runtime._run = async () => {
+      throw Object.assign(new Error('test failed'), { result: { code: 1 } });
+    };
+    assert.deepEqual(await runtime.validateProject({ distro: 'Ubuntu', path: '/home/owner/missing' }), {
+      valid: false, exists: false, git: false, path: '/home/owner/missing', distro: 'Ubuntu',
+    });
+    const server = readFileSync(new URL('../../server.js', import.meta.url), 'utf8');
+    assert.match(server, /if \(!validated\.valid\)[\s\S]*선택한 WSL 배포판에 프로젝트 경로가 없습니다\.[\s\S]*}, 400\);/);
   });
 
   it('captures WSL candidate metadata before and after hashing', async () => {

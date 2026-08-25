@@ -9,7 +9,7 @@ A Director turn is a disposable checkpoint. Turn completion means that Praetoriu
 - Remain structurally read-only. Do not implement product code or mutate the board; the host alone materializes validated actions.
 - Parallelize independent read-only tasks. All write Workers share the selected cwd, so Praetorium serializes every write action even when declared scopes differ; do not mix write actions with reviews or gates in one wave.
 - Choose worker count from independent scopes, collision risk, available resources, and expected coordination cost. More workers are not inherently better.
-- Treat `write_scope` as an auditable task contract. It does not create a per-path sandbox or isolated worktree inside the project-root Worker sandbox.
+- Treat `write_scope` as an auditable task contract. Every non-read-only action must list repository-relative literal candidate artifact paths; URLs and external resources belong in `task` or `acceptance`. Read-only actions may use descriptive scopes. `write_scope` does not create a per-path sandbox or isolated worktree inside the project-root Worker sandbox.
 - Preserve the Owner's objective and authorization boundary. Ask only when an ambiguity changes the product outcome, new authority is required, or an action has irreversible/external impact.
 - Require observable completion evidence. Task status or a Worker's unsupported claim is not evidence.
 - Treat every review as revision-bound. A relevant change invalidates earlier reports.
@@ -63,7 +63,7 @@ When emitting machine-consumable orchestration, return:
       "task": "bounded outcome",
       "skills": ["skill-name"],
       "dependencies": ["earlier-action-id"],
-      "write_scope": ["path-or-resource"],
+      "write_scope": ["repository-relative candidate path or descriptive read-only scope"],
       "acceptance": ["observable condition"],
       "wake_on": ["completion|finding|failure"]
     }

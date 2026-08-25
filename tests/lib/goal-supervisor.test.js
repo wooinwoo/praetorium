@@ -464,7 +464,7 @@ describe('durable Goal supervisor', () => {
     );
   });
 
-  it('accepts conservative ordered criterion labels without reusing or guessing rows', () => {
+  it('requires exact ordered criterion labels without reusing, paraphrasing, or negating rows', () => {
     const successCriteria = [
       'Non-string inputs throw TypeError.',
       'Strings undergo NFKD normalization, combining-mark removal, trimming, lowercasing, ASCII-alphanumeric run separation, edge-hyphen removal, safe 32-character truncation, and untitled fallback.',
@@ -485,7 +485,30 @@ describe('durable Goal supervisor', () => {
     }];
     assert.equal(evaluateGoalAcceptance(
       goalRecord({ successCriteria }), evidence, { gateTaskId: 'ordered-gate' },
+    ).satisfied, false);
+
+    evidence[0].report = gateReport(successCriteria.map((criterion, index) => ({
+      criterion, status: 'met', evidence: [`exact evidence ${index + 1}`],
+    })));
+    assert.equal(evaluateGoalAcceptance(
+      goalRecord({ successCriteria }), evidence, { gateTaskId: 'ordered-gate' },
     ).satisfied, true);
+
+    const negatedGoal = goalRecord({ successCriteria: ['No runtime dependency changes are introduced'] });
+    evidence[0].report = gateReport([{
+      criterion: 'Runtime dependency changes are introduced', status: 'met', evidence: ['opposite claim'],
+    }]);
+    assert.equal(evaluateGoalAcceptance(
+      negatedGoal, evidence, { gateTaskId: 'ordered-gate' },
+    ).satisfied, false);
+
+    evidence[0].report = gateReport([
+      { criterion: 'Unauthorized payments succeed', status: 'met', evidence: ['wrong behavior'] },
+      { criterion: 'API returns 200', status: 'met', evidence: ['reordered behavior'] },
+    ]);
+    assert.equal(evaluateGoalAcceptance(
+      goalRecord(), evidence, { gateTaskId: 'ordered-gate' },
+    ).satisfied, false);
 
     const duplicateGoal = goalRecord({ successCriteria: ['API returns 200', 'API returns 200'] });
     evidence[0].report = gateReport([
@@ -493,7 +516,7 @@ describe('durable Goal supervisor', () => {
     ]);
     const duplicate = evaluateGoalAcceptance(duplicateGoal, evidence, { gateTaskId: 'ordered-gate' });
     assert.equal(duplicate.satisfied, false);
-    assert.equal(duplicate.criteria.filter(item => item.met).length, 1, 'one gate row may be consumed only once');
+    assert.equal(duplicate.criteria.filter(item => item.met).length, 0, 'an incomplete gate matrix must not receive partial credit');
   });
 
   it('builds a bounded fresh-turn prompt with current evidence, limited history, and recent Owner answers', () => {
@@ -539,6 +562,7 @@ describe('durable Goal supervisor', () => {
       catalog: '[CATALOG FOR TEST]',
       reason: 'worker_wave_completed',
     });
+    assert.match(prompt, /repository-relative candidate path or descriptive read-only scope/);
     const snapshot = JSON.parse(prompt.split('[DURABLE GOAL SNAPSHOT]\n')[1]);
 
     assert.match(prompt, /fresh Director inference turn for an existing durable Goal/);

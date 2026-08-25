@@ -91,6 +91,15 @@ function combinedDelegationOutput(options = {}) {
   return `${analysisOutput()}\n${delegationOutput(options)}`;
 }
 
+async function waitFor(check, label, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.fail(`Timed out waiting for ${label}.`);
+}
+
 function seedActiveGoal(svc, overrides = {}) {
   const { taskId = 't_goal_worker', directorId = 'project-director-1', ...goalOverrides } = overrides;
   const director = svc.getDirector(directorId);
@@ -138,7 +147,7 @@ function seedActiveGoal(svc, overrides = {}) {
 }
 
 describe('DirectorService', () => {
-  it('binds every materialized workspace-writer scope into the host candidate snapshot', async () => {
+  it('binds every materialized write-authority scope into the host candidate snapshot', async () => {
     let observed = null;
     const svc = service({ runtime: runtime({
       candidateSnapshot: async options => {
@@ -151,12 +160,18 @@ describe('DirectorService', () => {
     goal.taskRecords[0].effect = 'workspace_write';
     goal.taskRecords[0].writeScope = ['dist/app.js', 'src/'];
     goal.taskRecords.push({
+      taskId: 'publish', profile: 'codex-implementer', effect: 'external_mutation', writeScope: ['dist/app.zip'],
+    });
+    goal.taskRecords.push({
+      taskId: 'activate', profile: 'codex-implementer', effect: 'skill_activation', writeScope: ['skill-registry/'],
+    });
+    goal.taskRecords.push({
       taskId: 'review', profile: 'security-reviewer', effect: 'read_only', writeScope: ['read-only:src/'],
     });
 
     await svc._captureGoalCandidate(svc.getDirector('project-director-1'), goal);
 
-    assert.deepEqual(observed.declaredPaths, ['dist/app.js', 'src/']);
+    assert.deepEqual(observed.declaredPaths, ['dist/app.js', 'dist/app.zip', 'skill-registry/', 'src/']);
     assert.equal(goal.currentCandidate.digest, 'sha256:test');
   });
 
@@ -360,6 +375,10 @@ describe('DirectorService', () => {
     assert.equal(director.cwd, '/home/owner/projects/linux-app');
     assert.equal(director.runtime, 'wsl');
     assert.equal(director.distro, 'Ubuntu');
+    assert.notEqual(
+      svc._boardKey({ ...director, cwd: '/home/owner/projects/Linux-App' }),
+      svc._boardKey({ ...director, cwd: '/home/owner/projects/linux-app' }),
+    );
   });
 
   it('limits the owner console to three project Directors', () => {
@@ -369,6 +388,33 @@ describe('DirectorService', () => {
       path: `C:\\projects\\project-${index + 1}`,
     })) });
     assert.equal(svc.listDirectors().filter(d => d.kind === 'project').length, 3);
+  });
+
+  it('keeps a live Director object authoritative when projects are synchronized mid-run', async () => {
+    let releaseChat;
+    let markStarted;
+    const started = new Promise(resolve => { markStarted = resolve; });
+    const blocked = new Promise(resolve => { releaseChat = resolve; });
+    const svc = service({ runtime: runtime({
+      chat: async () => {
+        markStarted();
+        await blocked;
+        return { stdout: conversationOutput('동기화 후에도 완료') };
+      },
+    }) });
+
+    const submitted = svc.submitMessage('project-director-1', '상태를 설명해줘', { mode: 'conversation' });
+    await started;
+    const liveDirector = svc.getDirector('project-director-1');
+    svc.syncProjects();
+    assert.equal(svc.getDirector('project-director-1'), liveDirector, 'sync must preserve the in-flight state object');
+
+    releaseChat();
+    while (svc.getRun(submitted.id).status === 'running') {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(svc.getRun(submitted.id).status, 'completed');
+    assert.equal(svc.getDirector('project-director-1').status, 'idle');
   });
 
   it('does not cross-wire project history when a middle assignment is removed and replaced', async () => {
@@ -933,7 +979,7 @@ describe('DirectorService', () => {
     const queuedGoalId = svc.getRun(queued.id).goalId;
     assert.equal(svc.getGoal(queuedGoalId).status, 'queued');
 
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitFor(() => chatCalls === 2, 'the queued Goal Director turn');
     assert.equal(chatCalls, 2);
     assert.equal(svc.getRun(queued.id).status, 'completed');
     assert.equal(svc.getGoal(queuedGoalId).status, 'executing');
@@ -1272,6 +1318,7 @@ describe('DirectorService', () => {
     };
     const prompt = svc._contextualPrompt(run, '', { stage: 'plan' });
     const ledger = prompt.split('[PROJECT DECISION LEDGER]')[1].split('[CURRENT OWNER MESSAGE]')[0].trim();
+    assert.match(prompt, /repository-relative candidate path or descriptive read-only scope/);
     assert.match(prompt, /Keep v1 response fields/);
     assert.match(prompt, /Preserve the old response shape/);
     assert.match(prompt, /sha256:ledger-candidate/);
