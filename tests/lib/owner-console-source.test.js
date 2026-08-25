@@ -207,6 +207,8 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(js, /releasePointerCapture/);
   assert.match(js, /splitter\.addEventListener\('dblclick'/);
   assert.match(js, /SPLITTER_KEYBOARD_STEP/);
+  assert.match(js, /DEFAULT_SIDEBAR_WIDTH = 264/);
+  assert.match(js, /MOBILE_SIDEBAR_WIDTH = 60/);
   assert.match(js, /sidebarWidth: DEFAULT_SIDEBAR_WIDTH/);
   assert.match(js, /NARROW_VIEW_QUERY = '\(max-width: 520px\)'/);
   assert.match(js, /scrollIntoView\(\{ block: 'nearest', inline: 'nearest' \}\)/);
@@ -328,7 +330,8 @@ test('Owner console exposes a visible theme state and real light-theme tokens', 
   const [html, css, js] = await Promise.all([source('index.html'), source('css/owner-console.css'), source('js/owner-console.js')]);
   assert.match(html, /id="theme-toggle-label">다크</);
   assert.match(js, /\$\('theme-toggle-label'\)\.textContent/);
-  assert.match(css, /:root\[data-theme="light"\]/);
+  assert.match(css, /:root \{[\s\S]*color-scheme: light/);
+  assert.match(css, /:root\[data-theme="dark"\]/);
   assert.match(css, /--rail-bg:/);
 });
 
@@ -377,7 +380,7 @@ test('Background polling ignores scheduler heartbeat churn but notices visible s
   assert.match(js, /state\.refreshing = !quiet/);
   assert.match(js, /nextFingerprint !== state\.renderFingerprint/);
   assert.match(js, /else refreshLiveIndicators\(\)/);
-  assert.match(css, /\.mission-context \{ flex-wrap: wrap/);
+  assert.match(css, /\.mission-context \{[\s\S]*flex-wrap: wrap/);
   assert.match(css, /#session-count \{ max-width: 220px/);
 });
 

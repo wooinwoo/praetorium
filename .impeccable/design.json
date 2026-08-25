@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-25T07:54:44Z",
+  "title": "Design System: Praetorium Owner Console",
+  "extensions": {
+    "typographyMeta": {
+      "headline": { "displayName": "Mission headline", "purpose": "Current objective and other primary operational facts." },
+      "body": { "displayName": "Interface body", "purpose": "Supporting facts, chat copy, and evidence summaries." },
+      "label": { "displayName": "Operational label", "purpose": "Compact navigation, status, and metadata." },
+      "mono": { "displayName": "Machine content", "purpose": "Code, keyboard input, and preformatted evidence only." }
+    },
+    "shadows": [
+      { "name": "flyout-light", "value": "0 8px 24px rgb(0 0 0 / .14)", "purpose": "Dialogs, popovers, and toasts only." },
+      { "name": "flyout-dark", "value": "0 12px 32px rgb(0 0 0 / .42)", "purpose": "Dark-theme dialogs, popovers, and toasts only." }
+    ],
+    "motion": [
+      { "name": "tab-state", "value": "160–180ms cubic-bezier(.1, .9, .2, 1)", "purpose": "Workspace tab color and selection-line transitions." },
+      { "name": "reduced-motion", "value": ".01ms", "purpose": "Effective zero duration when reduced motion is requested." }
+    ],
+    "breakpoints": [
+      { "name": "wide-compact", "value": "1180px" },
+      { "name": "touch", "value": "720px" },
+      { "name": "mobile-rail", "value": "520px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Owner Primary Button",
+      "kind": "button",
+      "refersTo": "button-owner",
+      "description": "Owner-authorized primary action using cobalt, never runtime status.",
+      "html": "<button class=\"ds-button-owner\">보내기</button>",
+      "css": ".ds-button-owner { min-height: 34px; border: 1px solid #0f6cbd; border-radius: 4px; padding: 6px 10px; background: #0f6cbd; color: #fff; font: 600 14px/1.45 \"Segoe UI\", sans-serif; transition: background-color .16s cubic-bezier(.1,.9,.2,1); } .ds-button-owner:hover { border-color: #115ea3; background: #115ea3; } .ds-button-owner:focus-visible { outline: 2px solid #0f6cbd; outline-offset: 2px; } .ds-button-owner:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Neutral bordered control for secondary operations.",
+      "html": "<button class=\"ds-button-secondary\">다시 시도</button>",
+      "css": ".ds-button-secondary { min-height: 34px; border: 1px solid #c7c7c7; border-radius: 4px; padding: 6px 10px; background: #fff; color: #1f1f1f; font: 600 14px/1.45 \"Segoe UI\", sans-serif; } .ds-button-secondary:hover { background: #ebebeb; } .ds-button-secondary:focus-visible { outline: 2px solid #0f6cbd; outline-offset: 2px; } .ds-button-secondary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Compact Fluent field with a strong neutral boundary and cobalt focus.",
+      "html": "<input class=\"ds-field\" value=\"목표와 완료 기준\" aria-label=\"목표\">",
+      "css": ".ds-field { width: 260px; min-height: 34px; border: 1px solid #c7c7c7; border-radius: 4px; padding: 7px 9px; background: #fff; color: #1f1f1f; caret-color: #0f6cbd; font: 400 14px/1.45 \"Segoe UI\", sans-serif; } .ds-field:hover { border-color: #8a8a8a; } .ds-field:focus-visible { border-color: #0f6cbd; outline: 2px solid color-mix(in srgb, #0f6cbd 24%, transparent); outline-offset: 1px; }"
+    },
+    {
+      "name": "Workspace Tab",
+      "kind": "nav",
+      "refersTo": "workspace-tab-selected",
+      "description": "Compact workspace context with a cobalt Owner-selection underline.",
+      "html": "<button class=\"ds-workspace-tab\" aria-selected=\"true\"><strong>디렉터 채팅</strong><small>목표·질문</small></button>",
+      "css": ".ds-workspace-tab { position: relative; min-width: 96px; height: 48px; display: grid; align-content: center; border: 0; border-radius: 4px 4px 0 0; padding: 5px 10px 7px; background: #f0f0f0; color: #1f1f1f; text-align: left; font: 600 13px/1.3 \"Segoe UI\", sans-serif; } .ds-workspace-tab small { display: block; color: #616161; font-size: 11px; } .ds-workspace-tab::after { content: \"\"; position: absolute; right: 8px; bottom: 0; left: 8px; height: 2px; background: #0f6cbd; } .ds-workspace-tab:hover { background: #ebebeb; } .ds-workspace-tab:focus-visible { outline: 2px solid #0f6cbd; outline-offset: 2px; }"
+    },
+    {
+      "name": "Worker Dispatch Strip",
+      "kind": "custom",
+      "refersTo": "worker-dispatch-strip",
+      "description": "One-column operational strip with a semantic state lamp and scan-first evidence.",
+      "html": "<button class=\"ds-worker-strip\"><i aria-hidden=\"true\"></i><span><small>구현 워커 · 실행 중</small><strong>인증 API와 데이터 저장 구현</strong><em>계약 테스트 24개 중 18개 통과</em></span><time>14분</time></button>",
+      "css": ".ds-worker-strip { position: relative; width: 440px; min-height: 76px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 3px 12px; border: 1px solid #e0e0e0; border-radius: 4px; padding: 10px 14px 9px 28px; background: #fff; color: #424242; text-align: left; font: 400 13px/1.4 \"Segoe UI\", sans-serif; } .ds-worker-strip > i { position: absolute; top: 14px; left: 11px; width: 7px; height: 7px; border-radius: 50%; background: #0f7b6c; } .ds-worker-strip span { min-width: 0; display: grid; gap: 2px; } .ds-worker-strip small { color: #0f7b6c; } .ds-worker-strip strong { color: #1f1f1f; font-size: 14px; } .ds-worker-strip em { overflow: hidden; color: #424242; font-style: normal; text-overflow: ellipsis; white-space: nowrap; } .ds-worker-strip time { color: #616161; font-size: 11px; } .ds-worker-strip:hover { border-color: #c7c7c7; background: #e5f1fb; } .ds-worker-strip:focus-visible { outline: 2px solid #0f6cbd; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Dispatch Rail",
+    "overview": "Direction seed d5a85ad0 resolves Praetorium as Fluent desktop foundations joined to a flight-dispatch strip workbench. Neutral planes, compact type, and one-pixel structure make long-running local work easy to scan; narrow status marks and chronological evidence provide the distinctive rhythm. This is an operating surface, not a dashboard gallery or terminal costume. Light is the default theme. Dark mode has full semantic and structural parity: it changes neutral values and contrast, never information architecture or color meaning. Cobalt identifies Owner selection and action; teal means active work, green means done, amber means waiting, and red means failure.",
+    "keyCharacteristics": [
+      "A 52px command bar, resizable Director rail, workspace tabs, and one continuous workbench.",
+      "Compact one-column Worker dispatch strips instead of a card mosaic.",
+      "Independent scroll regions with the Director chat composer anchored at the bottom.",
+      "Flat neutral planes, one-pixel borders, 4–6px working corners, and shadow only on flyouts.",
+      "Segoe UI Variable Text for the interface and Cascadia Code only for machine-shaped content.",
+      "Light-first theming with complete dark-mode role parity."
+    ],
+    "rules": [
+      { "name": "The Authority-Status Split Rule", "body": "Cobalt means the Owner can select or act. Teal, green, amber, and red describe observed work state and never substitute for Owner authority.", "section": "colors" },
+      { "name": "The Theme Parity Rule", "body": "Dark mode swaps token values, not roles, density, component placement, or status meaning.", "section": "colors" },
+      { "name": "The Scan-First Type Rule", "body": "Use the smallest established role that remains readable. Never add display scale to make an operational surface feel important.", "section": "typography" },
+      { "name": "The Flat-at-Rest Rule", "body": "Working surfaces stay flat. Only content that temporarily floats above the workbench may cast a shadow.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do preserve the 52px command bar, resizable 264px rail, explicit workspace tabs, and independent scroll ownership.",
+      "Do use cobalt only for Owner selection, focus, and actions; keep teal, green, amber, and red semantically distinct.",
+      "Do present active Workers as compact one-column dispatch strips beside their evidence and controls.",
+      "Do maintain the light-default and dark-parity token roles, visible keyboard focus, reduced motion, and 90–125% text scaling.",
+      "Do use one-pixel structure, 4–6px working corners, CSS/SVG icons, and plain operational labels."
+    ],
+    "donts": [
+      "Don't turn the workbench into a card-dashboard mosaic or collections of floating summary tiles.",
+      "Don't imitate a terminal with monospace interface copy, neon color, command-line decoration, or black-on-black styling.",
+      "Don't add gradients, resting shadows, lifted hover transforms, inflated typography, excessive rounded cards, or decorative pills.",
+      "Don't add visible kickers above headings or use Unicode arrows to describe workflow.",
+      "Don't let the page shell scroll, unfix the Director composer, or merge Windows and WSL runtime identity."
+    ]
+  }
+}

@@ -1,301 +1,264 @@
 ---
 name: Praetorium Owner Console
-description: A trace-first local operations console for inspecting and steering Director and Worker execution.
+description: A Fluent desktop dispatch workbench for observing and steering local Director and Worker execution.
 colors:
-  matte-void: "#080b0f"
-  navigation-night: "#0d131b"
-  surface: "#111820"
-  surface-subtle: "#18222e"
-  surface-active: "#202d3d"
-  surface-hover: "#243246"
-  text-primary: "#f7f9fc"
-  text-secondary: "#d2dae5"
-  text-muted: "#9eabba"
-  hairline: "#364355"
-  hairline-strong: "#566982"
-  owner-blue: "#6aa8ff"
-  owner-blue-soft: "rgba(106,168,255,.14)"
-  runtime-green: "#63d9a8"
-  runtime-green-soft: "rgba(73,199,142,.12)"
-  waiting-amber: "#f2c767"
-  waiting-amber-soft: "rgba(231,184,90,.12)"
-  failure-red: "#ff8492"
-  failure-red-soft: "rgba(237,109,125,.12)"
-  light-canvas: "#f3f6fa"
-  light-navigation: "#eaf0f6"
-  light-surface: "#ffffff"
-  light-surface-subtle: "#e7edf5"
-  light-surface-active: "#d8e5f5"
-  light-surface-hover: "#dbe5f1"
-  light-text-primary: "#101722"
-  light-text-secondary: "#334155"
-  light-text-muted: "#526176"
-  light-hairline: "#b7c2d0"
-  light-hairline-strong: "#8294a9"
-  light-runtime-green-soft: "rgba(29,145,94,.10)"
-  light-waiting-amber-soft: "rgba(174,117,16,.10)"
-  light-failure-red-soft: "rgba(207,67,84,.10)"
+  light-canvas: "#f5f5f5"
+  light-panel: "#ffffff"
+  light-surface: "#f0f0f0"
+  light-selection: "#e5f1fb"
+  light-border: "#e0e0e0"
+  light-border-strong: "#c7c7c7"
+  light-text: "#1f1f1f"
+  light-text-soft: "#424242"
+  light-text-muted: "#616161"
+  light-owner-cobalt: "#0f6cbd"
+  light-owner-cobalt-strong: "#115ea3"
+  light-active-teal: "#0f7b6c"
+  light-done-green: "#107c10"
+  light-waiting-amber: "#8a5b00"
+  light-failure-red: "#c42b1c"
+  light-code-surface: "#f3f3f3"
+  dark-canvas: "#1f1f1f"
+  dark-panel: "#292929"
+  dark-surface: "#333333"
+  dark-selection: "#14395b"
+  dark-border: "#3e3e3e"
+  dark-border-strong: "#5a5a5a"
+  dark-text: "#f5f5f5"
+  dark-text-soft: "#d6d6d6"
+  dark-text-muted: "#adadad"
+  dark-owner-cobalt: "#6aa8ff"
+  dark-owner-cobalt-strong: "#8bbcff"
+  dark-active-teal: "#5ec7b7"
+  dark-done-green: "#6ccb5f"
+  dark-waiting-amber: "#f5c344"
+  dark-failure-red: "#ff99a4"
+  dark-code-surface: "#181818"
 typography:
   headline:
-    fontFamily: "Segoe UI Variable Text, Segoe UI, Pretendard, sans-serif"
-    fontSize: "clamp(1.8rem, 2.2vw, 2.2rem)"
-    fontWeight: 780
-    lineHeight: 1.2
-    letterSpacing: "-0.03em"
+    fontFamily: '"Segoe UI Variable Text", "Segoe UI", Pretendard, sans-serif'
+    fontSize: "clamp(1.55rem, 2vw, 1.95rem)"
+    fontWeight: 680
+    lineHeight: 1.24
+    letterSpacing: "-0.02em"
   title:
-    fontFamily: "Segoe UI Variable Text, Segoe UI, Pretendard, sans-serif"
-    fontSize: "1.2rem"
-    fontWeight: 760
-    lineHeight: 1.4
-    letterSpacing: "-0.015em"
-  body:
-    fontFamily: "Segoe UI Variable Text, Segoe UI, Pretendard, sans-serif"
+    fontFamily: '"Segoe UI Variable Text", "Segoe UI", Pretendard, sans-serif'
     fontSize: "1rem"
-    fontWeight: 540
-    lineHeight: 1.55
-  label:
-    fontFamily: "Segoe UI Variable Text, Segoe UI, Pretendard, sans-serif"
-    fontSize: ".8rem"
     fontWeight: 650
-    lineHeight: 1.4
+    lineHeight: 1.45
+  body:
+    fontFamily: '"Segoe UI Variable Text", "Segoe UI", Pretendard, sans-serif'
+    fontSize: ".9rem"
+    fontWeight: 400
+    lineHeight: 1.52
+  label:
+    fontFamily: '"Segoe UI Variable Text", "Segoe UI", Pretendard, sans-serif'
+    fontSize: ".78rem"
+    fontWeight: 650
+    lineHeight: 1.45
   mono:
-    fontFamily: "Cascadia Code, SFMono-Regular, Consolas, monospace"
-    fontSize: ".8rem"
-    fontWeight: 500
-    lineHeight: 1.5
-    letterSpacing: ".035em"
+    fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace'
+    fontSize: ".857rem"
+    fontWeight: 400
+    lineHeight: 1.6
 rounded:
-  metadata: "5px"
-  compact: "7px"
-  control: "8px"
-  panel: "10px"
-  focus: "12px"
-  dialog: "14px"
+  metadata: "3px"
+  control: "4px"
+  grouped: "6px"
+  dialog: "10px"
 spacing:
   xs: "4px"
-  sm: "8px"
-  md: "12px"
-  lg: "16px"
-  xl: "18px"
-  section: "24px"
-  content: "28px"
-  wide: "42px"
+  sm: "6px"
+  control: "8px"
+  compact: "10px"
+  section: "12px"
+  panel: "14px"
+  content: "20px"
+  pane: "24px"
 components:
   button-owner:
-    backgroundColor: "{colors.owner-blue}"
-    textColor: "#07111f"
+    backgroundColor: "{colors.light-owner-cobalt}"
+    textColor: "{colors.light-panel}"
     rounded: "{rounded.control}"
-    padding: "0 12px"
-    height: "38px"
+    padding: "6px 10px"
+    height: "34px"
   button-owner-hover:
-    backgroundColor: "{colors.owner-blue}"
-    textColor: "#07111f"
+    backgroundColor: "{colors.light-owner-cobalt-strong}"
+    textColor: "{colors.light-panel}"
     rounded: "{rounded.control}"
-    padding: "0 12px"
-    height: "38px"
+    padding: "6px 10px"
+    height: "34px"
   button-secondary:
+    backgroundColor: "{colors.light-panel}"
+    textColor: "{colors.light-text}"
+    rounded: "{rounded.control}"
+    padding: "6px 10px"
+    height: "34px"
+  button-danger:
     backgroundColor: "transparent"
-    textColor: "{colors.text-secondary}"
+    textColor: "{colors.light-failure-red}"
     rounded: "{rounded.control}"
-    padding: "0 12px"
-    height: "38px"
+    padding: "6px 10px"
+    height: "34px"
   field:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.text-primary}"
+    backgroundColor: "{colors.light-panel}"
+    textColor: "{colors.light-text}"
     rounded: "{rounded.control}"
-    padding: "0 10px"
-    height: "40px"
-  selected-row:
-    backgroundColor: "{colors.surface-active}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.panel}"
-    padding: "9px 10px"
-  runtime-badge:
-    backgroundColor: "{colors.surface-subtle}"
-    textColor: "{colors.text-muted}"
-    rounded: "{rounded.metadata}"
-    padding: "3px 6px"
+    padding: "7px 9px"
+    height: "34px"
+  workspace-tab-selected:
+    backgroundColor: "{colors.light-surface}"
+    textColor: "{colors.light-text}"
+    rounded: "4px 4px 0 0"
+    padding: "5px 10px 7px"
+    height: "48px"
+  worker-dispatch-strip:
+    backgroundColor: "{colors.light-panel}"
+    textColor: "{colors.light-text-soft}"
+    rounded: "{rounded.control}"
+    padding: "10px 14px 9px 28px"
+    height: "76px"
 ---
 
 # Design System: Praetorium Owner Console
 
 ## Overview
 
-**Creative North Star: "The Evidence Rail"**
+**Creative North Star: "The Dispatch Rail"**
 
-Praetorium is an operational console, not a marketing dashboard. Its visual hierarchy follows the work itself: choose a Director at left, scan the chronological execution trace in the center, and inspect evidence or act at right. Dense information remains calm through matte near-black surfaces, high-contrast type, visible division, and semantic markers rather than through decorative cards.
+Direction seed `d5a85ad0` resolves Praetorium as Fluent desktop foundations joined to a flight-dispatch strip workbench. Neutral planes, compact type, and one-pixel structure make long-running local work easy to scan; narrow status marks and chronological evidence provide the distinctive rhythm. This is an operating surface, not a dashboard gallery or terminal costume.
 
-Dark is the default and most characteristic theme; the shipped light theme is a fully supported operational alternative, not a separate identity. Both themes preserve the same hierarchy, spacing, semantic colors, and interaction model. Blue marks Owner-controlled focus and action. Green reports affirmative runtime or execution truth and must never become a general call-to-action color.
-
-This file documents the shipped implementation and is authoritative for future Owner Console work. It explicitly supersedes conflicting guidance in `design-system/praetorium/MASTER.md`: the bento showcase, hero/value-prop sequence, floating or bottom CTA, green primary CTA, lifted hover cards, and white modal model are not part of the shipped product. Non-conflicting accessibility advice in that file still applies.
+Light is the default theme. Dark mode has full semantic and structural parity: it changes neutral values and contrast, never information architecture or color meaning. Cobalt identifies Owner selection and action; teal means active work, green means done, amber means waiting, and red means failure.
 
 **Key Characteristics:**
 
-- Trace-first chronology with evidence and controls kept adjacent.
-- Near-black matte dark surfaces plus an equivalent low-glare light theme.
-- One clear blue for Owner selection, focus, intervention, and committed action.
-- Green reserved for observed readiness, active execution, completion, and connectivity.
-- Hairline borders and tonal layering at rest; shadows only for true overlays.
-- Compact sans-serif prose paired with monospace operational metadata.
-- Windows and WSL shown as distinct execution environments, never interchangeable paths.
+- A 52px command bar, resizable Director rail, workspace tabs, and one continuous workbench.
+- Compact one-column Worker dispatch strips instead of a card mosaic.
+- Independent scroll regions with the Director chat composer anchored at the bottom.
+- Flat neutral planes, one-pixel borders, 4–6px working corners, and shadow only on flyouts.
+- Segoe UI Variable Text for the interface and Cascadia Code only for machine-shaped content.
+- Light-first theming with complete dark-mode role parity.
 
 ## Colors
 
-The palette is neutral and low-chroma so status and authority colors remain legible signals. The frontmatter is the normative token source; the light tokens replace the corresponding dark canvas, surface, text, hairline, and semantic soft-fill roles while the solid semantic accents remain stable.
+The palette uses Fluent neutrals as working material and reserves chroma for authority or observed state. The frontmatter is the normative light and dark token source.
 
 ### Primary
 
-- **Owner Blue:** Use for active Director/profile rows, keyboard focus, text carets, selected trace content, Owner/Worker intervention controls, send/connect actions, and the brand mark. Keep its footprint small enough that it reads as authority rather than decoration.
-- **Owner Blue Soft:** Use behind selected or Owner-controlled regions. Pair it with a hairline blue edge when selection needs stronger definition.
+- **Owner Cobalt:** Selection, active tabs, focus outlines, primary buttons, and Owner-authored controls. The stronger companion is the hover state; cobalt does not report runtime health.
 
 ### Secondary
 
-- **Runtime Blue:** Distinguishes WSL runtime badges, read-only access, plan evidence, and observed command markers. Blue is categorical or evidentiary; it is not a second CTA color.
-- **Waiting Amber:** Marks queued/ready-to-start work, setup required, pending Owner decisions, intervention delivery in progress, warnings, and write-capable authority.
-- **Failure Red:** Marks failed, blocked, cancelled, offline, dangerous, destructive, or failed intervention delivery. Use text, a dot, or a single hairline edge before using a filled region.
+- **Active Teal:** Running and reviewing work only.
+- **Done Green:** Completed work, successful receipts, ready local connectivity, and passed gates.
+- **Waiting Amber:** Queued work, setup needs, warnings, and Owner decisions still required.
+- **Failure Red:** Failed, blocked, offline, destructive, or undelivered states.
 
 ### Neutral
 
-- **Matte Void / Navigation Night:** Establish the dark canvas and fixed navigation rail.
-- **Surface / Surface Subtle / Surface Hover:** Separate workspace channels, controls, compact rows, and hover states through tone rather than elevation.
-- **Primary / Secondary / Muted / Faint Text:** Form a four-step information hierarchy. Paths, descriptions, timestamps, and supporting labels move down this scale; operationally important values stay at primary or secondary.
-- **Hairline / Hairline Strong:** Divide panes, rows, fields, and selected containers without turning every region into a card.
-- **Light Canvas Family:** Mirrors the neutral hierarchy in light mode. Do not convert the console to pure-white page sections or dark text on saturated fills.
+- **Canvas and Panel:** The canvas holds the shell; panels form the command bar, rail content, fields, strips, and fixed composer.
+- **Surface and Selection:** Neutral surface separates controls and code; the cobalt-tinted selection plane marks current context.
+- **Border and Strong Border:** One-pixel dividers establish structure. The stronger border is for fields, active boundaries, and flyouts.
+- **Text, Soft Text, and Muted Text:** Primary facts, supporting prose, and metadata form a three-step hierarchy.
 
 ### Named Rules
 
-**The Green Is Runtime State Rule.** Green means an observed runtime or execution fact is affirmative: connected, active, running, ready, accepted, observed, or complete. An accepted intervention receipt confirms only Hermes delivery; its copy must not imply Worker acknowledgement. Never use green for a recommendation, generic button, promotion, selection, or decorative accent.
+**The Authority-Status Split Rule.** Cobalt means the Owner can select or act. Teal, green, amber, and red describe observed work state and never substitute for Owner authority.
 
-**The Blue Is Authority Rule.** Blue means the Owner can focus, select, steer, or commit. It must remain rarer than neutral structure and must not replace status semantics.
-
-**The Theme Parity Rule.** Light mode changes neutral surfaces, text contrast, and semantic soft fills; solid status and authority colors keep their meaning. It must preserve trace hierarchy, control placement, and density.
+**The Theme Parity Rule.** Dark mode swaps token values, not roles, density, component placement, or status meaning.
 
 ## Typography
 
-**Display Font:** None; the console deliberately avoids display typography.
+**Display Font:** None. Praetorium does not use display typography.
 
-**Body Font:** Segoe UI Variable Text with Segoe UI and Pretendard fallbacks.
+**Body Font:** Segoe UI Variable Text with Segoe UI, Pretendard, and sans-serif fallbacks.
 
-**Label/Mono Font:** Cascadia Code with SFMono-Regular and Consolas fallbacks.
+**Label/Mono Font:** Segoe UI Variable Text for labels; Cascadia Code with SFMono-Regular and Consolas fallbacks for code, keyboard input, and preformatted evidence.
 
-**Character:** The sans stack keeps Korean and English operational prose compact and neutral. Monospace marks machine-shaped content and coordinates scanning; it is not a blanket “developer aesthetic” applied to every label.
+**Character:** Type is compact, calm, and native to a Windows desktop tool. The sans stack carries all interface language; monospace is restricted to genuinely machine-shaped content.
 
 ### Hierarchy
 
-- **Headline** (600, fluid 1.28–1.72rem, 1.24): One mission title. Keep it compact, balanced, and capped at roughly 76 characters per line.
-- **Title** (600, about .96rem, 1.4): Pane, section, workspace-channel, and management-panel headings.
-- **Body** (540, about 1rem, 1.55): Descriptions, evidence, help text, and channel prose. Reading blocks stay near 68–72 characters wide.
-- **Label** (600–700, about .8rem): Control text, row titles, field labels, and compact state copy.
-- **Mono** (500–600, about .8rem): Paths, task and run IDs, board names, commands, timestamps, counters, runtime badges, keyboard hints, and uppercase overlines. Use tabular numerals for counts and elapsed time.
+- **Headline** (680, fluid 1.55–1.95rem, 1.24): The active mission title, limited to two lines until expanded.
+- **Title** (650, 1rem, 1.45): Workspace, section, and dialog headings.
+- **Body** (400, about .9rem, 1.52): Conversation, evidence, descriptions, and operational guidance.
+- **Label** (650, about .78rem, 1.45): Controls, compact headings, states, and metadata labels.
+- **Mono** (400, about .857rem, 1.6): Code blocks, commands, keyboard hints, and raw logs.
 
 ### Named Rules
 
-**The Metadata Has a Texture Rule.** Use monospace only when the content behaves like coordinates, evidence, or machine state. Human instructions and decisions remain sans-serif.
+**The No Kicker Rule.** Do not place visible eyebrow or kicker text above workspace headings; the implemented detail eyebrow remains hidden.
 
-**The No Hero Type Rule.** Operational hierarchy tops out at the mission headline. Do not introduce oversized display copy, promotional subheads, or centered hero text.
-
-**The Owner Language Rule.** Match public operational prose to the Owner's language. Korean Owner input yields Korean Director summaries and questions and Korean Worker task text, checkpoints, and reports. Machine-shaped contracts never change locale: JSON keys, schema names, enum values, IDs, and the literal `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` markers remain English and keep their monospace treatment.
+**The No Hero Type Rule.** The mission headline is the top of the scale. No oversized display copy or promotional typography belongs in the console.
 
 ## Layout
 
-The desktop shell is a fixed-height two-region grid beneath the top bar: a 248px Director rail, an 8px resize boundary, and one fluid workspace. The workspace has a persistent tab row and exactly one active panel. The shell itself never scrolls; the Director list, active workspace panel, dialog bodies, and profile browser own their relevant scroll surfaces. Stable scrollbar gutters and contained overscroll prevent adjacent panes from jumping or chaining unexpectedly.
+The viewport is a fixed-height desktop shell. A 52px command bar sits above a two-column application frame: a 264px Director rail, a 6px resize separator, and a fluid workspace. The rail is user-resizable from 180px to 360px and persists its width. At 520px and below it becomes a 60px index rail and the separator disappears.
 
-The Overview tab uses 28px vertical padding and fluid horizontal padding from 22px to 42px. Its rhythm is compact: 4–12px within a datum or control, 16–18px within a container, and 24–28px between operational sections. The chronological trace is a vertical rail with 31px markers, one-pixel connectors, shallow indentation for child work, and time/status aligned at the trailing edge. Selected evidence opens in a temporary Detail tab; it does not replace the trace as the stable return point.
+The workspace begins with a 48px horizontal tab strip. Exactly one Overview, Director Chat, Worker, or temporary Detail panel is active. The page frame does not scroll; the Director list, active workspace panel, conversation stream, inspector, and dialog body own their scroll. The Overview canvas is capped at 1180px, while chat content is capped at 860px and inspector content at 1040px.
 
-The Director rail is user-resizable from 180px to 360px and does not collapse merely because browser zoom changes a breakpoint. At 520px and below, it becomes a 64px index rail and the splitter is removed. Workspace tabs remain horizontally scrollable, while summaries, Worker rows, gates, forms, and runtime details stack according to the active panel's container width.
-
-The supported 900×640 operating window must retain independent scrolling and access to the Overview, Director composer, Worker controls, and management controls. At narrow widths, interactive controls have a minimum 44px touch target. Text scale is user-controlled from 90% to 125% and persisted; layouts must tolerate the full range without hiding evidence or creating page-level horizontal scrolling.
+Worker dispatch strips form one compact vertical column with 4px gaps. Current focus uses a three-column divided strip and collapses to one column at a 760px container width. The completion runway adapts from a horizontal divided strip to two columns and then one column. At 720px and below, headers stack and interactive controls reach at least 44px. Text scaling persists from 90% to 125%.
 
 ### Named Rules
 
-**The Rail Splitter Stays Put Rule.** On wide layouts, the vertical splitter changes Director rail width continuously while dragged. The separator is keyboard-focusable, accepts Left and Right Arrow keys, clamps the rail to preserve a usable workspace, saves its value in `localStorage`, and restores it without rerender jitter. Double-click restores 248px. At the compact breakpoint, the rail is fixed at 64px and the splitter is absent.
+**The Workbench Never Page-Scrolls Rule.** Keep the shell fixed and give each working region its own contained scroll surface with a stable scrollbar gutter.
 
-**The Trace Owns the Center Rule.** Summaries may orient the Owner, but chronological evidence remains the main canvas and the stable return point.
+**The One-Column Dispatch Rule.** Workers read as stacked flight strips, never as a responsive card grid.
 
-**The Channels Stay Explicit Rule.** The workspace tab row always starts with Overview and Director Chat. Each current Worker receives its own tab, containing Owner instructions, public checkpoints, activity, commands, evidence, and pause or resume controls. Non-Worker trace selections receive a temporary Detail tab. Hidden panels are inert and cannot capture focus.
-
-**The Runtime Has a Place Rule.** Show the active runtime near mission context and project identity. Windows and WSL labels, paths, diagnostics, and setup guidance must not be collapsed into a generic “local” state.
+**The Composer Stays Anchored Rule.** Director conversation scrolls independently while its composer remains fixed to the bottom of the channel.
 
 ## Elevation & Depth
 
-Praetorium is flat by default. Depth comes from tonal steps and one-pixel hairlines, not from a stack of floating cards. The only persistent accent shadow belongs to the compact brand mark. Strong shadows are reserved for dialogs, tooltips, and transient toasts; modal backdrops darken and blur the underlying console because they suspend the current operating context.
-
-### Shadow Vocabulary
-
-- **Accent Mark** (`0 7px 20px rgba(97, 78, 216, .25)`): Brand mark only.
-- **Floating Surface** (`0 22px 70px rgba(0, 0, 0, .38)`): Dialogs and compressed-rail tooltips.
-- **Toast** (`0 12px 36px rgba(0, 0, 0, .35)`): Transient status feedback only.
+Praetorium is flat at rest. Neutral fills and one-pixel borders separate every persistent plane. Only detached flyouts, dialogs, focused skip navigation, and toasts receive the shallow flyout shadow; the light theme uses a lighter 8px/24px shadow and dark mode a denser 12px/32px shadow. No resting row, panel, strip, or navigation item is elevated.
 
 ### Named Rules
 
-**The Flat Until Detached Rule.** A surface receives a shadow only when it is physically detached from the shell or temporarily overlays another task. Rows, trace items, management panels, and workflow cards remain flat.
+**The Flyout-Only Shadow Rule.** A shadow means a surface is temporarily detached from the workbench. Persistent structure stays flat.
 
 ## Shapes
 
-The form language is compact and gently rounded: 5px for metadata badges, 7–8px for controls, 10px for rows and panels, 12px for current focus, and 14px for dialogs. Circular geometry is reserved for status dots, trace markers, and step indices. One-pixel hairlines define panes, fields, rows, and modal edges; the Owner gate and danger rows may use a single semantic edge for urgency.
-
-Badges are short labels, not decorative pills. Cards do not float, scale, or adopt oversized radii on hover. Icons are consistent 18px outline SVGs with rounded joins and caps; emoji and filled novelty icons do not belong in the console.
+Working controls, rows, strips, and management containers use 4px corners. Grouped chat bubbles, the brand mark, focus summary, tooltips, and toasts use 6px corners. Metadata uses 3px corners, while modal dialogs alone use 10px. One-pixel borders define structure; circles are reserved for status dots, trace markers, and avatars. Short badges remain compact labels rather than inflated pills.
 
 ## Components
 
-### Execution Trace
+### Command Bar, Director Rail, and Workspace Tabs
 
-The trace is the signature component and primary navigation. Each node combines a numbered circular marker, task kind, concise title, one-line evidence summary, small metadata tags, status, and time. Running and complete states use affirmative status color; waiting and setup use amber; blocked and failed use red. Selection adds a blue-tinted tonal background without changing the underlying status color. Child work indents by one shallow level and retains the same connector rail.
+The command bar keeps brand, current project context, live connection state, text scale, settings, and theme control on one 52px line. Director rows use a neutral hover, cobalt-tinted selection, a two-pixel active edge, and a separate semantic status dot. Workspace tabs use a neutral selected plane plus a two-pixel cobalt underline. Overflow scrolls horizontally; it never wraps into a second navigation row.
 
-### Workspace Channels
+### Buttons and Fields
 
-Director Chat is a full-height channel with an independently scrolling conversation and a fixed composer. Worker tabs are structured evidence channels with one outer scroll surface; their groups use visible separators, compact mono labels, readable prose, code blocks, event lists, reasoning entries, and collapsible raw logs. Owner controls sit inside a blue-tinted intervention region; destructive controls remain outlined red. Intervention receipts expose four non-interchangeable states: delivery pending is amber, delivery failed is red, accepted/queued is a confirmed Hermes receipt, and Worker observed is later Worker-authored evidence.
+Primary buttons use solid Owner Cobalt; secondary buttons use a panel fill and strong neutral border; danger buttons use red text and a red-tinted border with a soft failure hover. Controls are 34px high on desktop, use 4px corners, move down by one pixel when pressed, and show a two-pixel cobalt focus outline. Inputs, selects, and textareas use the panel fill, strong border, and cobalt caret.
 
-Only the active workspace panel is visible and focusable. Overview, Director Chat, Worker channels, and temporary Detail use the same available width at every breakpoint. This avoids offscreen focus traps and preserves vertical continuity for command composition and evidence logs.
+### Worker Dispatch Strips
 
-The workspace tab list supports click, Left and Right Arrow, Home, and End navigation with roving `tabindex`. Worker evidence sub-tabs follow the same keyboard contract. Polling may update content and status but must preserve the active tab, focused control, horizontal tab position, and active panel scroll position.
+The signature Worker component is a full-width, 76px minimum strip in a one-column stack. A seven-pixel dot at the leading edge carries semantic state. Role, task, state, evidence summary, and elapsed metadata remain on compact scan lines. Hover and selection change the neutral plane and border without lift or scale.
 
-### Buttons
+### Trace and Completion Runway
 
-- **Owner / Primary:** Solid Owner Blue, dark text, 8px corners, 700 weight, and a one-pixel pressed state. Hover changes tone without glow.
-- **Secondary / Quiet:** Transparent with a hairline border and secondary text. Hover changes tone and border strength, not scale or position.
-- **Danger:** Transparent red text with a red hairline; a soft red fill appears only on hover.
-- **Icon-only:** 18px outline SVG centered in a square control. Always provide an accessible name.
-- **Responsive:** Desktop controls are generally 38px high; narrow-screen controls become at least 44px high and wide.
+Trace nodes use 23px numbered circular markers and one-pixel vertical connectors, with child work indented by 18px. The completion runway is a single divided container whose steps use seven-pixel state dots. Workflow sequences use CSS-drawn chevrons; Unicode arrow glyphs are not part of the component language.
 
-### Inputs / Fields
+### Director Chat Composer
 
-Inputs, selects, and textareas use the current surface, a strong hairline, and 8px corners. Focus changes the border to Owner Blue and adds a three-pixel focus ring; the global `:focus-visible` treatment remains available for keyboard-operated controls. The Owner composer accepts Enter to send and Shift+Enter for a line break. Runtime fields change their example and help copy: Windows expects a Windows absolute path, while WSL requires a selected distribution and a Linux absolute path inside that distribution.
+Director Chat uses a header, one independently scrolling conversation stream, and a composer anchored below it. The composer is one 6px-cornered field group with a textarea, processing mode, keyboard hint, and cobalt Send action. Focus strengthens the cobalt border and adds a restrained two-pixel ring.
 
-### Status, Runtime, and Access Badges
+### Dialogs and Feedback
 
-Runtime badges are compact mono labels with visible text and border differences. Windows and WSL remain explicit in copy, while adjacent green or amber readiness text reports health. A WSL path visible through a Windows UNC share is not a ready WSL runtime; readiness requires that distribution's Hermes, Codex, profiles, filesystem, and shell environment pass diagnosis.
-
-State dots always accompany plain-language state in the surrounding row, label, or accessible name. Green reports affirmative runtime/execution state, amber reports queued/setup/warning, red reports failure/block/offline, and faint neutral reports idle or unknown. Read-only access is blue; workspace-write authority is amber.
-
-### Navigation and Management
-
-The Director rail uses full text rows on wide screens and index marks with focusable tooltips when compressed. Active selection uses a blue-tinted fill and strong border, while its runtime state dot retains its semantic color. Each Director exposes a compact active/queued/recent Goal switcher: queue position and status remain visible, a queued Goal does not look like an inference turn, and cancelled Goals retain explicit cancelled language. Queue controls disclose their result in an adjacent receipt rather than relying on a transient toast alone. The management dialog uses native `dialog`, a fixed header, horizontal tabs with a three-pixel blue active indicator, and one independently scrolling body. Arrow Left/Right moves and activates tabs. Project, runtime, and role panes favor rows, dividers, and split views over collections of feature cards.
-
-### Feedback and Motion
-
-Toasts use `role="status"` and a polite live region, appear at the bottom center, and distinguish errors or success with a semantic border. The current-focus strip is also polite live content. Motion is limited to a subtle running pulse, toast arrival, hover/focus color changes, and requested smooth scrolling. Under `prefers-reduced-motion: reduce`, animation and transition duration collapses to effectively zero.
+Native dialogs use 10px corners, a strong one-pixel border, one scrollable body, and the flyout shadow. Toasts sit at the lower right with a semantic border and polite live-region behavior. Reduced-motion mode collapses all transition and animation durations to effectively zero.
 
 ## Do's and Don'ts
 
 ### Do:
 
-- **Do** lead with the current mission and chronological execution trace; reveal Director conversation, Worker channels, and selected evidence through explicit workspace tabs.
-- **Do** use Owner Blue sparingly for focus, selection, steering, and committed Owner actions.
-- **Do** reserve green for affirmative runtime and execution truth, and pair every colored status with text or another non-color cue.
-- **Do** keep Windows and each WSL distribution explicit in badges, field semantics, paths, readiness, profiles, and setup guidance.
-- **Do** preserve the dark default and maintain full contrast and semantic parity in the supported light theme.
-- **Do** preserve the skip link, visible focus, native dialog behavior, live-region feedback, keyboard shortcuts, reduced-motion behavior, and 44px narrow-screen targets.
-- **Do** use hairlines, neutral tone changes, compact rows, and independent scroll regions to organize dense evidence.
-- **Do** use outline SVG icons and plain, operational language that describes real state.
+- **Do** preserve the 52px command bar, resizable 264px rail, explicit workspace tabs, and independent scroll ownership.
+- **Do** use cobalt only for Owner selection, focus, and actions; keep teal, green, amber, and red semantically distinct.
+- **Do** present active Workers as compact one-column dispatch strips beside their evidence and controls.
+- **Do** maintain the light-default and dark-parity token roles, visible keyboard focus, reduced motion, and 90–125% text scaling.
+- **Do** use one-pixel structure, 4–6px working corners, CSS/SVG icons, and plain operational labels.
 
 ### Don't:
 
-- **Don't** follow the legacy bento-grid, marketing hero, value-prop card, floating-action-button, or bottom-CTA guidance from `design-system/praetorium/MASTER.md`; this document supersedes those patterns for the Owner Console.
-- **Don't** use green for primary buttons, generic CTAs, selected navigation, brand decoration, or hover affordances.
-- **Don't** turn the console into a card mosaic, lift cards on hover, scatter shadows across resting surfaces, add gradients, or enlarge corner radii into pill-heavy decoration.
-- **Don't** hide the trace behind aggregate dashboards or make the Owner open another agent surface to understand what happened.
-- **Don't** treat a Windows path, WSL Linux path, or UNC-visible path as interchangeable, and don't imply readiness without runtime evidence.
-- **Don't** rely on color alone, remove keyboard focus, trap content behind fixed panes, or disable text scaling to protect a layout.
-- **Don't** add oversized display type, emoji icons, layout-shifting hover transforms, or decorative motion.
-- **Don't** fabricate remote-service, performance, customer, or security claims; status copy must describe observed local state.
+- **Don't** turn the workbench into a card-dashboard mosaic or collections of floating summary tiles.
+- **Don't** imitate a terminal with monospace interface copy, neon color, command-line decoration, or black-on-black styling.
+- **Don't** add gradients, resting shadows, lifted hover transforms, inflated typography, excessive rounded cards, or decorative pills.
+- **Don't** add visible kickers above headings or use Unicode arrows to describe workflow.
+- **Don't** let the page shell scroll, unfix the Director composer, or merge Windows and WSL runtime identity.

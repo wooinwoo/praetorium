@@ -3,11 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#080b0f" />
+    <meta name="theme-color" content="#f5f5f5" />
     <title>Praetorium</title>
     <link rel="stylesheet" href="/css/owner-console.css" />
   </head>
   <body>
+    <!--
+      THESIS: Praetorium is a dispatch workbench, not a card dashboard or terminal costume.
+      OWN-WORLD: Fluent desktop foundations, neutral work surfaces, cobalt Owner actions, and flight-strip rows for live work.
+      STORY: Choose a Director, read the active mission, inspect each Worker strip, then act beside the evidence.
+      FIRST VIEWPORT: Compact command bar, resizable Director rail, horizontal channel tabs, and one continuous operational canvas.
+      FORM: Dispatch strip workbench, direction seed d5a85ad0. FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
     <a class="skip-link" href="#workspace-content">활성 작업공간으로 건너뛰기</a>
     <header class="topbar">
       <div class="brand" aria-label="Praetorium">
@@ -38,7 +45,7 @@
         <header><span>디렉터</span><b id="director-count">0</b></header>
         <div class="director-list" id="owner-director-list"></div>
         <button class="workflow-button" id="workflow-library-btn" type="button" aria-label="작업 플로우 열기" data-tooltip="작업 플로우 열기">
-          <span><b>작업 플로우</b><small>실행·검증 절차</small></span><i>→</i>
+          <span><b>작업 플로우</b><small>실행·검증 절차</small></span><i class="inline-chevron" aria-hidden="true"></i>
         </button>
         <div class="sidebar-footer">
           <span class="local-lock"><i></i>로컬 전용</span>
@@ -116,7 +123,7 @@
 
         <section class="trace-section" data-panel-section="activity" aria-label="실행 활동">
           <header class="section-header">
-            <div class="activity-title"><span class="eyebrow-label">실행 활동</span><h2>공개 이벤트와 도구 결과</h2></div>
+            <div class="activity-title"><h2>실행 활동</h2></div>
             <div class="trace-toolbar">
               <div class="trace-summary" id="trace-summary"></div>
               <div class="trace-filters" role="group" aria-label="실행 흐름 필터">
@@ -148,7 +155,7 @@
 
       <section class="director-chat-pane workspace-panel" id="workspace-panel-director" role="tabpanel" aria-labelledby="workspace-tab-director" tabindex="-1" hidden>
         <header class="channel-header">
-          <div><span>디렉터 채널</span><h2>오너 ↔ 디렉터</h2><p>새 목표를 주거나 진행 중인 판단을 물어봅니다.</p></div>
+          <div><h2>디렉터 채팅</h2><p>새 목표를 주거나 진행 중인 판단을 물어봅니다.</p></div>
           <small id="conversation-count">기록 0개</small>
         </header>
         <div class="conversation-stream director-conversation-stream" id="owner-chat-stream" data-scroll-surface role="list" aria-label="디렉터 대화 기록"></div>
@@ -216,7 +223,7 @@
 
           <section id="management-panel-roles" class="management-panel" role="tabpanel" data-management-panel="roles" aria-labelledby="management-tab-roles" hidden>
             <header class="panel-heading"><div><h3 id="roles-heading">누가 어떤 책임으로 일하는가</h3><p>프로필은 모델 이름이 아니라 권한과 책임, 호출 시점을 고정하는 역할 계약입니다.</p></div></header>
-            <div class="role-flow" aria-label="역할 실행 순서"><span>디렉터 지휘</span><i>→</i><span>워커 구현</span><i>→</i><span>전문 검토</span><i>→</i><span>수정</span><i>→</i><span>품질 판정</span></div>
+            <div class="role-flow" aria-label="역할 실행 순서"><span>디렉터 지휘</span><i class="flow-arrow" aria-hidden="true"></i><span>워커 구현</span><i class="flow-arrow" aria-hidden="true"></i><span>전문 검토</span><i class="flow-arrow" aria-hidden="true"></i><span>수정</span><i class="flow-arrow" aria-hidden="true"></i><span>품질 판정</span></div>
             <div class="role-browser"><div id="profile-list" class="profile-list"></div><article id="profile-detail" class="profile-detail"></article></div>
           </section>
 

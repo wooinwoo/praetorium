@@ -9,7 +9,8 @@ const SCHEDULER_GRACE_MS = 30000;
 const UI_PREFERENCES_KEY = 'praetorium-owner-console-ui-v4';
 const WORKER_STREAM_VIEWS = new Set(['checkpoints', 'activity', 'commands', 'evidence']);
 const WORKSPACE_VIEWS = new Set(['overview', 'director', 'detail']);
-const DEFAULT_SIDEBAR_WIDTH = 248;
+const DEFAULT_SIDEBAR_WIDTH = 264;
+const MOBILE_SIDEBAR_WIDTH = 60;
 const SPLITTER_KEYBOARD_STEP = 16;
 const renderedHtml = new WeakMap();
 
@@ -156,7 +157,7 @@ function setPanelDimension(value, { persist = true, storePreference = true } = {
   if (storePreference) state.uiPreferences.dimensions = { ...state.uiPreferences.dimensions, sidebarWidth: next };
   if (persist) persistUiPreferences();
   if (typeof document !== 'undefined') {
-    const applied = window.matchMedia(NARROW_VIEW_QUERY).matches ? 64 : next;
+    const applied = window.matchMedia(NARROW_VIEW_QUERY).matches ? MOBILE_SIDEBAR_WIDTH : next;
     document.documentElement.style.setProperty('--rail', `${applied}px`);
     const splitter = $('sidebar-splitter');
     splitter?.setAttribute('aria-valuenow', String(next));
@@ -2073,7 +2074,7 @@ function renderTrace() {
   if (!run && !goal) {
     const director = selectedDirector();
     updateHtml(root, director?.kind === 'project' && !director.cwd
-      ? '<div class="trace-empty onboarding-empty"><strong>목표를 맡길 준비를 시작하세요</strong><span>프로젝트 연결 → 목표·완료 기준 입력 → 실행·검증 추적 순서로 진행됩니다.</span><ol><li class="current"><b>1</b>로컬 프로젝트 연결</li><li><b>2</b>목표와 완료 기준 입력</li><li><b>3</b>Worker 실행과 검증 확인</li></ol></div>'
+      ? '<div class="trace-empty onboarding-empty"><strong>목표를 맡길 준비를 시작하세요</strong><span>프로젝트 연결부터 목표·완료 기준 입력, 실행·검증 추적 순서로 진행됩니다.</span><ol><li class="current"><b>1</b>로컬 프로젝트 연결</li><li><b>2</b>목표와 완료 기준 입력</li><li><b>3</b>Worker 실행과 검증 확인</li></ol></div>'
       : '<div class="trace-empty"><strong>실행 흐름이 아직 없습니다</strong><span>오른쪽 입력창에 기능, 버그, API 명세나 완료 기준을 보내면 분석·계획·Worker 실행·검증이 시간순으로 표시됩니다.</span></div>');
     updateHtml($('trace-summary'), '<span><i></i>단계 0개</span>');
     return;
@@ -3385,7 +3386,7 @@ function renderSkills() {
   $('skill-list').innerHTML = SKILL_GROUPS.map(([label, groupIds]) => {
     const available = groupIds.filter(id => skills[id]);
     if (!available.length) return '';
-    return `<section><h4>${label}</h4>${available.map(id => `<button type="button" class="skill-row ${id === state.selectedSkillId ? 'active' : ''}" data-skill="${escapeHtml(id)}" aria-pressed="${id === state.selectedSkillId}"><span><strong>${escapeHtml(id)}</strong><small>${escapeHtml(skills[id])}</small></span><b>→</b></button>`).join('')}</section>`;
+    return `<section><h4>${label}</h4>${available.map(id => `<button type="button" class="skill-row ${id === state.selectedSkillId ? 'active' : ''}" data-skill="${escapeHtml(id)}" aria-pressed="${id === state.selectedSkillId}"><span><strong>${escapeHtml(id)}</strong><small>${escapeHtml(skills[id])}</small></span><b class="inline-chevron" aria-hidden="true"></b></button>`).join('')}</section>`;
   }).join('');
   document.querySelectorAll('[data-skill]').forEach(button => button.addEventListener('click', () => {
     state.selectedSkillId = button.dataset.skill;
@@ -3463,7 +3464,8 @@ function openManagement(tab = 'projects') {
 }
 
 function initTheme() {
-  const saved = localStorage.getItem('praetorium-theme') === 'light' ? 'light' : 'dark';
+  const savedTheme = localStorage.getItem('praetorium-theme');
+  const saved = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'light';
   const apply = theme => {
     document.documentElement.dataset.theme = theme;
     const nextLabel = theme === 'light' ? '다크 테마로 전환' : '라이트 테마로 전환';
