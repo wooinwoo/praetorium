@@ -127,12 +127,12 @@ test('Owner console bounds long trace DOM and keeps wave collapse independent fr
   assert.doesNotMatch(js, /concealed: !expanded && state\.traceFilters/);
 });
 
-test('Owner console provides readable evidence text and modal semantics on narrow screens', async () => {
+test('Owner console provides readable evidence text and removes hidden offscreen focus traps', async () => {
   const [html, css, js] = await Promise.all([source('index.html'), source('css/owner-console.css'), source('js/owner-console.js')]);
   assert.match(html, /aria-describedby="inspector-subtitle"/);
-  assert.match(js, /pane\.setAttribute\('role', 'dialog'\)/);
-  assert.match(js, /pane\.setAttribute\('aria-modal', 'true'\)/);
-  assert.match(js, /function trapInspectorFocus/);
+  assert.match(html, /class="command-pane workspace-panel"[\s\S]*role="tabpanel"/);
+  assert.match(js, /panel\.inert = panel\.hidden/);
+  assert.doesNotMatch(js, /function trapInspectorFocus/);
   assert.match(js, /Math\.max\(\.9, Math\.min\(1\.25/);
   assert.match(css, /font-size: calc\(14px \* var\(--ui-scale\)\)/);
   assert.match(css, /\.raw-worker-log pre[\s\S]*font: \.857rem\/1\.6/);
@@ -181,7 +181,7 @@ test('Owner Goal controls confirm exact destructive scope and preserve server re
   assert.equal(_test.goalControlSuccessMessage('reorder', { queuePosition: 1, previousPosition: 3 }), '대기열 #1로 이동했습니다 · 이전 #3.');
 });
 
-test('Owner console keeps the Goal, public judgement, current Wave, and gate hierarchy above overlay activity', async () => {
+test('Owner console uses resizable rail and overview, Director chat, and Worker workspace tabs', async () => {
   const [html, css, js] = await Promise.all([source('index.html'), source('css/owner-console.css'), source('js/owner-console.js')]);
   assert.match(html, /class="mission-sticky"/);
   assert.match(html, /디렉터 공개 판단/);
@@ -189,37 +189,47 @@ test('Owner console keeps the Goal, public judgement, current Wave, and gate hie
   assert.match(html, /완료 게이트/);
   assert.match(html, /실행 활동/);
   assert.match(html, /data-panel-section="goal-queue"/);
-  assert.match(html, /id="trace-splitter"[\s\S]*role="separator"[\s\S]*aria-orientation="horizontal"/);
-  assert.match(html, /id="inspector-splitter"[\s\S]*role="separator"[\s\S]*aria-orientation="vertical"/);
+  assert.match(html, /id="sidebar-splitter"[\s\S]*role="separator"[\s\S]*aria-orientation="vertical"/);
+  assert.match(html, /id="workspace-tabs"[\s\S]*role="tablist"/);
+  assert.match(html, /class="skip-link" href="#workspace-content"/);
+  assert.match(html, /id="workspace-content" tabindex="-1"/);
+  assert.match(html, /data-workspace-view="overview"[\s\S]*종합/);
+  assert.match(html, /data-workspace-view="director"[\s\S]*디렉터 채팅/);
+  assert.match(html, /id="workspace-worker-tabs"/);
   assert.match(html, /id="composer-scope"/);
   assert.match(js, /const labels = \['명세 확인', '계획', '구현', '전문 리뷰', '품질 게이트', '완료'\]/);
   assert.match(js, /function renderCurrentWave/);
   assert.match(js, /function renderGateRunway/);
+  assert.match(js, /function renderWorkspaceTabs/);
+  assert.match(js, /data-workspace-task/);
   assert.match(js, /function initPanelSplitter/);
-  assert.match(js, /const inspectorOverlay = window\.matchMedia\(NARROW_VIEW_QUERY\)\.matches/);
-  assert.match(js, /state\.uiPreferences\.inspectorFullscreen/);
   assert.match(js, /setPointerCapture/);
   assert.match(js, /releasePointerCapture/);
   assert.match(js, /splitter\.addEventListener\('dblclick'/);
   assert.match(js, /SPLITTER_KEYBOARD_STEP/);
-  assert.match(js, /dimensions: \{ activityHeight: DEFAULT_ACTIVITY_HEIGHT, inspectorWidth: DEFAULT_INSPECTOR_WIDTH \}/);
-  assert.match(css, /\.inspector-splitter[\s\S]*cursor: ew-resize/);
-  assert.match(css, /\.trace-splitter[\s\S]*cursor: ns-resize/);
-  assert.match(css, /body\.inspector-fullscreen \.command-pane/);
-  assert.match(css, /calc\(var\(--activity-height, 216px\) \+ 32px\)/);
+  assert.match(js, /sidebarWidth: DEFAULT_SIDEBAR_WIDTH/);
+  assert.match(js, /NARROW_VIEW_QUERY = '\(max-width: 520px\)'/);
+  assert.match(js, /scrollIntoView\(\{ block: 'nearest', inline: 'nearest' \}\)/);
+  assert.match(css, /\.sidebar-splitter[\s\S]*cursor: ew-resize/);
+  assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: auto minmax\(0, 1fr\)/);
+  assert.match(css, /\.trace-section[\s\S]*position: relative/);
   assert.match(css, /body\.activity-collapsed \.mission-pane/);
-  assert.match(css, /@media \(min-width: 1041px\)[\s\S]*grid-template-columns: var\(--rail\) minmax\(0, 1fr\) var\(--inspector-width\)/);
+  assert.doesNotMatch(css, /@media \(min-width: 1041px\)[\s\S]*var\(--inspector-width\)/);
   assert.match(css, /\.danger-button[\s\S]*var\(--red\)/);
   assert.match(css, /\.intervention-receipt\.failed/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*min-height: 44px/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.activity-title h2 \{ display: none; \}/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.project-editor-grid \{ grid-template-columns: minmax\(0, 1fr\)/);
+  assert.equal(_test.workspaceViewKind('task:t-1'), 'task');
+  assert.equal(_test.workspaceViewKind('unknown'), 'overview');
 });
 
-test('Session status stays visible, activity opens on first run, and Alt+End follows trace focus', async () => {
+test('Session status stays visible, activity opens on first run, and Alt+End follows nearest scroll owner', async () => {
   const [css, js] = await Promise.all([source('css/owner-console.css'), source('js/owner-console.js')]);
   assert.match(js, /collapsed: \{ 'active-goal': false, 'goal-queue': true, activity: false/);
-  assert.match(js, /document\.activeElement\?\.closest\('\.trace-section'\)[\s\S]*activity\?\.querySelector\('\.panel-content'\)/);
+  assert.match(js, /function nearestScrollSurface/);
+  assert.match(js, /nearestScrollSurface\(document\.activeElement\)/);
+  assert.match(js, /workflow-dialog'\)\.querySelector\('\.sheet-card'\)/);
   assert.match(css, /@media \(max-width: 1180px\)[\s\S]*#connection-state \{ display: none; \}/);
   assert.doesNotMatch(css, /\.topbar-actions \.signal:first-child \{ display: none; \}/);
 });
@@ -239,14 +249,17 @@ test('Runtime management exposes WSL2 metadata, failures, and shell-specific rec
   assert.match(css, /\.panel-toggle\.icon i[\s\S]*border-right/);
 });
 
-test('Owner console persists collapse, size, detail, wave, conversation, and evidence view preferences', async () => {
+test('Owner console persists collapse, sidebar size, workspace, detail, wave, and evidence view preferences', async () => {
   const js = await source('js/owner-console.js');
   assert.match(js, /praetorium-owner-console-ui-v4/);
   assert.match(js, /detailExpansion/);
   assert.match(js, /waveExpansion/);
   assert.match(js, /workerViews/);
   assert.match(js, /rawLogs/);
-  assert.match(js, /conversationOpen/);
+  assert.match(js, /workspaceView/);
+  assert.match(js, /workspaceDirectorId/);
+  assert.match(js, /initialWorkspaceTaskId/);
+  assert.match(js, /sidebarWidth/);
   assert.match(js, /data-detail-key/);
   assert.equal(_test.detailDefaultOpen('현재 감독 단계'), true);
   assert.equal(_test.detailDefaultOpen('완료 기준'), false);
@@ -265,6 +278,8 @@ test('Worker detail separates public checkpoints, lifecycle, commands, raw evide
   assert.doesNotMatch(js, /state\.rawLogOpen \?\? task\.status === 'running'/);
   assert.match(css, /\.worker-stream-tabs/);
   assert.match(css, /\.intervention-timeline/);
+  assert.match(js, /\['ArrowLeft', 'ArrowRight', 'Home', 'End'\]/);
+  assert.match(js, /tabindex="\$\{activeView === view \? 0 : -1\}"/);
 });
 
 test('Director public checkpoint story reads facts through Owner decision without mislabeling review as blocked', () => {
@@ -300,8 +315,8 @@ test('Owner console exposes a visible theme state and real light-theme tokens', 
 
 test('Primary operational labels are shown in Korean while internal status keys stay stable', async () => {
   const [html, js] = await Promise.all([source('index.html'), source('js/owner-console.js')]);
-  for (const copy of ['목표 대기열', '디렉터 공개 판단', '현재 작업 묶음', '완료 게이트', '실행 활동', '받는 곳', '전체 화면']) assert.match(html, new RegExp(copy));
-  for (const copy of ['전달 대기', '전달 실패', '접수됨 · 워커 확인 대기', '워커 확인됨', '오너 개입']) assert.match(js, new RegExp(copy));
+  for (const copy of ['목표 대기열', '디렉터 공개 판단', '현재 작업 묶음', '완료 게이트', '실행 활동', '받는 곳', '디렉터 채팅']) assert.match(html, new RegExp(copy));
+  for (const copy of ['전달 대기', '전달 실패', '접수됨 · 워커 확인 대기', '워커 확인됨', '오너 개입', '워커 채널']) assert.match(js, new RegExp(copy));
   assert.doesNotMatch(html, />\s*(?:Worker|Gate|TO|FOLLOW LIVE|PIN|S\/M\/L)\s*</);
   assert.equal(
     _test.localizeOperationalCopy('Director 자동 평가 실패 · Owner 판단 대기 · Worker Wave checkpoint'),

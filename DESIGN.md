@@ -160,7 +160,7 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 ### Neutral
 
 - **Matte Void / Navigation Night:** Establish the dark canvas and fixed navigation rail.
-- **Surface / Surface Subtle / Surface Hover:** Separate the Inspector, controls, compact rows, and hover states through tone rather than elevation.
+- **Surface / Surface Subtle / Surface Hover:** Separate workspace channels, controls, compact rows, and hover states through tone rather than elevation.
 - **Primary / Secondary / Muted / Faint Text:** Form a four-step information hierarchy. Paths, descriptions, timestamps, and supporting labels move down this scale; operationally important values stay at primary or secondary.
 - **Hairline / Hairline Strong:** Divide panes, rows, fields, and selected containers without turning every region into a card.
 - **Light Canvas Family:** Mirrors the neutral hierarchy in light mode. Do not convert the console to pure-white page sections or dark text on saturated fills.
@@ -186,8 +186,8 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 ### Hierarchy
 
 - **Headline** (600, fluid 1.28–1.72rem, 1.24): One mission title. Keep it compact, balanced, and capped at roughly 76 characters per line.
-- **Title** (600, about .96rem, 1.4): Pane and section headings, Inspector headings, and management-panel headings.
-- **Body** (400, about .75–.8rem, 1.55–1.65): Descriptions, evidence, help text, and Inspector prose. Reading blocks stay near 68–72 characters wide.
+- **Title** (600, about .96rem, 1.4): Pane, section, workspace-channel, and management-panel headings.
+- **Body** (400, about .75–.8rem, 1.55–1.65): Descriptions, evidence, help text, and channel prose. Reading blocks stay near 68–72 characters wide.
 - **Label** (500–600, about .61–.73rem): Control text, row titles, field labels, and compact state copy.
 - **Mono** (400–600, about .55–.68rem): Paths, task and run IDs, board names, commands, timestamps, counters, runtime badges, keyboard hints, and uppercase overlines. Use tabular numerals for counts and elapsed time.
 
@@ -201,33 +201,32 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 
 ## Layout
 
-The desktop shell is a fixed-height three-column grid beneath a 68px top bar. Its default columns are a 248px Director rail, a central trace with a 520px minimum, and an Inspector clamped between 390px and 470px at roughly 30vw. The shell itself never scrolls; the Director list, mission trace, Inspector, conversation stream, dialog bodies, profile browser, and raw logs own their relevant scroll surfaces. Stable scrollbar gutters and contained overscroll prevent adjacent panes from jumping or chaining unexpectedly.
+The desktop shell is a fixed-height two-region grid beneath the top bar: a 248px Director rail, an 8px resize boundary, and one fluid workspace. The workspace has a persistent tab row and exactly one active panel. The shell itself never scrolls; the Director list, active workspace panel, dialog bodies, and profile browser own their relevant scroll surfaces. Stable scrollbar gutters and contained overscroll prevent adjacent panes from jumping or chaining unexpectedly.
 
-The center pane uses 28px vertical padding and fluid horizontal padding from 22px to 42px. Its rhythm is compact: 4–12px within a datum or control, 16–18px within a container, and 24–28px between operational sections. The chronological trace is a vertical rail with 31px markers, one-pixel connectors, shallow indentation for child work, and time/status aligned at the trailing edge. Detail opens in the Inspector; it does not replace the trace as primary navigation.
+The Overview tab uses 28px vertical padding and fluid horizontal padding from 22px to 42px. Its rhythm is compact: 4–12px within a datum or control, 16–18px within a container, and 24–28px between operational sections. The chronological trace is a vertical rail with 31px markers, one-pixel connectors, shallow indentation for child work, and time/status aligned at the trailing edge. Selected evidence opens in a temporary Detail tab; it does not replace the trace as the stable return point.
 
-At 1280px and below, the sidebar reduces to 210px and the Inspector to 390px. At 1040px and below, the Director rail becomes a 62px icon/index rail with hover and keyboard tooltips, nonessential top-bar signals collapse, and the Inspector remains a 360px third column. At 820px and below, the Inspector leaves the grid and becomes a right-edge overlay below the top bar, opened by an explicit toggle and focused programmatically; the trace remains visible underneath. At 560px and below, the top bar and rail tighten to 60px and 48px, trace metadata wraps beneath its row, forms and runtime details stack, and primary task actions expand to usable widths.
+The Director rail is user-resizable from 180px to 360px and does not collapse merely because browser zoom changes a breakpoint. At 520px and below, it becomes a 64px index rail and the splitter is removed. Workspace tabs remain horizontally scrollable, while summaries, Worker rows, gates, forms, and runtime details stack according to the active panel's container width.
 
-The supported 900×640 operating window must retain independent scrolling and access to the composer, Inspector, and management controls. At narrow widths, interactive controls have a minimum 44px touch target. Text scale is user-controlled from 90% to 125% and persisted; layouts must tolerate the full range without hiding evidence or creating page-level horizontal scrolling.
+The supported 900×640 operating window must retain independent scrolling and access to the Overview, Director composer, Worker controls, and management controls. At narrow widths, interactive controls have a minimum 44px touch target. Text scale is user-controlled from 90% to 125% and persisted; layouts must tolerate the full range without hiding evidence or creating page-level horizontal scrolling.
 
 ### Named Rules
 
-**The Splitters Stay Put Rule.** On wide layouts, a vertical splitter on the Inspector boundary changes Inspector width continuously while dragged, and a horizontal splitter on the activity boundary changes activity-region height. Both separators are keyboard-focusable and accept Arrow keys for the matching dimension. Values are clamped to preserve usable adjacent panes, saved in `localStorage`, and restored without rerender jitter. Double-click restores the documented default. At overlay breakpoints, the Inspector splitter is inactive because width is governed by the responsive overlay.
+**The Rail Splitter Stays Put Rule.** On wide layouts, the vertical splitter changes Director rail width continuously while dragged. The separator is keyboard-focusable, accepts Left and Right Arrow keys, clamps the rail to preserve a usable workspace, saves its value in `localStorage`, and restores it without rerender jitter. Double-click restores 248px. At the compact breakpoint, the rail is fixed at 64px and the splitter is absent.
 
 **The Trace Owns the Center Rule.** Summaries may orient the Owner, but chronological evidence remains the main canvas and the stable return point.
 
-**The Inspector Stays Adjacent Rule.** Put explanation, raw evidence, intervention, pause/resume, and conversation beside the selected trace item. On narrow screens, preserve the same relationship in the right-side overlay rather than creating a separate dashboard route.
+**The Channels Stay Explicit Rule.** The workspace tab row always starts with Overview and Director Chat. Each current Worker receives its own tab, containing Owner instructions, public checkpoints, activity, commands, evidence, and pause or resume controls. Non-Worker trace selections receive a temporary Detail tab. Hidden panels are inert and cannot capture focus.
 
 **The Runtime Has a Place Rule.** Show the active runtime near mission context and project identity. Windows and WSL labels, paths, diagnostics, and setup guidance must not be collapsed into a generic “local” state.
 
 ## Elevation & Depth
 
-Praetorium is flat by default. Depth comes from tonal steps and one-pixel hairlines, not from a stack of floating cards. The only persistent accent shadow belongs to the compact brand mark. Strong shadows are reserved for Inspector overlays, dialogs, tooltips, and transient toasts; modal backdrops darken and blur the underlying console because they suspend the current operating context.
+Praetorium is flat by default. Depth comes from tonal steps and one-pixel hairlines, not from a stack of floating cards. The only persistent accent shadow belongs to the compact brand mark. Strong shadows are reserved for dialogs, tooltips, and transient toasts; modal backdrops darken and blur the underlying console because they suspend the current operating context.
 
 ### Shadow Vocabulary
 
 - **Accent Mark** (`0 7px 20px rgba(97, 78, 216, .25)`): Brand mark only.
 - **Floating Surface** (`0 22px 70px rgba(0, 0, 0, .38)`): Dialogs and compressed-rail tooltips.
-- **Inspector Overlay** (`-22px 0 60px rgba(0, 0, 0, .42)`): Narrow-screen right Inspector only.
 - **Toast** (`0 12px 36px rgba(0, 0, 0, .35)`): Transient status feedback only.
 
 ### Named Rules
@@ -246,13 +245,13 @@ Badges are short labels, not decorative pills. Cards do not float, scale, or ado
 
 The trace is the signature component and primary navigation. Each node combines a numbered circular marker, task kind, concise title, one-line evidence summary, small metadata tags, status, and time. Running and complete states use affirmative status color; waiting and setup use amber; blocked and failed use red. Selection adds a restrained violet tonal background without changing the underlying status color. Child work indents by one shallow level and retains the same connector rail.
 
-### Inspector
+### Workspace Channels
 
-The Inspector is a structured evidence surface with a header, independently scrolling content, optional Owner–Director conversation, and a fixed composer. Its groups use hairline separators, uppercase mono labels, readable prose, code blocks, event lists, reasoning entries, and collapsible raw logs. Owner controls sit inside a violet-soft intervention region; destructive controls remain outlined red. Intervention receipts expose four non-interchangeable states: delivery pending is amber, delivery failed is red, accepted/queued is a confirmed Hermes receipt, and Worker observed is later Worker-authored evidence. “Large view” opens the current Inspector content in a native modal dialog.
+Director Chat is a full-height channel with an independently scrolling conversation and a fixed composer. Worker tabs are structured evidence channels with one outer scroll surface; their groups use hairline separators, uppercase mono labels, readable prose, code blocks, event lists, reasoning entries, and collapsible raw logs. Owner controls sit inside a violet-soft intervention region; destructive controls remain outlined red. Intervention receipts expose four non-interchangeable states: delivery pending is amber, delivery failed is red, accepted/queued is a confirmed Hermes receipt, and Worker observed is later Worker-authored evidence.
 
-On wide screens the Inspector is the third column and is always available. At 820px and below it is hidden until opened as a right overlay, the toggle exposes `aria-expanded`, focus moves to the pane, and Escape closes it. Do not change the overlay into a bottom sheet: command composition and evidence logs need vertical continuity and predictable width.
+Only the active workspace panel is visible and focusable. Overview, Director Chat, Worker channels, and temporary Detail use the same available width at every breakpoint. This avoids offscreen focus traps and preserves vertical continuity for command composition and evidence logs.
 
-The Inspector-width splitter sits on the pane boundary rather than inside the content controls. It exposes separator semantics, the current clamped value, and a visible keyboard focus state. The activity-height splitter follows the same contract above the activity region; neither handle may move content merely because trace data refreshed.
+The workspace tab list supports click, Left and Right Arrow, Home, and End navigation with roving `tabindex`. Worker evidence sub-tabs follow the same keyboard contract. Polling may update content and status but must preserve the active tab, focused control, horizontal tab position, and active panel scroll position.
 
 ### Buttons
 
@@ -284,7 +283,7 @@ Toasts use `role="status"` and a polite live region, appear at the bottom center
 
 ### Do:
 
-- **Do** lead with the current mission and chronological execution trace; reveal analysis, plans, commands, logs, reviews, and controls in the adjacent Inspector.
+- **Do** lead with the current mission and chronological execution trace; reveal Director conversation, Worker channels, and selected evidence through explicit workspace tabs.
 - **Do** use Owner Violet sparingly for focus, selection, steering, and committed Owner actions.
 - **Do** reserve green for affirmative runtime and execution truth, and pair every colored status with text or another non-color cue.
 - **Do** keep Windows and each WSL distribution explicit in badges, field semantics, paths, readiness, profiles, and setup guidance.

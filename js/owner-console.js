@@ -1,29 +1,29 @@
 const MAX_PROJECTS = 3;
 const POLL_INTERVAL_MS = 3000;
 const TASK_POLL_INTERVAL_MS = 2800;
-const NARROW_VIEW_QUERY = '(max-width: 1040px)';
+const NARROW_VIEW_QUERY = '(max-width: 520px)';
 const TRACE_LIVE_LIMIT = 160;
 const TRACE_LOAD_STEP = 160;
 const DIRECTOR_INFERENCE_STALE_MS = 600000;
 const SCHEDULER_GRACE_MS = 30000;
 const UI_PREFERENCES_KEY = 'praetorium-owner-console-ui-v4';
 const WORKER_STREAM_VIEWS = new Set(['checkpoints', 'activity', 'commands', 'evidence']);
-const DEFAULT_INSPECTOR_WIDTH = 440;
-const DEFAULT_ACTIVITY_HEIGHT = 216;
+const WORKSPACE_VIEWS = new Set(['overview', 'director', 'detail']);
+const DEFAULT_SIDEBAR_WIDTH = 248;
 const SPLITTER_KEYBOARD_STEP = 16;
 const renderedHtml = new WeakMap();
 
 function loadUiPreferences() {
   const fallback = {
     collapsed: { 'active-goal': false, 'goal-queue': true, activity: false, attention: false, 'owner-gate': false, inspector: true },
-    dimensions: { activityHeight: DEFAULT_ACTIVITY_HEIGHT, inspectorWidth: DEFAULT_INSPECTOR_WIDTH },
+    dimensions: { sidebarWidth: DEFAULT_SIDEBAR_WIDTH },
     detailExpansion: {},
     waveExpansion: {},
     workerViews: {},
     rawLogs: {},
     traceFilters: ['decision', 'worker', 'gate', 'failure'],
-    conversationOpen: false,
-    inspectorFullscreen: false,
+    workspaceView: 'overview',
+    workspaceDirectorId: null,
   };
   if (typeof localStorage === 'undefined') return fallback;
   try {
@@ -49,6 +49,10 @@ function saveUiPreferences(preferences) {
 }
 
 const initialUiPreferences = loadUiPreferences();
+const initialWorkspaceView = initialUiPreferences.workspaceView === 'director' || String(initialUiPreferences.workspaceView).startsWith('task:')
+  ? initialUiPreferences.workspaceView
+  : 'overview';
+const initialWorkspaceTaskId = String(initialWorkspaceView).startsWith('task:') ? String(initialWorkspaceView).slice(5) : null;
 
 const state = {
   summary: null,
@@ -67,14 +71,15 @@ const state = {
   selectedProfileId: null,
   selectedSkillId: null,
   managementTab: 'projects',
-  selectedId: 'project-director-1',
+  selectedId: initialUiPreferences.workspaceDirectorId || 'project-director-1',
   selectedGoalId: null,
   goalSubmissionReceipt: null,
   goalControlReceipt: null,
   openGoalControlId: null,
   board: [],
   boardStatus: null,
-  selection: { type: 'overview', id: null },
+  selection: initialWorkspaceTaskId ? { type: 'task', id: initialWorkspaceTaskId } : { type: 'overview', id: null },
+  workspaceView: initialWorkspaceView,
   taskDetail: null,
   taskTrace: null,
   taskError: null,
@@ -90,7 +95,6 @@ const state = {
   goalDetailLoadedAt: 0,
   goalDetailRevision: null,
   inspectorRenderKey: null,
-  inspectorOpener: null,
   interventionDraft: '',
   interventionComposing: false,
   interventionReceipt: null,
@@ -133,30 +137,26 @@ function setPanelCollapsed(key, collapsed) {
   applyPanelPreferences();
 }
 
-function panelDimensionBounds(kind) {
-  if (kind === 'inspector') {
-    const viewport = typeof window === 'undefined' ? 1600 : window.innerWidth;
-    return { min: 360, max: Math.max(420, Math.min(640, viewport - 560)), fallback: DEFAULT_INSPECTOR_WIDTH };
-  }
-  const viewport = typeof window === 'undefined' ? 1000 : window.innerHeight;
-  return { min: 140, max: Math.max(216, Math.round(viewport * .55)), fallback: DEFAULT_ACTIVITY_HEIGHT };
+function panelDimensionBounds() {
+  const viewport = typeof window === 'undefined' ? 1440 : window.innerWidth;
+  return { min: 180, max: Math.max(240, Math.min(360, viewport - 520)), fallback: DEFAULT_SIDEBAR_WIDTH };
 }
 
-function panelDimension(kind) {
-  const bounds = panelDimensionBounds(kind);
-  const raw = kind === 'inspector' ? state.uiPreferences.dimensions?.inspectorWidth : state.uiPreferences.dimensions?.activityHeight;
+function panelDimension() {
+  const bounds = panelDimensionBounds();
+  const raw = state.uiPreferences.dimensions?.sidebarWidth;
   return Math.round(Math.max(bounds.min, Math.min(bounds.max, Number(raw) || bounds.fallback)));
 }
 
-function setPanelDimension(kind, value, { persist = true, storePreference = true } = {}) {
-  const bounds = panelDimensionBounds(kind);
+function setPanelDimension(value, { persist = true, storePreference = true } = {}) {
+  const bounds = panelDimensionBounds();
   const next = Math.round(Math.max(bounds.min, Math.min(bounds.max, Number(value) || bounds.fallback)));
-  const key = kind === 'inspector' ? 'inspectorWidth' : 'activityHeight';
-  if (storePreference) state.uiPreferences.dimensions = { ...state.uiPreferences.dimensions, [key]: next };
+  if (storePreference) state.uiPreferences.dimensions = { ...state.uiPreferences.dimensions, sidebarWidth: next };
   if (persist) persistUiPreferences();
   if (typeof document !== 'undefined') {
-    document.documentElement.style.setProperty(kind === 'inspector' ? '--inspector-width' : '--activity-height', `${next}px`);
-    const splitter = $(kind === 'inspector' ? 'inspector-splitter' : 'trace-splitter');
+    const applied = window.matchMedia(NARROW_VIEW_QUERY).matches ? 64 : next;
+    document.documentElement.style.setProperty('--rail', `${applied}px`);
+    const splitter = $('sidebar-splitter');
     splitter?.setAttribute('aria-valuenow', String(next));
     splitter?.setAttribute('aria-valuetext', `${next}픽셀`);
     splitter?.setAttribute('aria-valuemax', String(bounds.max));
@@ -178,27 +178,8 @@ function applyPanelPreferences() {
       if (button.classList.contains('icon')) button.setAttribute('aria-label', `${baseLabel} ${collapsed ? '펼치기' : '접기'}`);
     });
   });
-  setPanelDimension('inspector', panelDimension('inspector'), { persist: false, storePreference: false });
-  setPanelDimension('activity', panelDimension('activity'), { persist: false, storePreference: false });
-  if (!window.matchMedia(NARROW_VIEW_QUERY).matches) document.body.classList.toggle('inspector-collapsed', panelIsCollapsed('inspector'));
+  setPanelDimension(panelDimension(), { persist: false, storePreference: false });
   document.body.classList.toggle('activity-collapsed', panelIsCollapsed('activity'));
-  document.body.classList.toggle('inspector-fullscreen', Boolean(state.uiPreferences.inspectorFullscreen));
-  const expand = $('inspector-expand');
-  if (expand) {
-    expand.textContent = state.uiPreferences.inspectorFullscreen ? '기본 보기' : '전체 화면';
-    expand.setAttribute('aria-pressed', String(Boolean(state.uiPreferences.inspectorFullscreen)));
-  }
-}
-
-function setInspectorFullscreen(fullscreen) {
-  state.uiPreferences.inspectorFullscreen = Boolean(fullscreen);
-  state.uiPreferences.collapsed = { ...state.uiPreferences.collapsed, inspector: false };
-  persistUiPreferences();
-  applyPanelPreferences();
-  if (fullscreen) {
-    document.body.classList.remove('inspector-collapsed');
-    $('inspector-toggle')?.setAttribute('aria-expanded', 'true');
-  }
 }
 
 function detailPreferenceKey(title) {
@@ -222,48 +203,45 @@ function workerStreamView(taskId) {
   return WORKER_STREAM_VIEWS.has(value) ? value : 'checkpoints';
 }
 
-function initPanelSplitter(kind) {
-  const splitter = $(kind === 'inspector' ? 'inspector-splitter' : 'trace-splitter');
+function initPanelSplitter() {
+  const splitter = $('sidebar-splitter');
   if (!splitter) return;
   let drag = null;
-  const coordinate = event => kind === 'inspector' ? event.clientX : event.clientY;
+  const coordinate = event => event.clientX;
   const resizeFromPointer = event => {
     if (!drag || event.pointerId !== drag.pointerId) return;
     const movement = coordinate(event) - drag.startCoordinate;
-    const next = drag.startValue - movement;
-    setPanelDimension(kind, next, { persist: false });
+    setPanelDimension(drag.startValue + movement, { persist: false });
   };
   const endDrag = event => {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    setPanelDimension(kind, panelDimension(kind));
-    document.body.classList.remove(`resizing-${kind}`);
+    setPanelDimension(panelDimension());
+    document.body.classList.remove('resizing-sidebar');
     splitter.classList.remove('dragging');
     if (splitter.hasPointerCapture?.(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
     drag = null;
   };
   splitter.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
-    drag = { pointerId: event.pointerId, startCoordinate: coordinate(event), startValue: panelDimension(kind) };
+    drag = { pointerId: event.pointerId, startCoordinate: coordinate(event), startValue: panelDimension() };
     splitter.setPointerCapture?.(event.pointerId);
     splitter.classList.add('dragging');
-    document.body.classList.add(`resizing-${kind}`);
+    document.body.classList.add('resizing-sidebar');
     event.preventDefault();
   });
   splitter.addEventListener('pointermove', resizeFromPointer);
   splitter.addEventListener('pointerup', endDrag);
   splitter.addEventListener('pointercancel', endDrag);
-  splitter.addEventListener('dblclick', () => setPanelDimension(kind, kind === 'inspector' ? DEFAULT_INSPECTOR_WIDTH : DEFAULT_ACTIVITY_HEIGHT));
+  splitter.addEventListener('dblclick', () => setPanelDimension(DEFAULT_SIDEBAR_WIDTH));
   splitter.addEventListener('keydown', event => {
     let delta = 0;
-    if (kind === 'inspector' && event.key === 'ArrowLeft') delta = SPLITTER_KEYBOARD_STEP;
-    if (kind === 'inspector' && event.key === 'ArrowRight') delta = -SPLITTER_KEYBOARD_STEP;
-    if (kind === 'activity' && event.key === 'ArrowDown') delta = -SPLITTER_KEYBOARD_STEP;
-    if (kind === 'activity' && event.key === 'ArrowUp') delta = SPLITTER_KEYBOARD_STEP;
+    if (event.key === 'ArrowLeft') delta = -SPLITTER_KEYBOARD_STEP;
+    if (event.key === 'ArrowRight') delta = SPLITTER_KEYBOARD_STEP;
     if (!delta) return;
     event.preventDefault();
-    setPanelDimension(kind, panelDimension(kind) + delta);
+    setPanelDimension(panelDimension() + delta);
   });
-  setPanelDimension(kind, panelDimension(kind), { persist: false, storePreference: false });
+  setPanelDimension(panelDimension(), { persist: false, storePreference: false });
 }
 
 const FOCUS_KEYS = [
@@ -272,6 +250,7 @@ const FOCUS_KEYS = [
   'data-retry-task', 'data-open-projects', 'data-goal-task', 'data-owner-decision-option',
   'data-owner-decision-submit', 'data-trace-filter', 'data-wave-toggle',
   'data-retry-goal', 'data-goal-select', 'data-goal-control-menu-trigger', 'data-goal-control-key', 'data-load-older-trace', 'data-owner-decision-goal',
+  'data-worker-stream-view', 'data-workspace-task', 'data-workspace-view',
 ];
 
 function activeElementIdentity() {
@@ -848,12 +827,6 @@ function syncFocusDialog() {
   if (rawLogFocused) requestAnimationFrame(() => content.querySelector('[data-raw-worker-log-summary]')?.focus({ preventScroll: true }));
 }
 
-function openFocus(title) {
-  void title;
-  setInspectorFullscreen(true);
-  requestAnimationFrame(() => $('command-pane')?.focus?.({ preventScroll: true }));
-}
-
 function renderTopbar() {
   const director = selectedDirector();
   const sessions = state.summary?.sessions || { total: 0 };
@@ -1100,6 +1073,9 @@ function selectGoal(goalId, selectionType = 'overview') {
   }
   state.selectedGoalId = goalId;
   state.selection = { type: selectionType, id: selectionType === 'goal' ? goalId : null };
+  state.workspaceView = selectionType === 'overview' ? 'overview' : 'detail';
+  state.uiPreferences.workspaceView = state.workspaceView;
+  persistUiPreferences();
   state.goalDetail = null;
   state.goalDetailId = null;
   state.goalDetailError = null;
@@ -1411,6 +1387,102 @@ function workerRoleLabel(profile = '') {
   })[profile] || (profile ? '전문 워커' : '워커');
 }
 
+function workspaceViewKind(view = state.workspaceView) {
+  return String(view).startsWith('task:') ? 'task' : WORKSPACE_VIEWS.has(view) ? view : 'overview';
+}
+
+function workspaceWorkerTasks() {
+  const goal = selectedGoal();
+  const orderedIds = goal ? goalTaskIds(goal) : [];
+  const byId = new Map(state.board.map(task => [task.id, task]));
+  const tasks = orderedIds.map(id => byId.get(id)).filter(Boolean);
+  if (state.selection.type === 'task' && byId.has(state.selection.id) && !tasks.some(task => task.id === state.selection.id)) {
+    tasks.push(byId.get(state.selection.id));
+  }
+  return tasks.length ? tasks : currentOperationalTasks();
+}
+
+function workspaceDetailCopy() {
+  return ({
+    objective: '목표 원문', analysis: '판단 근거', plan: '실행 계획', wave: '배정 근거', assessment: '평가 근거',
+    'goal-event': '감독 이벤트', 'director-turn': '판단 턴', 'owner-decision': '오너 결정', final: '완료 증거', goal: '목표 기록',
+  })[state.selection.type] || '근거·제어';
+}
+
+function applyWorkspaceView() {
+  if (typeof document === 'undefined') return;
+  const kind = workspaceViewKind();
+  const overview = $('workspace-panel-overview');
+  const director = $('workspace-panel-director');
+  const detail = $('command-pane');
+  overview.hidden = kind !== 'overview';
+  director.hidden = kind !== 'director';
+  detail.hidden = !['detail', 'task'].includes(kind);
+  for (const panel of [overview, director, detail]) panel.inert = panel.hidden;
+  if (kind === 'task') {
+    const taskButton = [...document.querySelectorAll('[data-workspace-task]')].find(button => button.dataset.workspaceTask === state.selection.id);
+    detail.setAttribute('aria-labelledby', taskButton?.id || 'inspector-title');
+    $('inspector-eyebrow').textContent = '워커 채널 · 오너 지시와 공개 체크포인트';
+  } else {
+    detail.setAttribute('aria-labelledby', 'workspace-tab-detail');
+    $('inspector-eyebrow').textContent = '선택 상세';
+  }
+}
+
+function renderWorkspaceTabs() {
+  const workerRoot = $('workspace-worker-tabs');
+  if (!workerRoot) return;
+  const tasks = workspaceWorkerTasks();
+  const selectedTaskId = workspaceViewKind() === 'task' ? String(state.workspaceView).slice(5) : null;
+  if (selectedTaskId && state.summary && !state.boardStatus?.error && !tasks.some(task => task.id === selectedTaskId)) {
+    state.workspaceView = 'overview';
+    state.selection = { type: 'overview', id: null };
+    state.uiPreferences.workspaceView = 'overview';
+    persistUiPreferences();
+  }
+  const kind = workspaceViewKind();
+  const detailVisible = kind === 'detail' || !['overview', 'task'].includes(state.selection.type);
+  const detailTab = $('workspace-tab-detail');
+  detailTab.hidden = !detailVisible;
+  $('workspace-detail-label').textContent = workspaceDetailCopy();
+  const tabList = $('workspace-tabs');
+  const previousScrollLeft = tabList.scrollLeft;
+  const changed = updateHtml(workerRoot, tasks.map((task, index) => {
+    const record = goalTaskRecord(task.id);
+    const profile = record?.profile || actionForTask(task.id)?.target || '';
+    const active = kind === 'task' && state.selection.id === task.id;
+    return `<button id="workspace-tab-worker-${index + 1}" type="button" role="tab" data-workspace-task="${escapeHtml(task.id)}" aria-selected="${active}" aria-controls="command-pane" tabindex="${active ? 0 : -1}" title="${escapeHtml(task.title)}"><i class="status-dot ${traceStatus(task.status)}" aria-hidden="true"></i><span><b>${escapeHtml(workerRoleLabel(profile))}</b><small>${escapeHtml(task.title)}</small></span></button>`;
+  }).join(''));
+  if (changed) requestAnimationFrame(() => {
+    tabList.scrollLeft = previousScrollLeft;
+    if (workspaceViewKind() === 'task') {
+      const activeTask = [...workerRoot.querySelectorAll('[data-workspace-task]')].find(button => button.getAttribute('aria-selected') === 'true');
+      activeTask?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  });
+  const selectedView = kind === 'task' ? null : kind;
+  document.querySelectorAll('[data-workspace-view]').forEach(button => {
+    const active = button.dataset.workspaceView === selectedView;
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  applyWorkspaceView();
+}
+
+function setWorkspaceView(view, { focus = false, persist = true } = {}) {
+  const next = WORKSPACE_VIEWS.has(view) || String(view).startsWith('task:') ? view : 'overview';
+  state.workspaceView = next;
+  state.uiPreferences.workspaceView = next;
+  state.uiPreferences.workspaceDirectorId = state.selectedId;
+  if (persist) persistUiPreferences();
+  renderWorkspaceTabs();
+  if (focus) requestAnimationFrame(() => {
+    const selected = [...document.querySelectorAll('#workspace-tabs [role="tab"]')].find(button => button.getAttribute('aria-selected') === 'true');
+    selected?.focus({ preventScroll: true });
+    selected?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
+}
+
 function taskPublicCheckpoint(task, record = null) {
   const action = actionForTask(task?.id);
   if (task?.status === 'done' || task?.status === 'archived') return task?.result || record?.summary || '작업이 종료됐습니다. 상세 증거를 확인할 수 있습니다.';
@@ -1597,10 +1669,7 @@ function renderOwnerGate() {
         ${ownerDecisionForm(goal, { compact: true })}</div>`;
       bindDecisionActions(gate);
       gate.querySelector('[data-owner-decision-goal]')?.addEventListener('click', event => {
-        const opener = activeElementIdentity();
         selectGoal(event.currentTarget.dataset.ownerDecisionGoal, 'owner-decision');
-        setInspectorFullscreen(true);
-        if (window.matchMedia(NARROW_VIEW_QUERY).matches) setInspectorOpen(true, opener);
       });
     }
   } else if (tasks.length) {
@@ -2344,11 +2413,11 @@ function renderPublicTrace(details, log) {
       ? `<div class="worker-stream-heading"><div><b>워커 활동 흐름</b><span>실행기가 관찰한 생성·확보·실행·종료 이벤트</span></div></div><ol class="event-list worker-lifecycle">${eventsHtml || '<li class="stream-empty">아직 수명주기 이벤트가 없습니다.</li>'}</ol>`
       : activeView === 'commands'
         ? `<div class="worker-stream-heading"><div><b>실행 명령·결과</b><span>로컬 로그에서 식별된 도구 호출과 결과 신호</span></div></div>${observedSteps.length ? `<div class="observed-commands"><header><strong>관찰된 실행 단계</strong><span>${observedSteps.length}</span></header><ol>${observedSteps.map(step => `<li><i></i><code>${escapeHtml(step)}</code></li>`).join('')}</ol></div>` : '<div class="trace-placeholder">로그에서 식별된 명령·결과 신호가 아직 없습니다.</div>'}`
-        : `<div class="worker-stream-heading"><div><b>증거 원문</b><span>요약이 의심스러울 때 확인하는 로컬 실행 로그</span></div><button type="button" class="secondary-button" data-inspector-fullscreen>${state.uiPreferences.inspectorFullscreen ? '기본 보기' : '전체 화면'}</button></div>${logText ? `<details class="raw-worker-log" data-task-raw-log="${escapeHtml(task.id)}" ${rawLogOpen ? 'open' : ''}><summary data-raw-worker-log-summary>실행 로그 원문 <span>${logText.split(/\r?\n/).length}줄</span></summary><pre>${escapeHtml(logText)}</pre></details>` : state.taskTraceError ? '' : '<div class="trace-placeholder">워커 로그가 아직 생성되지 않았습니다.</div>'}`;
+        : `<div class="worker-stream-heading"><div><b>증거 원문</b><span>요약이 의심스러울 때 확인하는 로컬 실행 로그</span></div></div>${logText ? `<details class="raw-worker-log" data-task-raw-log="${escapeHtml(task.id)}" ${rawLogOpen ? 'open' : ''}><summary data-raw-worker-log-summary>실행 로그 원문 <span>${logText.split(/\r?\n/).length}줄</span></summary><pre>${escapeHtml(logText)}</pre></details>` : state.taskTraceError ? '' : '<div class="trace-placeholder">워커 로그가 아직 생성되지 않았습니다.</div>'}`;
   return `<div class="live-trace-head"><span class="live-indicator ${task.status === 'running' && !statusUncertain ? 'active' : ''}"><i></i>${statusText}</span><small>${state.taskError ? '최신 워커 상태를 확인하지 못함' : state.taskTrace?.observedAt ? `마지막 동기화 ${clockLabel(state.taskTrace.observedAt)}` : state.taskTraceError ? '동기화 실패' : '로그 동기화 중'}</small></div>
     ${traceError}
-    <div class="worker-stream-tabs" role="tablist" aria-label="워커 상세 보기">${tabs.map(([view, label, count]) => `<button type="button" role="tab" data-worker-stream-view="${view}" aria-selected="${activeView === view}" aria-controls="worker-stream-panel"><span>${label}</span><b>${count}</b></button>`).join('')}</div>
-    <section class="worker-stream-panel" id="worker-stream-panel" role="tabpanel">${viewHtml}</section>`;
+    <div class="worker-stream-tabs" role="tablist" aria-label="워커 상세 보기">${tabs.map(([view, label, count]) => `<button id="worker-stream-tab-${view}" type="button" role="tab" data-worker-stream-view="${view}" aria-selected="${activeView === view}" aria-controls="worker-stream-panel" tabindex="${activeView === view ? 0 : -1}"><span>${label}</span><b>${count}</b></button>`).join('')}</div>
+    <section class="worker-stream-panel" id="worker-stream-panel" role="tabpanel" aria-labelledby="worker-stream-tab-${activeView}">${viewHtml}</section>`;
 }
 
 function interventionHistoryHtml(interventions) {
@@ -2365,7 +2434,7 @@ function interventionHistoryHtml(interventions) {
 }
 
 function renderTaskInspector() {
-  $('inspector-title').textContent = '워커 실시간 추적';
+  $('inspector-title').textContent = '워커 채널';
   if (state.taskLoading && !state.taskDetail) return '<div class="inspector-loading">워커 실행 기록을 불러오는 중…</div>';
   if (state.taskError && !state.taskDetail) return inlineErrorHtml('워커 상세 정보를 불러오지 못했습니다', state.taskError, 'data-retry-task');
   const details = state.taskDetail;
@@ -2420,15 +2489,24 @@ function bindInspectorActions() {
       persistUiPreferences();
     }
   });
-  $('owner-inspector').querySelectorAll('[data-worker-stream-view]').forEach(button => button.addEventListener('click', () => {
+  const streamTabs = [...$('owner-inspector').querySelectorAll('[data-worker-stream-view]')];
+  const activateStreamTab = button => {
     const taskId = state.taskDetail?.task?.id;
     const view = button.dataset.workerStreamView;
     if (!taskId || !WORKER_STREAM_VIEWS.has(view)) return;
     state.uiPreferences.workerViews = { ...state.uiPreferences.workerViews, [taskId]: view };
     persistUiPreferences();
     renderInspector({ force: true });
-  }));
-  $('owner-inspector').querySelectorAll('[data-inspector-fullscreen]').forEach(button => button.addEventListener('click', () => setInspectorFullscreen(!state.uiPreferences.inspectorFullscreen)));
+  };
+  streamTabs.forEach(button => button.addEventListener('click', () => activateStreamTab(button)));
+  $('owner-inspector').querySelector('.worker-stream-tabs')?.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const current = streamTabs.indexOf(document.activeElement);
+    if (current < 0) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? streamTabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + streamTabs.length) % streamTabs.length;
+    activateStreamTab(streamTabs[nextIndex]);
+  });
   $('owner-inspector').querySelector('[data-send-intervention]')?.addEventListener('click', sendIntervention);
   $('owner-inspector').querySelectorAll('[data-worker-control]').forEach(button => button.addEventListener('click', () => controlWorker(button.dataset.workerControl)));
   $('owner-inspector').querySelectorAll('[data-retry-task]').forEach(button => button.addEventListener('click', () => refreshSelectedTask({ force: true })));
@@ -2504,7 +2582,11 @@ function renderConversation() {
     items.push(`<article class="chat-message director ${run.status === 'failed' ? 'failed' : ''} ${pendingCopy ? 'queued' : ''}"><div class="chat-label">디렉터 판단 턴 · ${escapeHtml(phaseLabel(run.phase || run.status))}${run.goalId ? ' · 목표 계속 감독' : ''}</div>${run.output ? formatText(run.output) : run.error ? formatText(run.error) : pendingCopy ? `<span class="queued-copy">${escapeHtml(pendingCopy)}</span>` : '<span class="thinking">공개 체크포인트 준비 중…</span>'}</article>`);
   }
   $('conversation-count').textContent = `기록 ${items.length}개`;
-  updateHtml($('owner-chat-stream'), items.length ? items.join('') : '<div class="chat-empty">아직 대화가 없습니다.</div>');
+  const stream = $('owner-chat-stream');
+  const previousTop = stream.scrollTop;
+  const followTail = stream.scrollHeight - stream.clientHeight - previousTop < 48;
+  const changed = updateHtml(stream, items.length ? items.join('') : '<div class="chat-empty">아직 대화가 없습니다.</div>');
+  if (changed) requestAnimationFrame(() => { stream.scrollTop = followTail ? stream.scrollHeight : previousTop; });
 }
 
 function renderWorkflowCatalog() {
@@ -2527,6 +2609,7 @@ function renderAll() {
   renderTrace();
   renderInspector();
   renderConversation();
+  renderWorkspaceTabs();
   renderWorkflowCatalog();
   $('skill-count').textContent = String(Object.keys(state.summary?.skills || {}).length);
   if ($('project-dialog').open && state.managementTab === 'skills') renderSkills();
@@ -2648,7 +2731,11 @@ async function performLoadConsole({ quiet = false } = {}) {
     }
     if (!state.summary) throw new Error('Compact Director snapshot was not available.');
     state.consoleError = null;
-    if (!state.summary.directors.some(director => director.id === state.selectedId)) state.selectedId = state.summary.directors[0]?.id;
+    if (!state.summary.directors.some(director => director.id === state.selectedId)) {
+      state.selectedId = state.summary.directors[0]?.id;
+      state.uiPreferences.workspaceDirectorId = state.selectedId;
+      persistUiPreferences();
+    }
     if (state.selectedGoalId && !selectedGoals().some(goal => goal.id === state.selectedGoalId)) state.selectedGoalId = null;
     await loadBoard();
     if (state.boardStatus?.error) state.staleSince ||= Date.now();
@@ -2693,7 +2780,6 @@ async function loadConsole(options = {}) {
 
 async function selectDirector(id) {
   const pendingLoad = state.loading;
-  if (window.matchMedia(NARROW_VIEW_QUERY).matches) setInspectorOpen(false);
   state.selectedId = id;
   state.consoleRevision = null;
   state.selectedGoalId = null;
@@ -2704,6 +2790,10 @@ async function selectDirector(id) {
   state.board = [];
   state.boardStatus = null;
   state.selection = { type: 'overview', id: null };
+  state.workspaceView = 'overview';
+  state.uiPreferences.workspaceView = 'overview';
+  state.uiPreferences.workspaceDirectorId = id;
+  persistUiPreferences();
   state.taskDetail = null;
   state.taskTrace = null;
   state.taskError = null;
@@ -2734,14 +2824,18 @@ function selectTrace(type, id = null) {
   state.selection = { type, id };
   renderTrace();
   renderInspector({ force: true });
+  setWorkspaceView('detail');
   restoreActiveElement(opener);
-  setInspectorOpen(true, opener);
 }
 
 async function selectTask(taskId) {
   const opener = activeElementIdentity();
   const changedTask = state.selection.type !== 'task' || state.selection.id !== taskId;
   state.selection = { type: 'task', id: taskId };
+  state.workspaceView = `task:${taskId}`;
+  state.uiPreferences.workspaceView = state.workspaceView;
+  state.uiPreferences.workspaceDirectorId = state.selectedId;
+  persistUiPreferences();
   state.taskDetail = null;
   state.taskTrace = null;
   state.taskError = null;
@@ -2754,8 +2848,8 @@ async function selectTask(taskId) {
   }
   renderTrace();
   renderInspector({ force: true });
+  renderWorkspaceTabs();
   restoreActiveElement(opener);
-  setInspectorOpen(true, opener);
   await refreshSelectedTask({ force: true });
 }
 
@@ -3312,106 +3406,66 @@ function initScale() {
   apply();
 }
 
-function inspectorIsOpen() {
-  return window.matchMedia(NARROW_VIEW_QUERY).matches
-    ? document.body.classList.contains('inspector-open')
-    : !document.body.classList.contains('inspector-collapsed');
-}
-
 function taskInspectorNeedsRefresh() {
   return state.selection.type === 'task'
-    && (inspectorIsOpen() || Boolean($('focus-dialog')?.open));
+    && (workspaceViewKind() === 'task' || Boolean($('focus-dialog')?.open));
 }
 
-function setInspectorOpen(open, opener = activeElementIdentity(), restoreFocus = true, persist = true) {
-  const narrow = window.matchMedia(NARROW_VIEW_QUERY).matches;
-  if (open) state.inspectorOpener = opener;
-  document.body.classList.toggle('inspector-open', narrow && open);
-  document.body.classList.toggle('inspector-collapsed', !narrow && !open);
-  if (persist) {
-    state.uiPreferences.collapsed = { ...state.uiPreferences.collapsed, inspector: !open };
-    if (!open) state.uiPreferences.inspectorFullscreen = false;
-    persistUiPreferences();
+function nearestScrollSurface(element) {
+  for (let current = element; current && current !== document.body; current = current.parentElement) {
+    if (current.matches?.('[data-scroll-surface]')) return current;
+    const overflowY = window.getComputedStyle(current).overflowY;
+    if (/(auto|scroll)/.test(overflowY) && current.scrollHeight > current.clientHeight) return current;
   }
-  $('inspector-toggle').setAttribute('aria-expanded', String(open));
-  const pane = $('command-pane');
-  const modal = open && narrow;
-  if (modal) {
-    pane.setAttribute('role', 'dialog');
-    pane.setAttribute('aria-modal', 'true');
-  } else {
-    pane.removeAttribute('role');
-    pane.removeAttribute('aria-modal');
-  }
-  [document.querySelector('.skip-link'), document.querySelector('.topbar'), document.querySelector('.project-sidebar'), document.querySelector('.mission-pane')]
-    .filter(Boolean).forEach(element => { element.inert = modal; });
-  if (open && (narrow || opener)) requestAnimationFrame(() => $('inspector-close')?.focus?.());
-  else if (restoreFocus) requestAnimationFrame(() => {
-    const target = elementFromIdentity(state.inspectorOpener) || $('inspector-toggle');
-    state.inspectorOpener = null;
-    target?.focus?.({ preventScroll: true });
-  });
-  else state.inspectorOpener = null;
-  applyPanelPreferences();
-  if (open && state.selection.type === 'task') void refreshSelectedTask();
-}
-
-function trapInspectorFocus(event) {
-  if (event.key !== 'Tab' || !document.body.classList.contains('inspector-open') || !window.matchMedia(NARROW_VIEW_QUERY).matches) return false;
-  const pane = $('command-pane');
-  const focusable = [...pane.querySelectorAll('button:not([disabled]), textarea:not([disabled]), select:not([disabled]), input:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
-    .filter(element => element.getClientRects().length > 0);
-  if (!focusable.length) {
-    event.preventDefault();
-    pane.focus();
-    return true;
-  }
-  const first = focusable[0];
-  const last = focusable.at(-1);
-  if (!pane.contains(document.activeElement) || document.activeElement === pane) {
-    event.preventDefault();
-    (event.shiftKey ? last : first).focus();
-    return true;
-  }
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-    return true;
-  }
-  if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-    return true;
-  }
-  return false;
+  return null;
 }
 
 function activeScrollSurface() {
   if ($('project-dialog').open) return $('project-dialog').querySelector('.management-body');
   if ($('focus-dialog').open) return $('focus-dialog-content');
-  if ($('workflow-dialog').open) return $('owner-workflow-list');
-  const activity = document.querySelector('.trace-section');
-  if (document.activeElement?.closest('.trace-section') && !panelIsCollapsed('activity')) {
-    return activity?.querySelector('.panel-content');
+  if ($('workflow-dialog').open) return $('workflow-dialog').querySelector('.sheet-card');
+  return nearestScrollSurface(document.activeElement)
+    || document.querySelector('.workspace-panel:not([hidden]) [data-scroll-surface], .workspace-panel[data-scroll-surface]:not([hidden])');
+}
+
+async function activateWorkspaceTab(button, { focus = true } = {}) {
+  if (!button || button.hidden) return;
+  if (button.dataset.workspaceTask) {
+    await selectTask(button.dataset.workspaceTask);
+  } else {
+    const view = button.dataset.workspaceView;
+    if (view === 'overview') {
+      state.selection = { type: 'overview', id: null };
+      renderTrace();
+      renderInspector({ force: true });
+    }
+    setWorkspaceView(view, { focus: false });
   }
-  const inspectorOverlay = window.matchMedia(NARROW_VIEW_QUERY).matches && document.body.classList.contains('inspector-open');
-  if (document.activeElement?.closest('.command-pane') || inspectorOverlay || state.uiPreferences.inspectorFullscreen) {
-    return document.querySelector('.inspector-scroll');
-  }
-  return document.querySelector('.mission-pane');
+  if (focus) requestAnimationFrame(() => {
+    const active = [...document.querySelectorAll('#workspace-tabs [role="tab"]')].find(tab => tab.getAttribute('aria-selected') === 'true');
+    active?.focus({ preventScroll: true });
+    active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
 }
 
 function init() {
   initTheme();
   initScale();
   applyPanelPreferences();
-  initPanelSplitter('inspector');
-  initPanelSplitter('activity');
-  setInspectorOpen(window.matchMedia(NARROW_VIEW_QUERY).matches ? false : !panelIsCollapsed('inspector'), null, false, false);
-  $('conversation-panel').open = Boolean(state.uiPreferences.conversationOpen);
-  $('conversation-panel').addEventListener('toggle', event => {
-    state.uiPreferences.conversationOpen = event.currentTarget.open;
-    persistUiPreferences();
+  initPanelSplitter();
+  renderWorkspaceTabs();
+  $('workspace-tabs').addEventListener('click', event => {
+    const button = event.target.closest('[role="tab"]');
+    if (button) void activateWorkspaceTab(button, { focus: false });
+  });
+  $('workspace-tabs').addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const tabs = [...$('workspace-tabs').querySelectorAll('[role="tab"]')].filter(tab => !tab.hidden);
+    const current = tabs.indexOf(document.activeElement);
+    if (current < 0) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    void activateWorkspaceTab(tabs[nextIndex]);
   });
   $('owner-send-btn').addEventListener('click', sendMessage);
   $('owner-message-mode').addEventListener('change', () => { renderMissionHeader(); renderComposerScope(); });
@@ -3441,9 +3495,6 @@ function init() {
     event.currentTarget.setAttribute('aria-expanded', String(expanded));
     event.currentTarget.textContent = expanded ? '목표 접기' : '목표 전체 보기';
   });
-  $('inspector-expand').addEventListener('click', () => setInspectorFullscreen(!state.uiPreferences.inspectorFullscreen));
-  $('inspector-toggle').addEventListener('click', () => setInspectorOpen(!inspectorIsOpen()));
-  $('inspector-close').addEventListener('click', () => setInspectorOpen(false));
   $('add-project-btn').addEventListener('click', addProject);
   $('validate-project-btn').addEventListener('click', validateProject);
   $('discover-projects-btn').addEventListener('click', discoverProjects);
@@ -3475,29 +3526,27 @@ function init() {
     setManagementTab(next.dataset.managementTab);
   });
   document.addEventListener('keydown', event => {
-    if (trapInspectorFocus(event)) return;
     if (event.key === 'Escape' && document.querySelector('dialog[open]')) return;
     if (event.altKey && (event.key === 'End' || event.key === 'Home')) {
       event.preventDefault();
       const surface = activeScrollSurface();
       surface?.scrollTo({ top: event.key === 'End' ? surface.scrollHeight : 0, behavior: preferredScrollBehavior() });
     } else if (event.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) {
-      event.preventDefault(); $('owner-message-input').focus();
+      event.preventDefault();
+      setWorkspaceView('director');
+      requestAnimationFrame(() => $('owner-message-input').focus());
     } else if (event.key.toLowerCase() === 'r' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) {
       void loadConsole();
-    } else if (event.key === 'F6' && !window.matchMedia(NARROW_VIEW_QUERY).matches) {
+    } else if (event.key === 'F6') {
       event.preventDefault();
-      if (document.activeElement?.closest('.command-pane')) $('mission-title').focus();
-      else {
-        if (!inspectorIsOpen()) setInspectorOpen(true, activeElementIdentity(), false);
-        $('command-pane').focus();
-      }
-    } else if (event.key === 'Escape' && state.uiPreferences.inspectorFullscreen) {
-      setInspectorFullscreen(false);
-    } else if (event.key === 'Escape' && document.body.classList.contains('inspector-open')) {
-      setInspectorOpen(false);
-    } else if (event.key === 'Escape' && state.selection.type !== 'overview' && !$('focus-dialog').open) {
-      state.selection = { type: 'overview', id: null }; renderTrace(); renderInspector({ force: true });
+      const activeTab = [...document.querySelectorAll('#workspace-tabs [role="tab"]')].find(tab => tab.getAttribute('aria-selected') === 'true');
+      if (document.activeElement?.closest('.workspace-tabs')) document.querySelector('.workspace-panel:not([hidden])')?.focus?.({ preventScroll: true });
+      else activeTab?.focus({ preventScroll: true });
+    } else if (event.key === 'Escape' && workspaceViewKind() !== 'overview' && !$('focus-dialog').open) {
+      state.selection = { type: 'overview', id: null };
+      renderTrace();
+      renderInspector({ force: true });
+      setWorkspaceView('overview');
     }
   });
   document.addEventListener('click', event => {
@@ -3512,13 +3561,8 @@ function init() {
     state.uiPreferences.detailExpansion = { ...state.uiPreferences.detailExpansion, [details.dataset.detailKey]: details.open };
     persistUiPreferences();
   }, true);
-  window.matchMedia(NARROW_VIEW_QUERY).addEventListener('change', event => {
-    document.body.classList.remove('inspector-open', 'inspector-collapsed');
-    setInspectorOpen(event.matches ? false : !panelIsCollapsed('inspector'), null, false, false);
-  });
   window.addEventListener('resize', () => {
-    setPanelDimension('inspector', panelDimension('inspector'), { persist: false, storePreference: false });
-    setPanelDimension('activity', panelDimension('activity'), { persist: false, storePreference: false });
+    setPanelDimension(panelDimension(), { persist: false, storePreference: false });
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) void loadConsole({ quiet: true });
@@ -3553,4 +3597,5 @@ export const _test = {
   schedulerViewState,
   consoleViewFingerprint,
   sameJson,
+  workspaceViewKind,
 };
