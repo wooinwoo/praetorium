@@ -2,69 +2,66 @@
 name: Praetorium Owner Console
 description: A trace-first local operations console for inspecting and steering Director and Worker execution.
 colors:
-  matte-void: "#0b0d12"
-  navigation-night: "#0e1117"
-  surface: "#121620"
-  surface-subtle: "#171c27"
-  surface-hover: "#1b2130"
-  text-primary: "#f0f2f7"
-  text-secondary: "#c5cad6"
-  text-muted: "#9ba4b6"
-  text-faint: "#778297"
-  hairline: "rgba(255,255,255,.085)"
-  hairline-strong: "rgba(255,255,255,.14)"
-  owner-violet: "#8b7cf6"
-  owner-violet-hover: "#978afa"
-  owner-violet-soft: "rgba(139,124,246,.13)"
-  runtime-green: "#49c78e"
+  matte-void: "#080b0f"
+  navigation-night: "#0d131b"
+  surface: "#111820"
+  surface-subtle: "#18222e"
+  surface-active: "#202d3d"
+  surface-hover: "#243246"
+  text-primary: "#f7f9fc"
+  text-secondary: "#d2dae5"
+  text-muted: "#9eabba"
+  hairline: "#364355"
+  hairline-strong: "#566982"
+  owner-blue: "#6aa8ff"
+  owner-blue-soft: "rgba(106,168,255,.14)"
+  runtime-green: "#63d9a8"
   runtime-green-soft: "rgba(73,199,142,.12)"
-  waiting-amber: "#e7b85a"
+  waiting-amber: "#f2c767"
   waiting-amber-soft: "rgba(231,184,90,.12)"
-  failure-red: "#ed6d7d"
+  failure-red: "#ff8492"
   failure-red-soft: "rgba(237,109,125,.12)"
-  runtime-blue: "#65a7ed"
-  light-canvas: "#f5f6f8"
-  light-navigation: "#f0f1f4"
+  light-canvas: "#f3f6fa"
+  light-navigation: "#eaf0f6"
   light-surface: "#ffffff"
-  light-surface-subtle: "#f7f8fa"
-  light-surface-hover: "#eef0f5"
-  light-text-primary: "#181b22"
-  light-text-secondary: "#3f4653"
-  light-text-muted: "#687083"
-  light-text-faint: "#626c7c"
-  light-hairline: "rgba(22,28,40,.10)"
-  light-hairline-strong: "rgba(22,28,40,.17)"
-  light-owner-violet-soft: "rgba(99,82,216,.10)"
+  light-surface-subtle: "#e7edf5"
+  light-surface-active: "#d8e5f5"
+  light-surface-hover: "#dbe5f1"
+  light-text-primary: "#101722"
+  light-text-secondary: "#334155"
+  light-text-muted: "#526176"
+  light-hairline: "#b7c2d0"
+  light-hairline-strong: "#8294a9"
   light-runtime-green-soft: "rgba(29,145,94,.10)"
   light-waiting-amber-soft: "rgba(174,117,16,.10)"
   light-failure-red-soft: "rgba(207,67,84,.10)"
 typography:
   headline:
-    fontFamily: "Inter, Pretendard, Segoe UI, system-ui, sans-serif"
-    fontSize: "clamp(1.28rem, 2vw, 1.72rem)"
-    fontWeight: 600
-    lineHeight: 1.24
-    letterSpacing: "-0.035em"
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Pretendard, sans-serif"
+    fontSize: "clamp(1.8rem, 2.2vw, 2.2rem)"
+    fontWeight: 780
+    lineHeight: 1.2
+    letterSpacing: "-0.03em"
   title:
-    fontFamily: "Inter, Pretendard, Segoe UI, system-ui, sans-serif"
-    fontSize: ".96rem"
-    fontWeight: 600
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Pretendard, sans-serif"
+    fontSize: "1.2rem"
+    fontWeight: 760
     lineHeight: 1.4
     letterSpacing: "-0.015em"
   body:
-    fontFamily: "Inter, Pretendard, Segoe UI, system-ui, sans-serif"
-    fontSize: ".75rem"
-    fontWeight: 400
-    lineHeight: 1.65
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Pretendard, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 540
+    lineHeight: 1.55
   label:
-    fontFamily: "Inter, Pretendard, Segoe UI, system-ui, sans-serif"
-    fontSize: ".66rem"
-    fontWeight: 600
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Pretendard, sans-serif"
+    fontSize: ".8rem"
+    fontWeight: 650
     lineHeight: 1.4
   mono:
     fontFamily: "Cascadia Code, SFMono-Regular, Consolas, monospace"
-    fontSize: ".63rem"
-    fontWeight: 400
+    fontSize: ".8rem"
+    fontWeight: 500
     lineHeight: 1.5
     letterSpacing: ".035em"
 rounded:
@@ -85,14 +82,14 @@ spacing:
   wide: "42px"
 components:
   button-owner:
-    backgroundColor: "{colors.owner-violet}"
-    textColor: "#ffffff"
+    backgroundColor: "{colors.owner-blue}"
+    textColor: "#07111f"
     rounded: "{rounded.control}"
     padding: "0 12px"
     height: "38px"
   button-owner-hover:
-    backgroundColor: "{colors.owner-violet-hover}"
-    textColor: "#ffffff"
+    backgroundColor: "{colors.owner-blue}"
+    textColor: "#07111f"
     rounded: "{rounded.control}"
     padding: "0 12px"
     height: "38px"
@@ -109,7 +106,7 @@ components:
     padding: "0 10px"
     height: "40px"
   selected-row:
-    backgroundColor: "{colors.owner-violet-soft}"
+    backgroundColor: "{colors.surface-active}"
     textColor: "{colors.text-primary}"
     rounded: "{rounded.panel}"
     padding: "9px 10px"
@@ -126,9 +123,9 @@ components:
 
 **Creative North Star: "The Evidence Rail"**
 
-Praetorium is an operational console, not a marketing dashboard. Its visual hierarchy follows the work itself: choose a Director at left, scan the chronological execution trace in the center, and inspect evidence or act at right. Dense information remains calm through matte near-black surfaces, restrained type, hairline division, and small semantic markers rather than through decorative cards.
+Praetorium is an operational console, not a marketing dashboard. Its visual hierarchy follows the work itself: choose a Director at left, scan the chronological execution trace in the center, and inspect evidence or act at right. Dense information remains calm through matte near-black surfaces, high-contrast type, visible division, and semantic markers rather than through decorative cards.
 
-Dark is the default and most characteristic theme; the shipped light theme is a fully supported operational alternative, not a separate identity. Both themes preserve the same hierarchy, spacing, semantic colors, and interaction model. Violet marks Owner-controlled focus and action. Green reports affirmative runtime or execution truth and must never become a general call-to-action color.
+Dark is the default and most characteristic theme; the shipped light theme is a fully supported operational alternative, not a separate identity. Both themes preserve the same hierarchy, spacing, semantic colors, and interaction model. Blue marks Owner-controlled focus and action. Green reports affirmative runtime or execution truth and must never become a general call-to-action color.
 
 This file documents the shipped implementation and is authoritative for future Owner Console work. It explicitly supersedes conflicting guidance in `design-system/praetorium/MASTER.md`: the bento showcase, hero/value-prop sequence, floating or bottom CTA, green primary CTA, lifted hover cards, and white modal model are not part of the shipped product. Non-conflicting accessibility advice in that file still applies.
 
@@ -136,7 +133,7 @@ This file documents the shipped implementation and is authoritative for future O
 
 - Trace-first chronology with evidence and controls kept adjacent.
 - Near-black matte dark surfaces plus an equivalent low-glare light theme.
-- Restrained violet for Owner selection, focus, intervention, and committed action.
+- One clear blue for Owner selection, focus, intervention, and committed action.
 - Green reserved for observed readiness, active execution, completion, and connectivity.
 - Hairline borders and tonal layering at rest; shadows only for true overlays.
 - Compact sans-serif prose paired with monospace operational metadata.
@@ -148,8 +145,8 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 
 ### Primary
 
-- **Owner Violet:** Use for active Director/profile rows, keyboard focus, text carets, selected trace content, Owner/Worker intervention controls, send/connect actions, and the brand mark. Keep its footprint small enough that it reads as authority rather than decoration.
-- **Owner Violet Soft:** Use behind selected or Owner-controlled regions. Pair it with a hairline violet edge when selection needs stronger definition.
+- **Owner Blue:** Use for active Director/profile rows, keyboard focus, text carets, selected trace content, Owner/Worker intervention controls, send/connect actions, and the brand mark. Keep its footprint small enough that it reads as authority rather than decoration.
+- **Owner Blue Soft:** Use behind selected or Owner-controlled regions. Pair it with a hairline blue edge when selection needs stronger definition.
 
 ### Secondary
 
@@ -169,7 +166,7 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 
 **The Green Is Runtime State Rule.** Green means an observed runtime or execution fact is affirmative: connected, active, running, ready, accepted, observed, or complete. An accepted intervention receipt confirms only Hermes delivery; its copy must not imply Worker acknowledgement. Never use green for a recommendation, generic button, promotion, selection, or decorative accent.
 
-**The Violet Is Authority Rule.** Violet means the Owner can focus, select, steer, or commit. It must remain rarer than neutral structure and must not replace status semantics.
+**The Blue Is Authority Rule.** Blue means the Owner can focus, select, steer, or commit. It must remain rarer than neutral structure and must not replace status semantics.
 
 **The Theme Parity Rule.** Light mode changes neutral surfaces, text contrast, and semantic soft fills; solid status and authority colors keep their meaning. It must preserve trace hierarchy, control placement, and density.
 
@@ -177,7 +174,7 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 
 **Display Font:** None; the console deliberately avoids display typography.
 
-**Body Font:** Inter with Pretendard, Segoe UI, and system UI fallbacks.
+**Body Font:** Segoe UI Variable Text with Segoe UI and Pretendard fallbacks.
 
 **Label/Mono Font:** Cascadia Code with SFMono-Regular and Consolas fallbacks.
 
@@ -187,9 +184,9 @@ The palette is neutral and low-chroma so status and authority colors remain legi
 
 - **Headline** (600, fluid 1.28–1.72rem, 1.24): One mission title. Keep it compact, balanced, and capped at roughly 76 characters per line.
 - **Title** (600, about .96rem, 1.4): Pane, section, workspace-channel, and management-panel headings.
-- **Body** (400, about .75–.8rem, 1.55–1.65): Descriptions, evidence, help text, and channel prose. Reading blocks stay near 68–72 characters wide.
-- **Label** (500–600, about .61–.73rem): Control text, row titles, field labels, and compact state copy.
-- **Mono** (400–600, about .55–.68rem): Paths, task and run IDs, board names, commands, timestamps, counters, runtime badges, keyboard hints, and uppercase overlines. Use tabular numerals for counts and elapsed time.
+- **Body** (540, about 1rem, 1.55): Descriptions, evidence, help text, and channel prose. Reading blocks stay near 68–72 characters wide.
+- **Label** (600–700, about .8rem): Control text, row titles, field labels, and compact state copy.
+- **Mono** (500–600, about .8rem): Paths, task and run IDs, board names, commands, timestamps, counters, runtime badges, keyboard hints, and uppercase overlines. Use tabular numerals for counts and elapsed time.
 
 ### Named Rules
 
@@ -243,11 +240,11 @@ Badges are short labels, not decorative pills. Cards do not float, scale, or ado
 
 ### Execution Trace
 
-The trace is the signature component and primary navigation. Each node combines a numbered circular marker, task kind, concise title, one-line evidence summary, small metadata tags, status, and time. Running and complete states use affirmative status color; waiting and setup use amber; blocked and failed use red. Selection adds a restrained violet tonal background without changing the underlying status color. Child work indents by one shallow level and retains the same connector rail.
+The trace is the signature component and primary navigation. Each node combines a numbered circular marker, task kind, concise title, one-line evidence summary, small metadata tags, status, and time. Running and complete states use affirmative status color; waiting and setup use amber; blocked and failed use red. Selection adds a blue-tinted tonal background without changing the underlying status color. Child work indents by one shallow level and retains the same connector rail.
 
 ### Workspace Channels
 
-Director Chat is a full-height channel with an independently scrolling conversation and a fixed composer. Worker tabs are structured evidence channels with one outer scroll surface; their groups use hairline separators, uppercase mono labels, readable prose, code blocks, event lists, reasoning entries, and collapsible raw logs. Owner controls sit inside a violet-soft intervention region; destructive controls remain outlined red. Intervention receipts expose four non-interchangeable states: delivery pending is amber, delivery failed is red, accepted/queued is a confirmed Hermes receipt, and Worker observed is later Worker-authored evidence.
+Director Chat is a full-height channel with an independently scrolling conversation and a fixed composer. Worker tabs are structured evidence channels with one outer scroll surface; their groups use visible separators, compact mono labels, readable prose, code blocks, event lists, reasoning entries, and collapsible raw logs. Owner controls sit inside a blue-tinted intervention region; destructive controls remain outlined red. Intervention receipts expose four non-interchangeable states: delivery pending is amber, delivery failed is red, accepted/queued is a confirmed Hermes receipt, and Worker observed is later Worker-authored evidence.
 
 Only the active workspace panel is visible and focusable. Overview, Director Chat, Worker channels, and temporary Detail use the same available width at every breakpoint. This avoids offscreen focus traps and preserves vertical continuity for command composition and evidence logs.
 
@@ -255,7 +252,7 @@ The workspace tab list supports click, Left and Right Arrow, Home, and End navig
 
 ### Buttons
 
-- **Owner / Primary:** Solid Owner Violet, white text, 8px corners, restrained 600 weight, and no positional movement. Hover brightens slightly and may add a small violet shadow.
+- **Owner / Primary:** Solid Owner Blue, dark text, 8px corners, 700 weight, and a one-pixel pressed state. Hover changes tone without glow.
 - **Secondary / Quiet:** Transparent with a hairline border and secondary text. Hover changes tone and border strength, not scale or position.
 - **Danger:** Transparent red text with a red hairline; a soft red fill appears only on hover.
 - **Icon-only:** 18px outline SVG centered in a square control. Always provide an accessible name.
@@ -263,17 +260,17 @@ The workspace tab list supports click, Left and Right Arrow, Home, and End navig
 
 ### Inputs / Fields
 
-Inputs, selects, and textareas use the current surface, a strong hairline, and 8px corners. Focus changes the border to Owner Violet and adds a three-pixel violet-soft ring; the global `:focus-visible` treatment remains available for keyboard-operated controls. The Owner composer accepts Enter to send and Shift+Enter for a line break. Runtime fields change their example and help copy: Windows expects a Windows absolute path, while WSL requires a selected distribution and a Linux absolute path inside that distribution.
+Inputs, selects, and textareas use the current surface, a strong hairline, and 8px corners. Focus changes the border to Owner Blue and adds a three-pixel focus ring; the global `:focus-visible` treatment remains available for keyboard-operated controls. The Owner composer accepts Enter to send and Shift+Enter for a line break. Runtime fields change their example and help copy: Windows expects a Windows absolute path, while WSL requires a selected distribution and a Linux absolute path inside that distribution.
 
 ### Status, Runtime, and Access Badges
 
-Runtime badges are compact uppercase mono labels with visible text and border differences. Windows uses a violet-tinted badge; WSL uses a blue-tinted badge. These colors classify execution context, while adjacent green/amber readiness text reports health. A WSL path visible through a Windows UNC share is not a ready WSL runtime; readiness requires that distribution's Hermes, Codex, profiles, filesystem, and shell environment to pass diagnosis.
+Runtime badges are compact mono labels with visible text and border differences. Windows and WSL remain explicit in copy, while adjacent green or amber readiness text reports health. A WSL path visible through a Windows UNC share is not a ready WSL runtime; readiness requires that distribution's Hermes, Codex, profiles, filesystem, and shell environment pass diagnosis.
 
 State dots always accompany plain-language state in the surrounding row, label, or accessible name. Green reports affirmative runtime/execution state, amber reports queued/setup/warning, red reports failure/block/offline, and faint neutral reports idle or unknown. Read-only access is blue; workspace-write authority is amber.
 
 ### Navigation and Management
 
-The Director rail uses full text rows on wide screens and index marks with focusable tooltips when compressed. Active selection uses violet-soft fill and border, while its runtime state dot retains its semantic color. Each Director exposes a compact active/queued/recent Goal switcher: queue position and status remain visible, a queued Goal does not look like an inference turn, and cancelled Goals retain explicit cancelled language. Queue controls disclose their result in an adjacent receipt rather than relying on a transient toast alone. The management dialog uses native `dialog`, a fixed header, horizontal tabs with a two-pixel violet active indicator, and one independently scrolling body. Arrow Left/Right moves and activates tabs. Project, runtime, and role panes favor rows, dividers, and split views over collections of feature cards.
+The Director rail uses full text rows on wide screens and index marks with focusable tooltips when compressed. Active selection uses a blue-tinted fill and strong border, while its runtime state dot retains its semantic color. Each Director exposes a compact active/queued/recent Goal switcher: queue position and status remain visible, a queued Goal does not look like an inference turn, and cancelled Goals retain explicit cancelled language. Queue controls disclose their result in an adjacent receipt rather than relying on a transient toast alone. The management dialog uses native `dialog`, a fixed header, horizontal tabs with a three-pixel blue active indicator, and one independently scrolling body. Arrow Left/Right moves and activates tabs. Project, runtime, and role panes favor rows, dividers, and split views over collections of feature cards.
 
 ### Feedback and Motion
 
@@ -284,7 +281,7 @@ Toasts use `role="status"` and a polite live region, appear at the bottom center
 ### Do:
 
 - **Do** lead with the current mission and chronological execution trace; reveal Director conversation, Worker channels, and selected evidence through explicit workspace tabs.
-- **Do** use Owner Violet sparingly for focus, selection, steering, and committed Owner actions.
+- **Do** use Owner Blue sparingly for focus, selection, steering, and committed Owner actions.
 - **Do** reserve green for affirmative runtime and execution truth, and pair every colored status with text or another non-color cue.
 - **Do** keep Windows and each WSL distribution explicit in badges, field semantics, paths, readiness, profiles, and setup guidance.
 - **Do** preserve the dark default and maintain full contrast and semantic parity in the supported light theme.

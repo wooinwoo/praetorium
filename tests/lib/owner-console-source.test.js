@@ -134,7 +134,7 @@ test('Owner console provides readable evidence text and removes hidden offscreen
   assert.match(js, /panel\.inert = panel\.hidden/);
   assert.doesNotMatch(js, /function trapInspectorFocus/);
   assert.match(js, /Math\.max\(\.9, Math\.min\(1\.25/);
-  assert.match(css, /font-size: calc\(14px \* var\(--ui-scale\)\)/);
+  assert.match(css, /font-size: calc\(16px \* var\(--ui-scale\)\)/);
   assert.match(css, /\.raw-worker-log pre[\s\S]*font: \.857rem\/1\.6/);
   assert.match(js, /아직 판단 턴을 시작하지 않았습니다/);
 });
@@ -232,6 +232,7 @@ test('Session status stays visible, activity opens on first run, and Alt+End fol
   assert.match(js, /workflow-dialog'\)\.querySelector\('\.sheet-card'\)/);
   assert.match(css, /@media \(max-width: 1180px\)[\s\S]*#connection-state \{ display: none; \}/);
   assert.doesNotMatch(css, /\.topbar-actions \.signal:first-child \{ display: none; \}/);
+  assert.doesNotMatch(css, /\.topbar-actions \.signal-copy \{ display: none; \}/);
 });
 
 test('Runtime management exposes WSL2 metadata, failures, and shell-specific recovery', async () => {
@@ -298,7 +299,7 @@ test('Owner console clamps repeated objectives and uses a neutral graphite palet
   assert.match(html, /id="mission-objective-toggle"[\s\S]*목표 전체 보기/);
   assert.match(js, /missionCopy\?\.classList\.remove\('objective-expanded'\)/);
   assert.match(js, /detailGroup\('목표 원문'/);
-  assert.match(css, /--blue: #5b9cf6/);
+  assert.match(css, /--blue: #6aa8ff/);
   assert.match(css, /\.mission-copy h1[\s\S]*-webkit-line-clamp: 2/);
   assert.match(css, /\.inspector-hero\.goal-hero h3[\s\S]*-webkit-line-clamp: 2/);
   assert.match(css, /\.current-focus[\s\S]*grid-template-columns: \.9fr 1\.35fr 1\.15fr/);
