@@ -259,6 +259,9 @@ test('Runtime management exposes WSL2 metadata, failures, and shell-specific rec
   const [js, css] = await Promise.all([source('js/owner-console.js'), source('css/owner-console.css')]);
   assert.match(js, /state\.wslError = result\.wslError \|\| null/);
   assert.match(js, /state\.runtimeProfileTotal = Number\.isInteger\(result\.profileTotal\)/);
+  assert.match(js, /const hadSnapshot = state\.runtimesLoaded && state\.runtimes\.length > 0/);
+  assert.match(js, /첫 진단을 백그라운드에서 진행 중/);
+  assert.match(js, /state\.managementTab === 'runtimes'\) setManagementFeedback\(\)/);
   assert.match(js, /WSL 진단 실패/);
   assert.match(js, /target\.wslVersion === 1/);
   assert.match(js, /!target\.system && target\.wslVersion === 2/);

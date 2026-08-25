@@ -145,6 +145,12 @@ describe('WSL runtime boundary', () => {
     assert.match(server, /if \(!validated\.valid\)[\s\S]*선택한 WSL 배포판에 프로젝트 경로가 없습니다\.[\s\S]*}, 400\);/);
   });
 
+  it('skips setup probes for ready runtimes and parallelizes the remaining probes', () => {
+    const server = readFileSync(new URL('../../server.js', import.meta.url), 'utf8');
+    assert.match(server, /await Promise\.all\(result\.targets\.filter\(item => item\.kind === 'wsl' && !item\.system && !item\.ready\)\.map\(async target =>/);
+    assert.match(server, /const source = await wslRuntime\.toWslPath\(target\.distro, ROOT\)/);
+  });
+
   it('captures WSL candidate metadata before and after hashing', async () => {
     const runtime = new WslRuntime({ platform: 'win32' });
     let command = null;

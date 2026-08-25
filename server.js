@@ -117,18 +117,18 @@ addRoute('GET', '/api/runtimes', async (req, res) => {
   try {
     const result = await hermesRuntime.describeTargets({ force: req.query.force === 'true' });
     result.profileTotal = PROFILE_CATALOG.length;
-    for (const target of result.targets.filter(item => item.kind === 'wsl' && !item.system)) {
+    await Promise.all(result.targets.filter(item => item.kind === 'wsl' && !item.system && !item.ready).map(async target => {
       if (target.wslVersion === 1) {
         target.setupLabel = 'Windows PowerShell';
         target.setupCommand = `wsl.exe --set-version "${target.distro}" 2`;
-        continue;
+        return;
       }
       if (target.wslVersion !== 2) {
         target.setupLabel = 'Windows PowerShell';
         target.setupCommand = 'wsl.exe --update\nwsl.exe --list --verbose';
-        continue;
+        return;
       }
-      if (!target.home) continue;
+      if (!target.home) return;
       try {
         const source = await wslRuntime.toWslPath(target.distro, ROOT);
         target.setupLabel = `${target.label} 터미널`;
@@ -137,7 +137,7 @@ addRoute('GET', '/api/runtimes', async (req, res) => {
           `${shellQuote(`${target.home}/.hermes/node/bin/node`)} ${shellQuote(`${source}/scripts/bootstrap-wsl-runtime.mjs`)} --workdir ${shellQuote(`${target.home}/projects`)}`,
         ].join('\n');
       } catch { /* runtime diagnosis remains useful when wslpath is unavailable */ }
-    }
+    }));
     json(res, result);
   }
   catch (error) { json(res, { error: error.message }, 500); }

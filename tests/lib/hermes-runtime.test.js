@@ -43,6 +43,39 @@ describe('HermesRuntime helpers', () => {
     assert.deepEqual(result.args.slice(-3), ['--max', '0', '--json']);
   });
 
+  it('caches and single-flights runtime diagnostics until a forced refresh', async () => {
+    const runtime = new HermesRuntime();
+    let probes = 0;
+    const forces = [];
+    let releaseFirstProbe;
+    const firstProbe = new Promise(resolve => { releaseFirstProbe = resolve; });
+    runtime._describeTargetsFresh = async ({ force }) => {
+      probes += 1;
+      forces.push(force);
+      if (probes === 1) await firstProbe;
+      return { targets: [{ id: 'windows', probe: probes }], wslAvailable: false, wslError: null };
+    };
+
+    const first = runtime.describeTargets();
+    const concurrent = runtime.describeTargets();
+    const forcedDuringProbe = runtime.describeTargets({ force: true });
+    assert.equal(probes, 1);
+    releaseFirstProbe();
+    const [firstResult, concurrentResult, forcedResult] = await Promise.all([first, concurrent, forcedDuringProbe]);
+    assert.deepEqual(firstResult, concurrentResult);
+    assert.notEqual(firstResult, concurrentResult, 'callers must not share a mutable response object');
+    assert.deepEqual(forces, [false, true]);
+    assert.equal(forcedResult.targets[0].probe, 2);
+
+    const cached = await runtime.describeTargets();
+    assert.equal(probes, 2);
+    assert.equal(cached.targets[0].probe, 2);
+
+    const refreshed = await runtime.describeTargets({ force: true });
+    assert.equal(probes, 3);
+    assert.equal(refreshed.targets[0].probe, 3);
+  });
+
   it('forwards declared candidate deliverables across the WSL runtime boundary', async () => {
     let received = null;
     const expected = { schema: 'candidate-snapshot.v1', digest: `sha256:${'a'.repeat(64)}` };

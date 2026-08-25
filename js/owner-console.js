@@ -3205,7 +3205,8 @@ function renderRuntimes() {
     return;
   }
   if (!state.runtimesLoaded) {
-    $('runtime-list').innerHTML = '<div class="panel-loading">Windows와 WSL 런타임을 진단하는 중입니다.</div>';
+    const pendingTargets = ['Windows', ...new Set(state.projects.filter(project => project.runtime === 'wsl').map(project => `WSL · ${project.distro}`))];
+    $('runtime-list').innerHTML = pendingTargets.map(label => `<article class="runtime-row"><div class="runtime-state"><span>…</span></div><div class="runtime-copy"><header><h4>${escapeHtml(label)}</h4></header><p>마지막 결과 없이 첫 진단을 백그라운드에서 진행 중입니다.</p></div></article>`).join('');
     return;
   }
   const wslError = state.wslError
@@ -3286,13 +3287,16 @@ function showRuntimeGuide(id) {
 
 async function loadRuntimes({ force = false } = {}) {
   const requestId = ++state.runtimeRequestId;
+  const hadSnapshot = state.runtimesLoaded && state.runtimes.length > 0;
   state.runtimeGuideId = null;
   $('runtime-guide').hidden = true;
-  state.runtimesLoaded = false;
   state.runtimesError = null;
-  state.wslError = null;
-  state.runtimeProfileTotal = null;
-  renderRuntimes();
+  if (!hadSnapshot) {
+    state.runtimesLoaded = false;
+    state.wslError = null;
+    state.runtimeProfileTotal = null;
+    renderRuntimes();
+  }
   try {
     const result = await api(`/api/runtimes${force ? '?force=true' : ''}`, { timeoutMs: 60000 });
     if (requestId !== state.runtimeRequestId) return;
@@ -3307,14 +3311,17 @@ async function loadRuntimes({ force = false } = {}) {
     $('project-runtime').querySelector('option[value="wsl"]').disabled = !usableWslTargets().length;
     if (!usableWslTargets().length && $('project-runtime').value === 'wsl') $('project-runtime').value = 'windows';
     syncProjectForm();
+    if (state.managementTab === 'runtimes') setManagementFeedback();
   } catch (error) {
     if (requestId !== state.runtimeRequestId) return;
-    state.runtimes = [];
-    state.runtimesError = error.message;
-    $('project-distro').innerHTML = '';
-    $('project-runtime').querySelector('option[value="wsl"]').disabled = true;
-    if ($('project-runtime').value === 'wsl') $('project-runtime').value = 'windows';
-    syncProjectForm();
+    if (!hadSnapshot) {
+      state.runtimes = [];
+      state.runtimesError = error.message;
+      $('project-distro').innerHTML = '';
+      $('project-runtime').querySelector('option[value="wsl"]').disabled = true;
+      if ($('project-runtime').value === 'wsl') $('project-runtime').value = 'windows';
+      syncProjectForm();
+    }
     throw error;
   } finally {
     if (requestId === state.runtimeRequestId) renderRuntimes();
