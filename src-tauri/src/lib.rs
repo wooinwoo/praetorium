@@ -611,6 +611,20 @@ fn start_server(server_dir: &Path, log: &SharedLog) -> Result<ServerProcess, Str
     unreachable!()
 }
 
+fn http_response_is_complete(response: &str) -> bool {
+    let Some((headers, body)) = response.split_once("\r\n\r\n") else {
+        return false;
+    };
+    let Some(content_length) = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())?
+    }) else {
+        return false;
+    };
+    body.len() >= content_length
+}
+
 fn server_request(port: u16, method: &str, path: &str) -> Option<String> {
     let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).ok()?;
     let timeout = Some(Duration::from_secs(3));
@@ -621,8 +635,19 @@ fn server_request(port: u16, method: &str, path: &str) -> Option<String> {
     );
     stream.write_all(request.as_bytes()).ok()?;
     let mut response = String::new();
-    stream.read_to_string(&mut response).ok()?;
-    Some(response)
+    match stream.read_to_string(&mut response) {
+        Ok(_) if http_response_is_complete(&response) => Some(response),
+        Err(error)
+            if http_response_is_complete(&response)
+                && matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+        {
+            Some(response)
+        }
+        _ => None,
+    }
 }
 
 fn server_matches_version(port: u16, version: &str) -> bool {
@@ -1210,6 +1235,39 @@ mod tests {
 
         assert!(shutdown.wait_for_supervisor_stop(Duration::from_secs(1)));
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn server_request_keeps_a_received_response_when_the_peer_stays_open() {
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release_tx, release_rx) = mpsc::channel();
+        let peer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{}")
+                .unwrap();
+            stream.flush().unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        });
+
+        let response = server_request(port, "POST", "/api/system/shutdown");
+        release_tx.send(()).unwrap();
+        peer.join().unwrap();
+
+        assert!(response.unwrap().starts_with("HTTP/1.1 202"));
+    }
+
+    #[test]
+    fn server_request_rejects_a_truncated_http_body() {
+        assert!(!http_response_is_complete(
+            "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{\"status\":\"ok\",\"version\":\"2.3.0\""
+        ));
     }
 
     #[cfg(windows)]
