@@ -73,6 +73,8 @@ const state = {
   managementTab: 'projects',
   selectedId: initialUiPreferences.workspaceDirectorId || 'project-director-1',
   selectedGoalId: null,
+  directConversationRunId: null,
+  conversationAnnouncementKey: null,
   goalSubmissionReceipt: null,
   goalControlReceipt: null,
   openGoalControlId: null,
@@ -1067,7 +1069,14 @@ async function controlGoal(goalId, action, position = null) {
 
 function selectGoal(goalId, selectionType = 'overview') {
   if (!goalId) return;
+  const leavingDirectConversation = Boolean(state.directConversationRunId);
+  state.directConversationRunId = null;
+  state.conversationAnnouncementKey = null;
   if (state.selectedGoalId === goalId && selectedGoalSummary()?.id === goalId) {
+    if (leavingDirectConversation) {
+      renderConversation();
+      renderComposerScope();
+    }
     if (selectionType !== 'overview') selectTrace(selectionType);
     return;
   }
@@ -1157,7 +1166,9 @@ function renderComposerScope() {
   if (!target || !note) return;
   target.textContent = directorDisplayName(director?.name);
   const goal = selectedGoal();
-  note.textContent = state.selection.type === 'task'
+  note.textContent = state.directConversationRunId
+    ? '일반 대화 · 목표 실행과 분리'
+    : state.selection.type === 'task'
     ? '새 목표·질문 전용 · 워커 지시는 위 오너 개입 사용'
     : goalIsActive(goal)
       ? '새 목표는 대기열 등록 · 현재 목표 질문은 답변 모드'
@@ -1745,6 +1756,8 @@ async function sendOwnerDecision(goalId, form) {
     state.decisionGoalId = null;
     state.decisionError = null;
     state.selectedGoalId = goalId;
+    state.directConversationRunId = null;
+    state.conversationAnnouncementKey = null;
     state.selection = { type: 'goal', id: goalId };
     toast('오너 결정을 전달했습니다. 디렉터가 목표 감독을 재개합니다.', 'success');
     await loadConsole({ quiet: true });
@@ -2398,6 +2411,7 @@ function renderPublicTrace(details, log) {
   }).join('');
   const eventsHtml = events.map(event => `<li><i></i><span>${escapeHtml(eventDescription(event))}</span><time>${escapeHtml(clockLabel(event.created_at))}</time></li>`).join('');
   const rawLogOpen = Boolean(state.uiPreferences.rawLogs?.[task.id]);
+  const logNotStarted = state.taskTrace?.availability === 'not_started';
   const traceError = state.taskTraceError ? inlineErrorHtml('실행 로그를 불러오지 못했습니다', state.taskTraceError, 'data-retry-task') : '';
   const statusUncertain = Boolean(state.taskError || state.taskLoading);
   const statusText = state.taskError ? '상태 확인 실패' : state.taskLoading ? '동기화 중' : task.status === 'running' ? '실시간' : statusLabel(task.status);
@@ -2413,8 +2427,8 @@ function renderPublicTrace(details, log) {
       ? `<div class="worker-stream-heading"><div><b>워커 활동 흐름</b><span>실행기가 관찰한 생성·확보·실행·종료 이벤트</span></div></div><ol class="event-list worker-lifecycle">${eventsHtml || '<li class="stream-empty">아직 수명주기 이벤트가 없습니다.</li>'}</ol>`
       : activeView === 'commands'
         ? `<div class="worker-stream-heading"><div><b>실행 명령·결과</b><span>로컬 로그에서 식별된 도구 호출과 결과 신호</span></div></div>${observedSteps.length ? `<div class="observed-commands"><header><strong>관찰된 실행 단계</strong><span>${observedSteps.length}</span></header><ol>${observedSteps.map(step => `<li><i></i><code>${escapeHtml(step)}</code></li>`).join('')}</ol></div>` : '<div class="trace-placeholder">로그에서 식별된 명령·결과 신호가 아직 없습니다.</div>'}`
-        : `<div class="worker-stream-heading"><div><b>증거 원문</b><span>요약이 의심스러울 때 확인하는 로컬 실행 로그</span></div></div>${logText ? `<details class="raw-worker-log" data-task-raw-log="${escapeHtml(task.id)}" ${rawLogOpen ? 'open' : ''}><summary data-raw-worker-log-summary>실행 로그 원문 <span>${logText.split(/\r?\n/).length}줄</span></summary><pre>${escapeHtml(logText)}</pre></details>` : state.taskTraceError ? '' : '<div class="trace-placeholder">워커 로그가 아직 생성되지 않았습니다.</div>'}`;
-  return `<div class="live-trace-head"><span class="live-indicator ${task.status === 'running' && !statusUncertain ? 'active' : ''}"><i></i>${statusText}</span><small>${state.taskError ? '최신 워커 상태를 확인하지 못함' : state.taskTrace?.observedAt ? `마지막 동기화 ${clockLabel(state.taskTrace.observedAt)}` : state.taskTraceError ? '동기화 실패' : '로그 동기화 중'}</small></div>
+        : `<div class="worker-stream-heading"><div><b>증거 원문</b><span>요약이 의심스러울 때 확인하는 로컬 실행 로그</span></div></div>${logText ? `<details class="raw-worker-log" data-task-raw-log="${escapeHtml(task.id)}" ${rawLogOpen ? 'open' : ''}><summary data-raw-worker-log-summary>실행 로그 원문 <span>${logText.split(/\r?\n/).length}줄</span></summary><pre>${escapeHtml(logText)}</pre></details>` : state.taskTraceError ? '' : `<div class="trace-placeholder">${logNotStarted ? '워커가 시작되면 실행 로그가 생성됩니다.' : '워커 로그가 아직 생성되지 않았습니다.'}</div>`}`;
+  return `<div class="live-trace-head"><span class="live-indicator ${task.status === 'running' && !statusUncertain ? 'active' : ''}"><i></i>${statusText}</span><small>${state.taskError ? '최신 워커 상태를 확인하지 못함' : logNotStarted ? '실행 전 · 로그 없음' : state.taskTrace?.observedAt ? `마지막 동기화 ${clockLabel(state.taskTrace.observedAt)}` : state.taskTraceError ? '동기화 실패' : '로그 동기화 중'}</small></div>
     ${traceError}
     <div class="worker-stream-tabs" role="tablist" aria-label="워커 상세 보기">${tabs.map(([view, label, count]) => `<button id="worker-stream-tab-${view}" type="button" role="tab" data-worker-stream-view="${view}" aria-selected="${activeView === view}" aria-controls="worker-stream-panel" tabindex="${activeView === view ? 0 : -1}"><span>${label}</span><b>${count}</b></button>`).join('')}</div>
     <section class="worker-stream-panel" id="worker-stream-panel" role="tabpanel" aria-labelledby="worker-stream-tab-${activeView}">${viewHtml}</section>`;
@@ -2567,10 +2581,35 @@ function renderInspector({ force = false } = {}) {
 }
 
 function renderConversation() {
-  const runs = selectedRuns().slice(0, 10).reverse();
-  const goal = selectedGoal();
-  const firstGoalRun = runs.find(run => goal && run.goalId === goal.id);
+  const directConversation = Boolean(state.directConversationRunId);
+  const goal = directConversation ? null : selectedGoal();
+  const runs = directConversation
+    ? selectedRuns().filter(run => !run.goalId).slice(0, 20).reverse()
+    : goal ? goalRuns(goal).slice(0, 20).reverse() : selectedRuns().slice(0, 20).reverse();
   const items = [];
+
+  const turn = ({ speaker, label, at, body, status = '' }) => {
+    const timestamp = at ? `<time datetime="${escapeHtml(at)}">${escapeHtml(clockLabel(at))}</time>` : '';
+    return `<div class="chat-turn ${speaker} ${escapeHtml(status)}" role="listitem">
+      <span class="chat-avatar" aria-hidden="true">${speaker === 'owner' ? '나' : 'D'}</span>
+      <article class="chat-bubble" aria-label="${escapeHtml(label)}">
+        <header><strong>${escapeHtml(speaker === 'owner' ? '나' : '디렉터')}</strong><span>${escapeHtml(label)}</span>${timestamp}</header>
+        <div class="chat-message-body">${body}</div>
+      </article>
+    </div>`;
+  };
+
+  if (goal) {
+    items.push({ at: timeMs(goal.createdAt), html: turn({
+      speaker: 'owner', label: '목표', at: goal.createdAt, body: formatText(goal.objective),
+    }) });
+    for (const answer of goal.ownerAnswers || []) {
+      items.push({ at: timeMs(answer.at), html: turn({
+        speaker: 'owner', label: '결정 답변', at: answer.at, body: formatText(answer.answer || answer.selectedOption || ''),
+      }) });
+    }
+  }
+
   for (const run of runs) {
     const matchingGoal = run.goalId ? goalById(run.goalId) : null;
     const pendingCopy = run.status === 'queued'
@@ -2578,15 +2617,61 @@ function renderConversation() {
         ? `디렉터 실행 대기열 ${matchingGoal.queuePosition || run.queuePosition || 1}번째 · 아직 판단 턴을 시작하지 않았습니다.`
         : '디렉터 판단 턴 시작 대기 · 아직 공개 체크포인트가 없습니다.'
       : null;
-    if (!run.goalId || run === firstGoalRun) items.push(`<article class="chat-message owner"><div class="chat-label">오너${run.goalId ? ' · 목표' : ''}</div>${formatText(run.goalId && goal?.id === run.goalId ? goal.objective : run.prompt)}</article>`);
-    items.push(`<article class="chat-message director ${run.status === 'failed' ? 'failed' : ''} ${pendingCopy ? 'queued' : ''}"><div class="chat-label">디렉터 판단 턴 · ${escapeHtml(phaseLabel(run.phase || run.status))}${run.goalId ? ' · 목표 계속 감독' : ''}</div>${run.output ? formatText(run.output) : run.error ? formatText(run.error) : pendingCopy ? `<span class="queued-copy">${escapeHtml(pendingCopy)}</span>` : '<span class="thinking">공개 체크포인트 준비 중…</span>'}</article>`);
+    const at = run.completedAt || run.startedAt || run.createdAt;
+    if (!goal && run.prompt) items.push({ at: timeMs(run.createdAt), html: turn({
+      speaker: 'owner', label: '요청', at: run.createdAt, body: formatText(run.prompt),
+    }) });
+    const body = run.output ? formatText(run.output)
+      : run.error ? formatText(run.error)
+        : pendingCopy ? `<span class="queued-copy">${escapeHtml(pendingCopy)}</span>`
+          : '<span class="thinking">공개 체크포인트 준비 중…</span>';
+    items.push({ at: timeMs(at), html: turn({
+      speaker: 'director', label: `판단 턴 · ${phaseLabel(run.phase || run.status)}`, at, body,
+      status: run.status === 'failed' ? 'failed' : pendingCopy ? 'queued' : run.status || '',
+    }) });
   }
+
+  if (goal?.ownerDecision?.required || goal?.status === 'awaiting_owner') {
+    const decision = goal.ownerDecision || {};
+    const options = (decision.options || []).map(option => `<span>${escapeHtml(decisionOptionLabel(option))}</span>`).join('');
+    const evidence = normaliseTextList(decision.evidence);
+    const body = `<strong class="chat-callout-title">${escapeHtml(localizeOperationalCopy(decision.question || '오너 결정이 필요합니다'))}</strong>
+      ${evidence.length ? `<p>${formatText(evidence.join('\n'))}</p>` : ''}
+      ${options ? `<div class="chat-options" aria-label="선택지">${options}</div>` : ''}
+      <div class="chat-bubble-actions"><button type="button" class="secondary-button" data-chat-trace="owner-decision">결정하기</button></div>`;
+    items.push({ at: timeMs(decision.askedAt || goal.updatedAt), html: turn({
+      speaker: 'director', label: '오너 결정 필요', at: decision.askedAt || goal.updatedAt, body, status: 'awaiting-owner',
+    }) });
+  }
+
+  if (goal && goalIsTerminal(goal)) {
+    const report = typeof goal.finalReport === 'string' ? goal.finalReport : goal.finalReport?.summary || goal.error;
+    const body = `<strong class="chat-callout-title">${escapeHtml(goal.status === 'completed' ? '디렉터 최종 결론' : '디렉터 중단 결론')}</strong>
+      <p>${formatText(report || (goal.status === 'completed' ? '전체 목표의 완료를 판정했습니다.' : '더 진행할 수 없는 이유를 기록했습니다.'))}</p>
+      <div class="chat-bubble-actions"><button type="button" class="secondary-button" data-chat-trace="final">근거 보기</button></div>`;
+    items.push({ at: timeMs(goal.completedAt || goal.updatedAt), html: turn({
+      speaker: 'director', label: goalStatusLabel(goal), at: goal.completedAt || goal.updatedAt, body,
+      status: goal.status === 'completed' ? 'final' : 'failed',
+    }) });
+  }
+
+  items.sort((left, right) => left.at - right.at);
   $('conversation-count').textContent = `기록 ${items.length}개`;
   const stream = $('owner-chat-stream');
   const previousTop = stream.scrollTop;
   const followTail = stream.scrollHeight - stream.clientHeight - previousTop < 48;
-  const changed = updateHtml(stream, items.length ? items.join('') : '<div class="chat-empty">아직 대화가 없습니다.</div>');
-  if (changed) requestAnimationFrame(() => { stream.scrollTop = followTail ? stream.scrollHeight : previousTop; });
+  const changed = updateHtml(stream, items.length ? items.map(item => item.html).join('') : '<div class="chat-empty" role="listitem"><strong>아직 대화가 없습니다.</strong><span>아래 입력창에서 목표나 질문을 보내세요.</span></div>');
+  if (changed) {
+    stream.querySelectorAll('[data-chat-trace]').forEach(button => button.addEventListener('click', () => selectTrace(button.dataset.chatTrace)));
+    const latest = stream.lastElementChild;
+    const announcement = latest?.textContent?.trim().replace(/\s+/g, ' ').slice(0, 500) || '';
+    const announcementKey = `${items.at(-1)?.at || 0}:${announcement}`;
+    if (announcement && state.conversationAnnouncementKey !== announcementKey) {
+      state.conversationAnnouncementKey = announcementKey;
+      $('owner-chat-live').textContent = announcement;
+    }
+    requestAnimationFrame(() => { stream.scrollTop = followTail ? stream.scrollHeight : previousTop; });
+  }
 }
 
 function renderWorkflowCatalog() {
@@ -2783,6 +2868,8 @@ async function selectDirector(id) {
   state.selectedId = id;
   state.consoleRevision = null;
   state.selectedGoalId = null;
+  state.directConversationRunId = null;
+  state.conversationAnnouncementKey = null;
   state.goalSubmissionReceipt = null;
   state.goalControlReceipt = null;
   state.openGoalControlId = null;
@@ -2919,6 +3006,8 @@ async function sendMessage() {
     state.goalControlReceipt = null;
     if (result?.goalId) {
       state.selectedGoalId = result.goalId;
+      state.directConversationRunId = null;
+      state.conversationAnnouncementKey = null;
       state.traceVisibleLimit = TRACE_LIVE_LIMIT;
       state.selection = { type: 'goal', id: result.goalId };
       state.goalDetail = null;
@@ -2937,6 +3026,8 @@ async function sendMessage() {
       };
       toast(queuePosition ? `새 목표가 디렉터 대기열 ${queuePosition}번째로 등록됐습니다.` : '새 목표를 시작했습니다.', 'success');
     } else {
+      state.directConversationRunId = result?.id || null;
+      state.conversationAnnouncementKey = null;
       state.selection = { type: 'analysis', id: null };
       state.goalSubmissionReceipt = { directorId, goalId: null, queuePosition: null, at: new Date().toISOString(), message: '대화 요청이 디렉터 판단 큐에 접수됐습니다.' };
     }
@@ -3470,7 +3561,7 @@ function init() {
   $('owner-send-btn').addEventListener('click', sendMessage);
   $('owner-message-mode').addEventListener('change', () => { renderMissionHeader(); renderComposerScope(); });
   $('owner-message-input').addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); }
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void sendMessage(); }
   });
   $('owner-refresh-btn').addEventListener('click', () => loadConsole());
   $('owner-dispatch-btn').addEventListener('click', dispatchNow);

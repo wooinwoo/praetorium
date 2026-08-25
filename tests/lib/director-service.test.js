@@ -274,6 +274,26 @@ describe('DirectorService', () => {
     );
   });
 
+  it('treats a missing pre-spawn task log as expected absence', async () => {
+    const svc = service({ runtime: runtime({
+      taskLog: async () => { throw new Error('no log for t_ready — task may not have spawned yet'); },
+      taskDetails: async () => ({ task: { id: 't_ready', status: 'ready', started_at: null }, runs: [] }),
+    }) });
+
+    const trace = await svc.getTaskTrace('project-director-1', 't_ready');
+    assert.equal(trace.log, '');
+    assert.equal(trace.availability, 'not_started');
+  });
+
+  it('preserves a missing-log error after a task has started', async () => {
+    const svc = service({ runtime: runtime({
+      taskLog: async () => { throw new Error('no log for t_started — task may not have spawned yet'); },
+      taskDetails: async () => ({ task: { id: 't_started', status: 'running', started_at: '2026-08-25T00:00:00Z' } }),
+    }) });
+
+    await assert.rejects(svc.getTaskTrace('project-director-1', 't_started'), /no log for t_started/);
+  });
+
   it('refuses an intervention when the live Worker has already reached a terminal state', async () => {
     const svc = service({ runtime: runtime({
       taskDetails: async ({ taskId }) => ({ task: { id: taskId, status: 'done' }, comments: [] }),

@@ -151,19 +151,22 @@
           <div><span>디렉터 채널</span><h2>오너 ↔ 디렉터</h2><p>새 목표를 주거나 진행 중인 판단을 물어봅니다.</p></div>
           <small id="conversation-count">기록 0개</small>
         </header>
-        <div class="conversation-stream director-conversation-stream" id="owner-chat-stream" data-scroll-surface aria-live="polite"></div>
+        <div class="conversation-stream director-conversation-stream" id="owner-chat-stream" data-scroll-surface role="list" aria-label="디렉터 대화 기록"></div>
+        <div class="visually-hidden" id="owner-chat-live" aria-live="polite" aria-atomic="true"></div>
         <div class="composer">
           <div class="composer-scope" id="composer-scope"><span>받는 곳</span><strong id="composer-target">디렉터</strong><small id="composer-scope-note">새 목표 · 질문</small></div>
-          <label class="visually-hidden" for="owner-message-input">오너 요청</label>
-          <textarea id="owner-message-input" rows="3" placeholder="목표, 제약, 완료 기준을 입력하세요…"></textarea>
-          <div class="composer-footer">
-            <select id="owner-message-mode" aria-label="요청 처리 방식">
-              <option value="auto">자동 판단</option>
-              <option value="delegate">실행 요청</option>
-              <option value="conversation">답변만 받기</option>
-            </select>
-            <span><kbd>Enter</kbd> 전송 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈</span>
-            <button id="owner-send-btn" type="button">보내기</button>
+          <div class="composer-box">
+            <label class="visually-hidden" for="owner-message-input">오너 요청</label>
+            <textarea id="owner-message-input" rows="2" placeholder="목표, 제약, 완료 기준을 입력하세요…"></textarea>
+            <div class="composer-footer">
+              <select id="owner-message-mode" aria-label="요청 처리 방식">
+                <option value="auto">자동 판단</option>
+                <option value="delegate">실행 요청</option>
+                <option value="conversation">답변만 받기</option>
+              </select>
+              <span><kbd>Enter</kbd> 전송 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈</span>
+              <button id="owner-send-btn" type="button">보내기</button>
+            </div>
           </div>
         </div>
       </section>

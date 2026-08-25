@@ -224,6 +224,24 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.equal(_test.workspaceViewKind('unknown'), 'overview');
 });
 
+test('Director channel uses durable Goal-scoped chat and explicit decision or conclusion bubbles', async () => {
+  const [html, css, js] = await Promise.all([source('index.html'), source('css/owner-console.css'), source('js/owner-console.js')]);
+  assert.match(html, /id="owner-chat-stream"[\s\S]*role="list"[\s\S]*id="owner-chat-live"[\s\S]*aria-live="polite"/);
+  assert.match(html, /class="composer-box"/);
+  assert.match(js, /goal \? goalRuns\(goal\)/);
+  assert.match(js, /directConversationRunId/);
+  assert.match(js, /selectedRuns\(\)\.filter\(run => !run\.goalId\)/);
+  assert.match(js, /function selectGoal[\s\S]{0,320}state\.directConversationRunId = null;[\s\S]{0,320}if \(state\.selectedGoalId/);
+  assert.match(js, /goal\.ownerAnswers/);
+  assert.match(js, /goal\.ownerDecision/);
+  assert.match(js, /디렉터 최종 결론/);
+  assert.match(js, /!event\.isComposing/);
+  assert.match(js, /conversationAnnouncementKey/);
+  assert.match(css, /\.chat-turn\.owner \{ flex-direction: row-reverse/);
+  assert.match(css, /\.chat-bubble[\s\S]*overflow-wrap: anywhere/);
+  assert.match(css, /@container \(max-width: 640px\)/);
+});
+
 test('Session status stays visible, activity opens on first run, and Alt+End follows nearest scroll owner', async () => {
   const [css, js] = await Promise.all([source('css/owner-console.css'), source('js/owner-console.js')]);
   assert.match(js, /collapsed: \{ 'active-goal': false, 'goal-queue': true, activity: false/);
