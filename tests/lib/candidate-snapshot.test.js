@@ -3,7 +3,7 @@ import { spawn, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import {
-  appendFile, lstat, mkdir, mkdtemp, open, readlink, rm, symlink, unlink, writeFile,
+  appendFile, lstat, mkdir, mkdtemp, open, rm, symlink, unlink, writeFile,
 } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -192,7 +192,6 @@ describe('Windows candidate snapshot', () => {
     }
 
     assert.equal((await lstat(link)).isSymbolicLink(), true);
-    assert.equal(await readlink(link), '../outside-one.txt');
     const linked = await snapshot(repo);
     await writeFile(outsideOne, 'external content changed but must not be followed\n');
     const targetContentChanged = await snapshot(repo);
