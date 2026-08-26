@@ -79,6 +79,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Build frontend
+        run: npm run build
+
       - name: Test Tauri shell
         run: cargo test --manifest-path src-tauri/Cargo.toml
 

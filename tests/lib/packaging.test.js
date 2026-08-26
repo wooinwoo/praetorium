@@ -31,4 +31,13 @@ describe('Tauri runtime packaging', () => {
     assert.match(source, /context\.package_info\(\)/);
     assert.doesNotMatch(source, /current_exe\(\)[\s\S]{0,160}path\.parent/);
   });
+
+  it('builds frontend resources before Tauri validates the bundle', () => {
+    const workflow = readFileSync(resolve(root, '.github/workflows/build-installers.yml'), 'utf8');
+    const frontendBuild = workflow.indexOf('run: npm run build');
+    const tauriTest = workflow.indexOf('run: cargo test');
+    assert.ok(frontendBuild >= 0);
+    assert.ok(tauriTest >= 0);
+    assert.ok(frontendBuild < tauriTest);
+  });
 });
