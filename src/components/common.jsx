@@ -14,6 +14,7 @@ const paths = {
   layers: '<path d="m12 3-9 5 9 5 9-5-9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>',
   message: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/>',
+  panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.5-2L20 12M4 12l2.4 5a7 7 0 0 0 11.5-2"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
   send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
@@ -30,6 +31,68 @@ export function Icon({ name, size = 16 }) {
 
 export function Status({ value, dot = true }) {
   return <span className={`status status-${statusTone(value)}`}>{dot && <i />}{statusText(value)}</span>;
+}
+
+function inlineContent(value, keyPrefix) {
+  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<]+)/g;
+  return String(value).split(pattern).filter(Boolean).map((part, index) => {
+    const key = `${keyPrefix}:${index}`;
+    if (part.startsWith('`') && part.endsWith('`')) return <code key={key}>{part.slice(1, -1)}</code>;
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={key}>{part.slice(2, -2)}</strong>;
+    const markdownLink = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
+    if (markdownLink) return <a key={key} href={markdownLink[2]} target="_blank" rel="noreferrer">{markdownLink[1]}</a>;
+    if (/^https?:\/\//.test(part)) return <a key={key} href={part} target="_blank" rel="noreferrer">{part}</a>;
+    return part;
+  });
+}
+
+export function RichText({ children }) {
+  const blocks = [];
+  let list = [];
+  let listType = '';
+  let code = null;
+  const flushList = () => {
+    if (!list.length) return;
+    const List = listType || 'ul';
+    blocks.push(<List key={`list:${blocks.length}`}>{list}</List>);
+    list = [];
+    listType = '';
+  };
+  const flushCode = () => {
+    if (code === null) return;
+    blocks.push(<pre className="rich-code" key={`code:${blocks.length}`}><code>{code.join('\n')}</code></pre>);
+    code = null;
+  };
+  String(children || '').split('\n').forEach((raw, index) => {
+    const line = raw.trimEnd();
+    if (/^\s*```/.test(line)) {
+      if (code === null) { flushList(); code = []; } else flushCode();
+      return;
+    }
+    if (code !== null) { code.push(raw); return; }
+    const bullet = line.match(/^\s*[-*]\s+(.+)/);
+    const ordered = line.match(/^\s*\d+\.\s+(.+)/);
+    if (bullet || ordered) {
+      const nextType = ordered ? 'ol' : 'ul';
+      if (listType && listType !== nextType) flushList();
+      listType = nextType;
+      const content = (bullet || ordered)[1];
+      list.push(<li key={`item:${index}`}>{inlineContent(content, `item:${index}`)}</li>);
+      return;
+    }
+    flushList();
+    if (!line.trim()) {
+      if (blocks.length && blocks.at(-1)?.type !== 'span') blocks.push(<span className="rich-gap" key={`gap:${index}`} />);
+      return;
+    }
+    const heading = line.match(/^\s*#{1,4}\s+(.+)/);
+    if (heading) blocks.push(<strong className="rich-heading" key={`heading:${index}`}>{inlineContent(heading[1], `heading:${index}`)}</strong>);
+    else if (/^\s*>/.test(line)) blocks.push(<blockquote key={`quote:${index}`}>{inlineContent(line.replace(/^\s*>\s?/, ''), `quote:${index}`)}</blockquote>);
+    else blocks.push(<p key={`line:${index}`}>{inlineContent(line, `line:${index}`)}</p>);
+  });
+  flushList();
+  flushCode();
+  return <div className="rich-text">{blocks}</div>;
 }
 
 export function formatClock(value) {

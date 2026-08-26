@@ -2,7 +2,7 @@ import { useActionState, useEffect, useOptimistic, useRef, useState } from 'reac
 import { useFormStatus } from 'react-dom';
 import { api } from '../lib/api.js';
 import { interventionReceiptText, ownerDecisionPayload } from '../domain/operator-model.js';
-import { formatClock, Icon } from './common.jsx';
+import { formatClock, Icon, RichText } from './common.jsx';
 
 function SubmitButton({ children, icon = 'send', className = 'primary-button', disabled = false }) {
   const { pending } = useFormStatus();
@@ -47,7 +47,7 @@ export function DirectorComposer({ directorId, defaultMode = 'auto', onAccepted,
         <span className="chat-avatar">{message.role === 'owner' ? '나' : 'D'}</span>
         <div>
           <header><strong>{message.role === 'owner' ? '나' : '디렉터'}</strong><time>{formatClock(message.at)}</time>{message.kind && <em>{message.kind}</em>}</header>
-          <div className="chat-copy">{message.text}</div>
+          <div className="chat-copy"><RichText>{message.text}</RichText></div>
           {message.pending && <small>전송 중…</small>}
         </div>
       </article>)}
@@ -56,11 +56,11 @@ export function DirectorComposer({ directorId, defaultMode = 'auto', onAccepted,
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) event.currentTarget.requestSubmit();
     }}>
       <label className="sr-only" htmlFor="director-prompt">디렉터에게 요청</label>
-      <textarea id="director-prompt" name="prompt" rows="3" value={draft} onChange={event => setDraft(event.target.value)} placeholder="질문, 기능 요청, 버그 수정… 디렉터가 직접 답할지 Worker에게 위임할지 판단합니다." />
+      <textarea id="director-prompt" name="prompt" rows="3" value={draft} onChange={event => setDraft(event.target.value)} placeholder="요청을 입력하세요. 디렉터가 답변·조사·Worker 위임을 판단합니다." />
       <footer>
         <label><span className="sr-only">처리 방식</span><select name="mode" value={mode} onChange={event => setMode(event.target.value)}>
-          <option value="auto">자동 판단</option>
-          <option value="delegate">Worker 실행</option>
+          <option value="auto">자동</option>
+          <option value="delegate">Worker 위임</option>
           <option value="conversation">답변만</option>
         </select></label>
         <span className="composer-hint">Ctrl+Enter로 전송</span>

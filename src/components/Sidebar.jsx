@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { Icon, initials, relativeTime, Status, statusTone, statusText } from './common.jsx';
 
 function GoalRow({ goal, selected, active, onSelect }) {
-  return <button type="button" className={`goal-row ${selected ? 'selected' : ''}`} onClick={() => onSelect(goal.id)}>
+  const label = goal.objective || `Goal ${goal.id.slice(-6)}`;
+  return <button type="button" className={`goal-row ${selected ? 'selected' : ''}`} onClick={() => onSelect(goal.id)} title={label} aria-label={label}>
     <span className={`goal-state ${statusTone(goal.status)}`}><i /></span>
-    <span className="goal-copy"><strong>{goal.objective || `Goal ${goal.id.slice(-6)}`}</strong><small>{active ? '활성 목표' : statusText(goal.status)}{goal.queuePosition ? ` · 대기열 #${goal.queuePosition}` : ''}{goal.updatedAt ? ` · ${relativeTime(goal.updatedAt)}` : ''}</small></span>
+    <span className="goal-copy"><strong>{label}</strong><small>{active ? '활성 목표' : statusText(goal.status)}{goal.queuePosition ? ` · 대기열 #${goal.queuePosition}` : ''}{goal.updatedAt ? ` · ${relativeTime(goal.updatedAt)}` : ''}</small></span>
   </button>;
 }
 
@@ -21,12 +22,6 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
   const recent = visibleGoals.filter(goal => !activeIds.has(goal.id) && goal.status !== 'queued');
 
   return <aside className="sidebar" aria-label="디렉터와 목표">
-    <div className="sidebar-project">
-      <span className="project-mark"><Icon name="folder" /></span>
-      <span><strong>{selectedDirector?.name || 'Praetorium'}</strong><small title={selectedDirector?.cwd || ''}>{selectedDirector?.cwd || '프로젝트를 연결하세요'}</small></span>
-      <button type="button" className="icon-button" onClick={onSettings} aria-label="환경 관리"><Icon name="settings" /></button>
-    </div>
-
     <div className="sidebar-search"><Icon name="search" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Goal 검색" aria-label="Goal 검색" /></div>
 
     <div className="sidebar-scroll">
@@ -35,8 +30,7 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
         <div className="director-switcher">
           {(summary?.directors || []).map(director => <button type="button" key={director.id} className={director.id === selectedDirector?.id ? 'selected' : ''} onClick={() => onDirector(director.id)} title={director.name}>
             <span className="director-avatar">{initials(director.name)}</span>
-            <span><strong>{director.name}</strong><small>{director.kind === 'project' ? 'Project Director' : director.profile}</small></span>
-            <Status value={director.status} dot />
+            <span><strong>{director.name}</strong><small><span>{director.kind === 'project' ? (director.runtime === 'wsl' ? `WSL · ${director.distro || 'Ubuntu'}` : 'Windows 프로젝트') : 'Skill Director'}</span><Status value={director.status} dot /></small></span>
           </button>)}
         </div>
       </section>
@@ -51,15 +45,15 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
         {queued.map(goal => <GoalRow key={goal.id} goal={goal} selected={goal.id === selectedGoal?.id} onSelect={onGoal} />)}
       </section>}
 
-      <section className="nav-section recent-section">
+      {!!recent.length && <section className="nav-section recent-section">
         <header><span>Recent</span><small>{recent.length}</small></header>
         {recent.map(goal => <GoalRow key={goal.id} goal={goal} selected={goal.id === selectedGoal?.id} onSelect={onGoal} />)}
-        {!visibleGoals.length && <p className="nav-empty">표시할 Goal이 없습니다.</p>}
-      </section>
+      </section>}
+      {!visibleGoals.length && <p className="nav-empty">표시할 Goal이 없습니다.</p>}
     </div>
 
     <footer className="sidebar-footer">
-      <div><span className={`presence ${summary?.scheduler?.running ? 'online' : ''}`} /><span><strong>Local scheduler</strong><small>{summary?.scheduler?.lastError || (summary?.scheduler?.running ? '감독 중' : '중지됨')}</small></span></div>
+      <div><span className={`presence ${summary?.scheduler?.running ? 'online' : ''}`} /><span><strong>로컬 스케줄러</strong><small>{summary?.scheduler?.lastError || (summary?.scheduler?.running ? '감독 중' : '중지됨')}</small></span></div>
       <button type="button" className="icon-button" onClick={onSettings} aria-label="설정 열기"><Icon name="settings" /></button>
     </footer>
   </aside>;

@@ -1,8 +1,8 @@
 ---
 version: 1
 slug: "index-html"
-primary_target: "index.html"
-related_targets: ["css/owner-console.css","js/owner-console.js"]
+primary_target: "src/App.jsx"
+related_targets: ["src/components/Sidebar.jsx","src/components/Workspace.jsx","src/components/forms.jsx","src/styles.css"]
 ---
 
 # Operator Studio surface brief
@@ -12,7 +12,7 @@ related_targets: ["css/owner-console.css","js/owner-console.js"]
 - Approved composition: `.impeccable/mocks/operator-studio-b-trace.png`.
 - Direction: trace-first graphite workbench. Restrained indigo authority accent, semantic state colors, compact sans UI, mono only for commands, timing, and raw output.
 - Primary task: understand what is running, what happened, what failed, what the Director concluded, and where the evidence lives without changing screens unnecessarily.
-- Memorable moment: a nested execution trace and live log drawer stay visible together; selecting an event updates the right Inspector without losing place.
+- Memorable moment: a nested execution trace and live log drawer stay visible together; the right Inspector opens only when deeper evidence or control is needed.
 - Director answer: the Director tab owns the complete conversation and final response. Overview keeps a compact latest-conclusion preview that opens the exact conversation surface.
 - Constraints: no session termination; preserve IDs, routes, runtime authority boundaries, keyboard operation, text scaling, reduced motion, independent scrolling, and existing management dialogs.
 
@@ -26,8 +26,8 @@ related_targets: ["css/owner-console.css","js/owner-console.js"]
 | Nested execution trace with status and time | Existing trace renderer, new CSS hierarchy |
 | Visible combined Worker log drawer | New semantic HTML and minimal renderer using existing task trace data |
 | Director latest conclusion preview | New semantic HTML and renderer using existing durable run/final report data |
-| Right evidence Inspector | Existing inspector renderer, persistent split layout |
-| Resizable Inspector | Native pointer and keyboard splitter using stored UI preference |
+| Right evidence Inspector | Existing inspector renderer, collapsed by default with a mobile drawer |
+| Resizable Inspector | Native pointer and keyboard splitter using stored width and visibility preferences |
 | Owner gate | Existing decision controls presented inline |
 | Icons | Existing coherent stroke SVG set; no new dependency |
 | Motion | CSS state transitions only, reduced-motion safe |

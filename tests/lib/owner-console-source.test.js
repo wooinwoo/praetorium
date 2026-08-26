@@ -210,9 +210,9 @@ test('Owner Goal controls confirm exact destructive scope and preserve server re
 });
 
 test('Owner console uses resizable rail and overview, Director chat, and Worker workspace tabs', async () => {
-  const [html, app, common, workspace, css] = await Promise.all([
+  const [html, app, common, sidebar, workspace, css] = await Promise.all([
     source('index.html'), source('src/App.jsx'), source('src/components/common.jsx'),
-    source('src/components/Workspace.jsx'), source('src/styles.css'),
+    source('src/components/Sidebar.jsx'), source('src/components/Workspace.jsx'), source('src/styles.css'),
   ]);
   assert.match(html, /class="skip-link" href="#workspace"/);
   assert.match(common, /role="separator"/);
@@ -223,16 +223,31 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(common, /ArrowLeft.*ArrowRight.*Home/);
   assert.match(app, /praetorium\.railWidth/);
   assert.match(app, /praetorium\.inspectorWidth/);
+  assert.match(app, /praetorium\.inspectorOpen/);
   assert.match(workspace, /role="tablist"/);
   assert.match(workspace, /\['ArrowLeft', 'ArrowRight', 'Home', 'End'\]/);
   assert.match(workspace, /role="tabpanel"/);
-  assert.match(workspace, /종합 Trace/);
-  assert.match(workspace, /디렉터 채팅/);
+  assert.match(workspace, />현황</);
+  assert.match(workspace, />디렉터</);
   assert.match(workspace, /worker-tabs/);
-  assert.match(workspace, /Live worker log/);
+  assert.match(workspace, /Worker 원문 로그/);
+  assert.match(workspace, /<Splitter label="세부 정보 너비"/);
+  assert.match(workspace, /onClose=\{\(\) => setInspectorOpen\(false\)\}/);
+  assert.match(workspace, /selectedEntry\.type === 'decision'/);
+  assert.match(workspace, /const preview = String\(conclusion/);
+  assert.match(workspace, /setSelectedEntry\(trace\.find\(entry => entry\.type === 'task' && entry\.taskId === id\)/);
+  assert.match(workspace, /inspectorCloseRef\.current\?\.focus/);
+  assert.match(workspace, /event\.key === 'Escape'/);
+  assert.match(workspace, /!document\.querySelector\('\[role="dialog"\]'\)/);
+  assert.match(sidebar, /aria-label=\{label\}/);
+  assert.match(common, /className="rich-code"/);
+  assert.match(common, /const ordered = line\.match/);
+  assert.match(common, /<blockquote/);
   assert.match(css, /\.splitter[\s\S]*cursor: ew-resize/);
-  assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: 42px minmax\(0, 1fr\)/);
-  assert.match(css, /@media \(max-width: 760px\)/);
+  assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: 48px minmax\(0, 1fr\)/);
+  assert.match(css, /\.workspace-shell > \.splitter-right \{ grid-column: 2; grid-row: 2; \}/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.inspector \{ position: fixed;/);
+  assert.match(css, /@media \(max-width: 1360px\)[\s\S]*\.operator-grid \{ grid-template-columns: 60px minmax\(0, 1fr\); \}/);
   assert.equal(_test.workspaceViewKind('task:t-1'), 'task');
   assert.equal(_test.workspaceViewKind('unknown'), 'overview');
 });
@@ -354,7 +369,7 @@ test('Primary operational labels are shown in Korean while internal status keys 
   ]);
   for (const copy of ['대기', '실행 중', '판단 필요', '오너 판단', '검증']) assert.match(model, new RegExp(copy));
   for (const copy of ['디렉터 채팅', '오너 결정 필요', '공개 체크포인트', '명령·결과 원문']) assert.match(workspace, new RegExp(copy));
-  for (const copy of ['Worker 실행', '답변만']) assert.match(forms, new RegExp(copy));
+  for (const copy of ['Worker 위임', '답변만']) assert.match(forms, new RegExp(copy));
   for (const copy of ['접수됨', 'Worker 확인됨']) assert.match(model, new RegExp(copy));
   assert.equal(
     _test.localizeOperationalCopy('Director 자동 평가 실패 · Owner 판단 대기 · Worker Wave checkpoint'),

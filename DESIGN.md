@@ -53,6 +53,7 @@ colors:
   log-text: "#aeb7c4"
   log-title: "#c2c8d2"
   log-muted: "#78818f"
+  settings-backdrop: "rgba(5, 7, 10, .66)"
 typography:
   title:
     fontFamily: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif'
@@ -69,6 +70,21 @@ typography:
     fontSize: ".8rem"
     fontWeight: 400
     lineHeight: 1.5
+  conversation:
+    fontFamily: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif'
+    fontSize: ".9rem"
+    fontWeight: 400
+    lineHeight: 1.65
+  conversationHeading:
+    fontFamily: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif'
+    fontSize: ".94rem"
+    fontWeight: 700
+    lineHeight: 1.4
+  settingsTitle:
+    fontFamily: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif'
+    fontSize: ".92rem"
+    fontWeight: 700
+    lineHeight: 1.4
   label:
     fontFamily: 'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif'
     fontSize: ".75rem"
@@ -89,6 +105,7 @@ rounded:
   compact-panel: "8px"
   panel: "9px"
   md: "10px"
+  composer: "11px"
   dialog: "12px"
   round: "50%"
 spacing:
@@ -151,11 +168,11 @@ Dark is the default theme and light is a complete token swap over the same geome
 
 **Key Characteristics:**
 
-- A fixed-height shell with a project rail, central workbench, and evidence Inspector.
+- A fixed-height shell with a project rail, central workbench, and on-demand evidence Inspector.
 - A fixed latest-conclusion strip above an independently scrolling trace and persistent live-log drawer.
 - One tab row for aggregate Trace, the complete Director conversation, and each Worker.
 - Compact sans-serif interface copy, with monospace reserved for IDs, timestamps, roles, commands, and raw output.
-- Persistent local preferences for theme, text scale, rail width, and Inspector width.
+- Persistent local preferences for theme, text scale, rail width, Inspector width, and Inspector visibility.
 
 ## Colors
 
@@ -193,7 +210,7 @@ The frontmatter records the exact implemented CSS theme values. Dark and light u
 
 **Label/Mono Font:** The same sans stack for labels; SFMono-Regular, Consolas, Liberation Mono, and `monospace` for machine-shaped content.
 
-**Character:** The implemented scale is deliberately compressed. At the 16px root, it uses .75rem for status, metadata, mono labels, and times; .76rem for dense chat and error copy; .78rem for compact counts and select titles; .8rem for operational copy; .82–.86rem for small headings, controls, and body variants; .92rem for the settings title; and 1rem for Goal and Worker titles. Weight ranges from 400 for copy to 520–570 for task facts, 600–650 for controls and titles, and 700–800 for labels, brand, and avatars.
+**Character:** The implemented scale is compact without shrinking primary reading content. At the 16px root, it uses .75rem for status, metadata, mono labels, and times; .78rem for compact counts and select titles; .8rem for operational copy; .82–.86rem for small headings, controls, and body variants; .9rem for Director conversation and composition; .92rem for the settings title; and 1rem for Goal and Worker titles. Weight ranges from 400 for copy to 520–570 for task facts, 600–650 for controls and titles, and 700–800 for labels, brand, and avatars.
 
 ### Hierarchy
 
@@ -201,7 +218,7 @@ The frontmatter records the exact implemented CSS theme values. Dark and light u
 - **Body** (400, .85rem, usually 1.5–1.6): descriptions, checkpoints, settings copy, and empty states.
 - **Compact** (400, .8rem, usually 1.45–1.55): operational facts, controls, Inspector values, and trace details.
 - **Label** (600–700, .75rem, 1–1.4): states, roles, timestamps, uppercase section labels, and metadata.
-- **Dense Chat** (400, .76rem, 1.65): Director and Owner message bodies.
+- **Conversation** (400, .9rem, 1.65): Director and Owner message bodies.
 - **Mono** (400 or 700, .75–.8rem, 1–1.65): IDs, paths, roles, timestamps, commands, and raw logs only.
 
 The text-scale control changes the root from 90% to 125% in 5% steps, so every rem-based size scales from this exact base.
@@ -214,20 +231,19 @@ The text-scale control changes the root from 90% to 125% in 5% steps, so every r
 
 ## Layout
 
-The viewport never page-scrolls. A 48px top bar sits above a fixed-height application grid. The conceptual three panes are a left Director/Goal rail, the central workspace, and the right Inspector. The rail defaults to 268px and resizes from 220px to 420px through a 5px separator. The Inspector defaults to 336px and resizes from 280px to 520px through its own 5px separator. The 42px workspace tab row spans both the center and Inspector.
+The viewport never page-scrolls. A 48px top bar sits above a fixed-height application grid. The conceptual three panes are a left Director/Goal rail, the central workspace, and the right Inspector. The rail defaults to 268px and resizes from 220px to 420px through a 5px separator. The Inspector starts closed so the active work owns the width; when opened, it defaults to 336px and resizes from 280px to 520px through its own 5px separator. The 48px workspace tab row spans the workspace and owns the Inspector toggle.
 
-The aggregate Overview is the `종합 Trace` tab. Its grid rows are the Goal header, the latest-conclusion bar, the trace viewport, and a live-log drawer. The conclusion bar is outside the trace scroller and therefore remains fixed. The trace owns vertical scrolling and follows new events only while the reader remains within 48px of the bottom; it initially shows the newest 160 events and exposes older batches explicitly. The live-log drawer occupies 30% of the remaining view, clamped from 180px to 280px, while its `<pre>` owns raw-log scrolling. The Inspector has a separate scroll container. Overview content uses an 880px centered measure; chat uses 760px messages and an 820px composer; Worker pages use a 900px centered measure.
+The aggregate Overview is the `현황` tab. Its grid rows are the Goal header, the latest-conclusion bar, the trace viewport, and a live-log drawer. The conclusion bar is outside the trace scroller and therefore remains fixed. The trace owns vertical scrolling and follows new events only while the reader remains within 48px of the bottom; it initially shows the newest 160 events and exposes older batches explicitly. The live-log drawer occupies 30% of the remaining view, clamped from 180px to 280px, while its `<pre>` owns raw-log scrolling. The Inspector and Director conversation have separate scroll containers. Overview content uses an 880px centered measure; chat and its composer use a 900px measure; Worker pages use a 900px centered measure.
 
 Spacing is compact and optical rather than a strict generated scale. The preferred recurring rhythm is 3, 5, 7, 8, 10, 12, 14, 18, 20, and 24px, as captured in frontmatter. Existing fit adjustments also use 2, 4, 6, 9, 11, 13, 15, 16, 17, 22, 26, and 28px; do not create additional values without a concrete fit need.
 
 Breakpoints are exact implementation boundaries:
 
-- Above 1180px, the full top-bar session state and Goal progress are visible.
-- From 1041px to 1180px, the three panes remain expanded but those secondary summaries hide.
-- From 761px to 1040px, the rail becomes a 60px icon index, resize handles hide, and the Inspector remains at 280px.
-- At 760px and below, the top bar becomes 44px, the Inspector hides, the rail remains 60px, labels compress, and key icon/tab targets become 44px. Settings becomes full-screen.
+- Above 1360px, the full top-bar session state and Goal progress are visible and both pane splitters are available.
+- From 761px to 1360px, secondary top-bar summaries hide, the rail becomes a 60px icon index, resize handles hide, and an opened Inspector uses 280px.
+- At 760px and below, the top bar becomes 44px, the rail remains 60px, labels compress, and key icon/tab targets become 44px. The Inspector opens as a right-side drawer up to 360px wide, and Settings becomes full-screen.
 
-The implementation has rendered references at 1440×900 and 760×820. The product's 900×640 minimum falls in the compact-rail, visible-Inspector layout.
+The implementation has rendered references at 1440×900, 900×640, and 760×820. The product's 900×640 minimum falls in the compact-rail layout with the Inspector closed by default.
 
 ### Named Rules
 

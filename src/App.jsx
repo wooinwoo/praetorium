@@ -25,6 +25,7 @@ function AppShell() {
   const [scale, setScale] = useStoredState('praetorium.scale', 1);
   const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 268);
   const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 336);
+  const [inspectorOpen, setInspectorOpen] = useStoredState('praetorium.inspectorOpen', false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -55,7 +56,7 @@ function AppShell() {
     <div className="operator-grid">
       <Sidebar summary={data.summary} selectedDirector={data.selectedDirector} selectedGoal={data.selectedGoal} goals={data.goals} onDirector={data.selectDirector} onGoal={data.selectGoal} onSettings={() => setSettingsOpen(true)} />
       <Splitter label="왼쪽 사이드바 너비" side="left" value={railWidth} min={220} max={420} onChange={setRailWidth} onReset={() => setRailWidth(268)} />
-      <section className="workspace-shell">
+      <section className={`workspace-shell ${inspectorOpen ? '' : 'inspector-closed'}`}>
         <Workspace
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -71,9 +72,12 @@ function AppShell() {
           taskTrace={data.taskTrace}
           errors={data.errors}
           refresh={data.refresh}
+          inspectorOpen={inspectorOpen}
+          setInspectorOpen={setInspectorOpen}
+          inspectorWidth={inspectorWidth}
+          setInspectorWidth={setInspectorWidth}
         />
       </section>
-      <Splitter label="Inspector 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(336)} />
     </div>
     <Settings open={settingsOpen} onClose={closeSettings} onChanged={data.refresh} />
   </div>;
