@@ -38,7 +38,9 @@ export function withFullRunOutputs(summary, outputs) {
 }
 
 export function runNeedsFullOutput(run, outputs) {
-  return Boolean(run?.outputTruncated && !outputs?.has(run.id));
+  const preview = run?.outputTruncated === true
+    || (run?.outputTruncated == null && String(run?.output || '').endsWith('…'));
+  return Boolean(preview && !outputs?.has(run.id));
 }
 
 function usePoll(load, dependencies, intervalMs = POLL_MS, enabled = true) {

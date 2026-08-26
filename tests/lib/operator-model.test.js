@@ -83,6 +83,7 @@ test('Owner console replaces compact previews with complete Director answers', (
   assert.equal(hydrated.recentRuns[0].outputTruncated, false);
   assert.equal(hydrated.recentRuns[1], summary.recentRuns[1]);
   assert.equal(runNeedsFullOutput({ id: 'run-clipped', outputTruncated: true }, new Map()), true);
+  assert.equal(runNeedsFullOutput({ id: 'legacy-clipped', output: '구형 서버 미리보기…' }, new Map()), true);
   assert.equal(runNeedsFullOutput({ id: 'run-complete', output: '조금 더 확인해 볼게요…', outputTruncated: false }, new Map()), false);
 });
 
