@@ -143,14 +143,13 @@ export function buildTrace(goal, runs, tasks) {
   return [...unique.values()].sort((a, b) => Date.parse(a.at || 0) - Date.parse(b.at || 0));
 }
 
-export function buildConversation(goal, summary, director) {
-  const goalRuns = goal?.runs || [];
+export function buildConversation(goal, summary, director, scope = goal ? 'goal' : 'project') {
+  const goalRuns = scope === 'goal' ? (goal?.runs || []) : [];
   const directRuns = (summary?.recentRuns || []).filter(run => {
     const matchesDirector = director?.kind === 'project'
       ? run.projectId === director.projectId
       : run.directorId === director?.id;
-    if (goal?.id) return run.goalId === goal.id || (!run.goalId && matchesDirector);
-    return matchesDirector;
+    return scope === 'goal' ? run.goalId === goal?.id : !run.goalId && matchesDirector;
   });
   const runs = [...new Map([...goalRuns, ...directRuns].map(run => [run.id, run])).values()];
   const messages = [];
@@ -159,9 +158,9 @@ export function buildConversation(goal, summary, director) {
     const answer = run.output || run.error || (!terminalStates.has(run.status) ? `판단 진행 중 · ${statusText(run.phase || run.status)}` : '');
     if (answer) messages.push({ id: `${run.id}:director`, role: 'director', text: answer, at: run.completedAt || run.startedAt || run.createdAt, kind: run.error ? '실패' : run.status === 'running' ? '판단 중' : '답변' });
   }
-  for (const answer of goal?.ownerAnswers || []) {
+  for (const answer of scope === 'goal' ? (goal?.ownerAnswers || []) : []) {
     messages.push({ id: `owner-answer:${answer.id || answer.at}`, role: 'owner', text: answer.answer || answer.selectedOption, at: answer.at, kind: '오너 결정' });
   }
-  if (goal?.finalReport) messages.push({ id: `goal-final:${goal.id}`, role: 'director', text: textValue(goal.finalReport), at: goal.completedAt || goal.updatedAt, kind: '최종 결론' });
+  if (scope === 'goal' && goal?.finalReport) messages.push({ id: `goal-final:${goal.id}`, role: 'director', text: textValue(goal.finalReport), at: goal.completedAt || goal.updatedAt, kind: '최종 결론' });
   return messages.sort((a, b) => Date.parse(a.at || 0) - Date.parse(b.at || 0));
 }

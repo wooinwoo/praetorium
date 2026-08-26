@@ -1,9 +1,11 @@
-import { Component, useCallback, useEffect, useState } from 'react';
+import { Component, useCallback, useEffect, useRef, useState } from 'react';
+import NotificationCenter from './components/NotificationCenter.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Settings from './components/Settings.jsx';
 import Workspace from './components/Workspace.jsx';
 import { Icon, Splitter, Status } from './components/common.jsx';
 import { usePraetorium, useStoredState } from './hooks/usePraetorium.js';
+import { useOperatorNotifications } from './hooks/useOperatorNotifications.js';
 
 class AppErrorBoundary extends Component {
   constructor(props) {
@@ -19,20 +21,65 @@ class AppErrorBoundary extends Component {
 
 function AppShell() {
   const [activeTab, setActiveTab] = useState('trace');
-  const data = usePraetorium({ taskPollingEnabled: activeTab !== 'director' });
+  const [chatScope, setChatScope] = useState('goal');
+  const data = usePraetorium({
+    taskPollingEnabled: activeTab !== 'director',
+    projectMessagesEnabled: activeTab === 'director' && chatScope === 'project',
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useStoredState('praetorium.theme', 'dark');
   const [scale, setScale] = useStoredState('praetorium.scale', 1);
   const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 268);
   const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 336);
   const [inspectorOpen, setInspectorOpen] = useStoredState('praetorium.inspectorOpen', false);
+  const [pendingNavigation, setPendingNavigation] = useState(null);
+  const pendingGoalRequest = useRef('');
+
+  const openNotification = useCallback(item => {
+    if (['connection_lost', 'runtime_error'].includes(item.kind)) {
+      setSettingsOpen(true);
+      return;
+    }
+    setPendingNavigation(item);
+    if (item.directorId && item.directorId !== data.selectedDirectorId) data.selectDirector(item.directorId);
+  }, [data.selectDirector, data.selectedDirectorId]);
+  const notifications = useOperatorNotifications({
+    summary: data.summary,
+    summaryError: data.errors.summary,
+    runtimeError: data.errors.board || data.boardStatus?.error,
+    onNavigate: openNotification,
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.setProperty('--ui-scale', String(scale));
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0d0f13' : '#f4f5f7');
   }, [theme, scale]);
-  useEffect(() => { setActiveTab('trace'); }, [data.selectedGoalId, data.selectedDirectorId]);
+  useEffect(() => {
+    setActiveTab('trace');
+    setChatScope(data.selectedGoalId ? 'goal' : 'project');
+  }, [data.selectedGoalId, data.selectedDirectorId]);
+  useEffect(() => {
+    if (!pendingNavigation || (pendingNavigation.directorId && pendingNavigation.directorId !== data.selectedDirectorId)) return;
+    if (pendingNavigation.goalId && pendingNavigation.goalId !== data.selectedGoalId) {
+      const requestKey = `${data.selectedDirectorId}:${pendingNavigation.goalId}`;
+      if (pendingGoalRequest.current === requestKey) return;
+      pendingGoalRequest.current = requestKey;
+      void data.revealGoal(pendingNavigation.goalId).then(opened => {
+        if (!opened) setPendingNavigation(null);
+      });
+      return;
+    }
+    pendingGoalRequest.current = '';
+    setPendingNavigation(null);
+    if (pendingNavigation.taskId) {
+      data.selectTask(pendingNavigation.taskId);
+      setActiveTab(`task:${pendingNavigation.taskId}`);
+    } else {
+      setChatScope('goal');
+      setActiveTab(pendingNavigation.kind === 'owner_decision' ? 'trace' : 'director');
+    }
+  }, [data.revealGoal, data.selectTask, data.selectedDirectorId, data.selectedGoalId, pendingNavigation]);
 
   const projectName = data.selectedDirector?.name || 'Praetorium';
   const sessionCount = data.summary?.sessions?.total || 0;
@@ -46,6 +93,7 @@ function AppShell() {
         <span className={`connection ${connected ? 'online' : 'offline'}`}><i />{connected ? '로컬 연결' : '연결 끊김'}</span>
         <span className="session-state"><Icon name="activity" /><b>{sessionCount}</b> running</span>
         <div className="scale-control" aria-label="화면 글자 크기"><button type="button" onClick={() => setScale(value => Math.max(.9, +(value - .05).toFixed(2)))} aria-label="글자 축소">−</button><button type="button" onClick={() => setScale(1)} title="100%로 초기화">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale(value => Math.min(1.25, +(value + .05).toFixed(2)))} aria-label="글자 확대">+</button></div>
+        <NotificationCenter notifications={notifications} onOpen={openNotification} />
         <button type="button" className="icon-button" onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '라이트 모드' : '다크 모드'}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
         <button type="button" className="icon-button" onClick={() => setSettingsOpen(true)} aria-label="환경 관리"><Icon name="settings" /></button>
       </div>
@@ -54,12 +102,14 @@ function AppShell() {
     {data.errors.summary && <div className="global-error" role="alert"><span><strong>로컬 서버 동기화 실패</strong>{data.errors.summary}</span><button type="button" onClick={data.refresh}>다시 시도</button></div>}
 
     <div className="operator-grid">
-      <Sidebar summary={data.summary} selectedDirector={data.selectedDirector} selectedGoal={data.selectedGoal} goals={data.goals} onDirector={data.selectDirector} onGoal={data.selectGoal} onSettings={() => setSettingsOpen(true)} />
+      <Sidebar summary={data.summary} selectedDirector={data.selectedDirector} selectedGoal={data.selectedGoal} goals={data.goals} query={data.goalSearch} onQuery={data.setGoalSearch} historyFilter={data.historyFilter} onHistoryFilter={data.setHistoryFilter} history={data.goalHistory} onLoadMore={data.loadMoreGoals} onDirector={data.selectDirector} onGoal={data.selectGoal} onSettings={() => setSettingsOpen(true)} />
       <Splitter label="왼쪽 사이드바 너비" side="left" value={railWidth} min={220} max={420} onChange={setRailWidth} onReset={() => setRailWidth(268)} />
       <section className={`workspace-shell ${inspectorOpen ? '' : 'inspector-closed'}`}>
         <Workspace
           activeTab={activeTab}
           setActiveTab={setActiveTab}
+          chatScope={chatScope}
+          setChatScope={setChatScope}
           director={data.selectedDirector}
           goal={data.selectedGoal}
           goalDetail={data.goalDetail}
@@ -72,6 +122,8 @@ function AppShell() {
           taskTrace={data.taskTrace}
           errors={data.errors}
           refresh={data.refresh}
+          projectMessages={data.projectMessages}
+          loadMoreProjectMessages={data.loadMoreProjectMessages}
           inspectorOpen={inspectorOpen}
           setInspectorOpen={setInspectorOpen}
           inspectorWidth={inspectorWidth}

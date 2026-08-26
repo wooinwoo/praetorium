@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildConversation, buildTrace, goalControlOptions, goalTasks, interventionReceiptText, ownerDecisionPayload, statusText, statusTone, textValue } from '../../src/domain/operator-model.js';
+import { connectionNotification, deriveGoalNotifications, deriveWorkerNotifications, mergeNotifications } from '../../src/domain/notification-model.js';
 import { runNeedsFullOutput, withFullRunOutputs } from '../../src/hooks/usePraetorium.js';
 
 test('operator model merges durable task records with fresher board state', () => {
@@ -59,13 +60,69 @@ test('operator model keeps Owner prompt, Director answer, decision, and final co
   ]);
 });
 
-test('operator model keeps direct Director replies beside a selected Goal conversation', () => {
-  const conversation = buildConversation({
+test('operator model separates project chat from the selected Goal record', () => {
+  const goal = {
     id: 'g1', runs: [{ id: 'goal-run', goalId: 'g1', prompt: 'build', output: 'delegated', status: 'completed' }],
-  }, {
+  };
+  const summary = {
     recentRuns: [{ id: 'chat-run', projectId: 'p1', prompt: 'status?', output: 'healthy', status: 'completed' }],
-  }, { kind: 'project', projectId: 'p1' });
-  assert.deepEqual(conversation.map(item => item.text), ['build', 'delegated', 'status?', 'healthy']);
+  };
+  const director = { kind: 'project', projectId: 'p1' };
+  assert.deepEqual(buildConversation(goal, summary, director, 'goal').map(item => item.text), ['build', 'delegated']);
+  assert.deepEqual(buildConversation(goal, summary, director, 'project').map(item => item.text), ['status?', 'healthy']);
+});
+
+test('operator notifications emit only state transitions and group worker completions', () => {
+  const previous = {
+    directors: [{ id: 'd1', name: 'AgencyPro' }],
+    notificationGoals: [{ id: 'g1', directorId: 'd1', objective: 'Ship', status: 'executing', ownerDecision: null }],
+  };
+  const current = {
+    directors: previous.directors,
+    notificationGoals: [{ ...previous.notificationGoals[0], status: 'completed', completedAt: '2026-08-26T01:00:00Z' }],
+  };
+  assert.deepEqual(deriveGoalNotifications(null, current), []);
+  const goals = deriveGoalNotifications(previous, current, '2026-08-26T01:01:00Z');
+  assert.equal(goals.length, 1);
+  assert.equal(goals[0].kind, 'goal_completed');
+
+  const workers = deriveWorkerNotifications(
+    [
+      { id: 't1', directorId: 'd1', goalId: 'g1', status: 'running' },
+      { id: 't2', directorId: 'd1', goalId: 'g1', status: 'review' },
+    ],
+    [
+      { id: 't1', directorId: 'd1', goalId: 'g1', goalObjective: 'Ship', status: 'done', title: 'Build' },
+      { id: 't2', directorId: 'd1', goalId: 'g1', goalObjective: 'Ship', status: 'success', title: 'Review' },
+    ],
+    '2026-08-26T01:02:00Z',
+  );
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0].title, 'Worker 2개 완료');
+  assert.equal(workers[0].createdAt, '2026-08-26T01:02:00Z');
+  assert.equal(workers[0].goalId, 'g1');
+  const fastGoal = deriveGoalNotifications(
+    { directors: previous.directors, notificationGoals: [] },
+    { directors: previous.directors, notificationGoals: [{ ...current.notificationGoals[0], completedAt: '2026-08-26T01:03:00Z', updatedAt: '2026-08-26T01:03:00Z' }] },
+    '2026-08-26T01:03:01Z',
+    '2026-08-26T01:02:59Z',
+  );
+  assert.equal(fastGoal[0].kind, 'goal_completed');
+  const fastWorker = deriveWorkerNotifications(
+    [],
+    [{ id: 't3', directorId: 'd1', goalId: 'g1', goalObjective: 'Ship', status: 'done', title: 'Fast', updatedAt: '2026-08-26T01:03:00Z' }],
+    '2026-08-26T01:03:01Z',
+    '2026-08-26T01:02:59Z',
+  );
+  assert.equal(fastWorker[0].taskId, 't3');
+  assert.equal(deriveWorkerNotifications(
+    [],
+    [{ id: 't-old', directorId: 'd1', status: 'done', updatedAt: '2026-08-26T01:00:00Z' }],
+    '2026-08-26T01:03:01Z',
+    '2026-08-26T01:03:02Z',
+  ).length, 0);
+  const connected = connectionNotification('offline', '2026-08-26T01:03:00Z');
+  assert.equal(mergeNotifications(goals, [goals[0], connected]).length, 2);
 });
 
 test('Owner console replaces compact previews with complete Director answers', () => {

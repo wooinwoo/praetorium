@@ -9,7 +9,7 @@ function SubmitButton({ children, icon = 'send', className = 'primary-button', d
   return <button type="submit" className={className} disabled={pending || disabled}>{pending ? <span className="spinner" /> : <Icon name={icon} />}{pending ? '처리 중' : children}</button>;
 }
 
-export function DirectorComposer({ directorId, defaultMode = 'auto', onAccepted, messages }) {
+export function DirectorComposer({ directorId, defaultMode = 'auto', onAccepted, messages, readOnly = false, readOnlyAction = null, hasOlder = false, loadingOlder = false, onLoadOlder, historyError = '' }) {
   const formRef = useRef(null);
   const chatRef = useRef(null);
   const [draft, setDraft] = useState('');
@@ -42,6 +42,8 @@ export function DirectorComposer({ directorId, defaultMode = 'auto', onAccepted,
 
   return <div className="director-thread-layout">
     <div ref={chatRef} className="chat-stream" role="log" aria-live="polite" onScroll={event => setFollow(event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight < 48)}>
+      {hasOlder && <button type="button" className="load-older chat-load-older" disabled={loadingOlder} onClick={onLoadOlder}>{loadingOlder ? '이전 대화 불러오는 중…' : '이전 대화 불러오기'}</button>}
+      {historyError && <p className="chat-history-error" role="alert">이전 대화를 불러오지 못했습니다. 다시 시도해 주세요.</p>}
       {!optimisticMessages.length && <div className="thread-empty"><strong>디렉터와 대화를 시작하세요.</strong><span>빠른 답변, 자율 판단, Worker 위임을 디렉터가 선택할 수 있습니다.</span></div>}
       {optimisticMessages.map(message => <article key={message.id} className={`chat-message ${message.role} ${message.pending ? 'pending' : ''}`}>
         <span className="chat-avatar">{message.role === 'owner' ? '나' : 'D'}</span>
@@ -52,7 +54,7 @@ export function DirectorComposer({ directorId, defaultMode = 'auto', onAccepted,
         </div>
       </article>)}
     </div>
-    <form ref={formRef} action={action} className="director-composer" onKeyDown={event => {
+    {readOnly ? <div className="goal-thread-footer"><span>이 기록은 현재 Goal에 한정됩니다.</span>{readOnlyAction}</div> : <form ref={formRef} action={action} className="director-composer" onKeyDown={event => {
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) event.currentTarget.requestSubmit();
     }}>
       <label className="sr-only" htmlFor="director-prompt">디렉터에게 요청</label>
@@ -67,7 +69,7 @@ export function DirectorComposer({ directorId, defaultMode = 'auto', onAccepted,
         <SubmitButton>보내기</SubmitButton>
       </footer>
       {result?.error && <p className="form-error" role="alert">{result.error}</p>}
-    </form>
+    </form>}
   </div>;
 }
 

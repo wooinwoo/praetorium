@@ -7,6 +7,7 @@ export { statusText, statusTone };
 const paths = {
   activity: '<path d="M4 13h3l2-7 4 12 2-5h5"/>',
   arrow: '<path d="m9 18 6-6-6-6"/>',
+  bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
   branch: '<path d="M6 3v12a3 3 0 0 0 3 3h6"/><circle cx="6" cy="3" r="2"/><circle cx="17" cy="18" r="2"/><circle cx="17" cy="7" r="2"/><path d="M6 8h7a4 4 0 0 0 4-4"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
@@ -132,8 +133,12 @@ export function initials(value = '') {
 
 export function Splitter({ label, side, value, min, max, onChange, onReset, ref }) {
   const drag = useRef(null);
+  const paneWidth = splitter => {
+    const pane = side === 'left' ? splitter.previousElementSibling : splitter.nextElementSibling;
+    return pane?.getBoundingClientRect().width || value;
+  };
   const begin = event => {
-    drag.current = { x: event.clientX, value };
+    drag.current = { x: event.clientX, value: paneWidth(event.currentTarget) };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const move = event => {
@@ -161,7 +166,7 @@ export function Splitter({ label, side, value, min, max, onChange, onReset, ref 
       event.preventDefault();
       if (event.key === 'Home') return onReset();
       const direction = event.key === 'ArrowRight' ? 1 : -1;
-      onChange(Math.max(min, Math.min(max, value + (side === 'left' ? direction : -direction) * 16)));
+      onChange(Math.max(min, Math.min(max, paneWidth(event.currentTarget) + (side === 'left' ? direction : -direction) * 16)));
     }}
   />;
 }

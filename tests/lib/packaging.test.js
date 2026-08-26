@@ -40,4 +40,14 @@ describe('Tauri runtime packaging', () => {
     assert.ok(tauriTest >= 0);
     assert.ok(frontendBuild < tauriTest);
   });
+
+  it('routes native notification activation back to the selected record', () => {
+    const rust = readFileSync(resolve(root, 'src-tauri/src/lib.rs'), 'utf8');
+    const cargo = readFileSync(resolve(root, 'src-tauri/Cargo.toml'), 'utf8');
+    assert.match(cargo, /tauri-winrt-notification = "=0\.7\.3"/);
+    assert.match(rust, /show_operator_notification/);
+    assert.match(rust, /on_activated/);
+    assert.match(rust, /emit\("operator-notification-open"/);
+    assert.match(rust, /show_main_window\(&activation_app\)/);
+  });
 });

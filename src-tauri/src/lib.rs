@@ -13,6 +13,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder};
+#[cfg(windows)]
+use tauri::Emitter;
 use tauri::Manager;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
@@ -990,6 +992,40 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+#[tauri::command]
+fn show_operator_notification(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+    payload: String,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let activation_app = app.clone();
+        tauri_winrt_notification::Toast::new(&app.config().identifier)
+            .title(&title)
+            .text1(&body)
+            .on_activated(move |_| {
+                show_main_window(&activation_app);
+                let _ = activation_app.emit("operator-notification-open", payload.clone());
+                Ok(())
+            })
+            .show()
+            .map_err(|error| format!("failed to show Windows notification: {error}"))
+    }
+    #[cfg(not(windows))]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let _ = payload;
+        app.notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+            .map_err(|error| format!("failed to show notification: {error}"))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let instance_guard = match acquire_desktop_instance()
@@ -1047,6 +1083,8 @@ pub fn run() {
     let menu_shutdown = shutdown.clone();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![show_operator_notification])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Praetorium", true, None::<&str>)?;

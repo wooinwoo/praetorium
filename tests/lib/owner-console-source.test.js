@@ -250,7 +250,8 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: 48px minmax\(0, 1fr\)/);
   assert.match(css, /\.workspace-shell > \.splitter-right \{ grid-column: 2; grid-row: 2; \}/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.inspector \{ position: fixed;/);
-  assert.match(css, /@media \(max-width: 1360px\)[\s\S]*\.operator-grid \{ grid-template-columns: 60px minmax\(0, 1fr\); \}/);
+  assert.match(css, /\.operator-grid \{[^}]*grid-template-columns: clamp\(220px, var\(--rail-width\), 34vw\)/);
+  assert.doesNotMatch(css, /\.sidebar-search[^}]*display: none/);
   assert.equal(_test.workspaceViewKind('task:t-1'), 'task');
   assert.equal(_test.workspaceViewKind('unknown'), 'overview');
 });
@@ -444,4 +445,31 @@ test('Owner console uses conditional compact polling and avoids hidden or unneed
   assert.match(js, /if \(taskInspectorNeedsRefresh\(\)\) void refreshSelectedTask\(\)/);
   assert.match(js, /visibilitychange/);
   assert.match(js, /if \(!document\.hidden\) void loadConsole\(\{ quiet: true \}\)/);
+});
+
+test('React console keeps durable history, scoped chat, completed Worker access, and operator alerts', async () => {
+  const [app, hook, sidebar, workspace, notifications, notificationModel, css] = await Promise.all([
+    source('src/App.jsx'), source('src/hooks/usePraetorium.js'), source('src/components/Sidebar.jsx'),
+    source('src/components/Workspace.jsx'), source('src/hooks/useOperatorNotifications.js'),
+    source('src/domain/notification-model.js'), source('src/styles.css'),
+  ]);
+  assert.match(hook, /\/goals\?\$\{query\}/);
+  assert.match(hook, /\/messages\?\$\{query\}/);
+  assert.match(sidebar, />History</);
+  assert.match(sidebar, /이전 기록 더 보기/);
+  assert.match(workspace, /channel-scope/);
+  assert.match(workspace, /CompletedTasksMenu/);
+  assert.match(workspace, /!terminalStates\.has\(task\.status\) \|\| activeTab ===/);
+  assert.match(notifications, /!document\.hidden && document\.hasFocus\(\)/);
+  assert.match(notifications, /show_operator_notification/);
+  assert.match(notifications, /operator-notification-open/);
+  assert.match(notifications, /summary\?\.notificationTasks/);
+  assert.match(notificationModel, /deriveWorkerNotifications/);
+  assert.match(notificationModel, /notificationGoals \|\|/);
+  assert.match(app, /<NotificationCenter/);
+  assert.match(css, /\.notification-panel/);
+  assert.match(css, /\.topbar:has\(\.notification-panel\) \{ z-index: 80; \}/);
+  assert.doesNotMatch(css, /@media \(max-width: 760px\) \{\n  \.operator-grid/);
+  assert.match(hook, /preserve: true/);
+  assert.match(hook, /\[\.\.\.dependencies, enabled\]/);
 });

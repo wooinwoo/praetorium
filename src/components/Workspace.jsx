@@ -114,12 +114,34 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
   </div>;
 }
 
-function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision }) {
-  const messages = useMemo(() => buildConversation(goal, summary, director), [goal, summary, director]);
+function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, chatScope, setChatScope, projectMessages, onLoadOlderMessages }) {
+  const conversationSummary = chatScope === 'project' ? { recentRuns: projectMessages?.items || [] } : summary;
+  const messages = useMemo(() => buildConversation(goal, conversationSummary, director, chatScope), [goal, conversationSummary, director, chatScope]);
   return <section className="director-view">
-    <header className="channel-header"><span className="director-avatar large">D</span><span><strong>디렉터</strong><small>{goal ? goal.objective : '프로젝트 전체 대화'}</small></span><span className="channel-actions"><Status value={director?.status} />{goal?.ownerDecision?.required && <button type="button" className="attention-button" onClick={onOpenDecision}>결정 필요 <Icon name="chevron" /></button>}</span></header>
-    <DirectorComposer key={director?.id} directorId={director?.id} messages={messages} onAccepted={async accepted => { onGoalAccepted(accepted?.goalId); refresh(); }} />
+    <header className="channel-header"><span className="director-avatar large">D</span><span><strong>디렉터</strong><small>{chatScope === 'goal' && goal ? goal.objective : `${director?.name || '프로젝트'} 전체 대화`}</small></span><div className="channel-scope" role="group" aria-label="디렉터 대화 범위"><button type="button" className={chatScope === 'project' ? 'selected' : ''} onClick={() => setChatScope('project')}>프로젝트</button><button type="button" disabled={!goal} className={chatScope === 'goal' ? 'selected' : ''} onClick={() => setChatScope('goal')}>현재 Goal</button></div><span className="channel-actions"><Status value={director?.status} />{chatScope === 'goal' && goal?.ownerDecision?.required && <button type="button" className="attention-button" onClick={onOpenDecision}>결정 필요 <Icon name="chevron" /></button>}</span></header>
+    <DirectorComposer
+      key={`${director?.id}:${chatScope}`}
+      directorId={director?.id}
+      messages={messages}
+      readOnly={chatScope === 'goal'}
+      readOnlyAction={<button type="button" className="secondary-button compact" onClick={() => setChatScope('project')}>프로젝트 대화에서 질문</button>}
+      hasOlder={chatScope === 'project' && projectMessages?.hasMore}
+      loadingOlder={chatScope === 'project' && projectMessages?.loading}
+      historyError={chatScope === 'project' ? projectMessages?.error : ''}
+      onLoadOlder={onLoadOlderMessages}
+      onAccepted={async accepted => { onGoalAccepted(accepted?.goalId); refresh(); }}
+    />
   </section>;
+}
+
+function CompletedTasksMenu({ tasks, onOpen }) {
+  if (!tasks.length) return null;
+  return <details className="completed-tasks-menu">
+    <summary><Icon name="check" /><span>완료 작업</span><b>{tasks.length}</b></summary>
+    <div>
+      {tasks.map(task => <button type="button" key={task.id} onClick={event => { event.currentTarget.closest('details').open = false; onOpen(task.id); }}><span className={`task-tab-dot ${task.status}`} /><span><strong>{task.title}</strong><small>{workerTabName(tasks, task)} · {statusText(task.status)}</small></span></button>)}
+    </div>
+  </details>;
 }
 
 function WorkerView({ task, detail, trace, error, onRetry }) {
@@ -179,7 +201,7 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
   </aside>;
 }
 
-export default function Workspace({ activeTab, setActiveTab, director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth }) {
+export default function Workspace({ activeTab, setActiveTab, chatScope, setChatScope, director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth }) {
   const tasks = useMemo(() => goalTasks(board, goalDetail || goal), [board, goalDetail, goal]);
   const runs = goalDetail?.runs || (summary?.recentRuns || []).filter(run => run.goalId === goal?.id);
   const trace = useMemo(() => buildTrace(goalDetail || goal, runs, tasks), [goalDetail, goal, runs, tasks]);
@@ -187,6 +209,8 @@ export default function Workspace({ activeTab, setActiveTab, director, goal, goa
   const inspectorToggleRef = useRef(null);
   const inspectorCloseRef = useRef(null);
   const selectedTask = tasks.find(task => task.id === selectedTaskId) || null;
+  const completedTasks = tasks.filter(task => terminalStates.has(task.status));
+  const taskTabs = tasks.filter(task => !terminalStates.has(task.status) || activeTab === `task:${task.id}`);
 
   useEffect(() => {
     if (!selectedTaskId) {
@@ -234,13 +258,14 @@ export default function Workspace({ activeTab, setActiveTab, director, goal, goa
         <button id={tabId('director')} type="button" role="tab" aria-controls="workspace" aria-selected={activeTab === 'director'} tabIndex={activeTab === 'director' ? 0 : -1} className={activeTab === 'director' ? 'selected' : ''} onClick={() => setActiveTab('director')}><span className="tab-avatar">D</span>디렉터{director?.status === 'running' && <i className="tab-live" />}</button>
         <span className="tab-divider" />
         <div className="worker-tabs">
-          {tasks.map(task => <button id={tabId(`task:${task.id}`)} type="button" key={task.id} role="tab" aria-controls="workspace" aria-selected={activeTab === `task:${task.id}`} tabIndex={activeTab === `task:${task.id}` ? 0 : -1} className={activeTab === `task:${task.id}` ? 'selected' : ''} onClick={() => openTask(task.id)} title={`${workerTabName(tasks, task)} · ${task.title}`}><span className={`task-tab-dot ${task.status}`} /><span>{workerTabName(tasks, task)}</span><small>{task.title}</small></button>)}
+          {taskTabs.map(task => <button id={tabId(`task:${task.id}`)} type="button" key={task.id} role="tab" aria-controls="workspace" aria-selected={activeTab === `task:${task.id}`} tabIndex={activeTab === `task:${task.id}` ? 0 : -1} className={activeTab === `task:${task.id}` ? 'selected' : ''} onClick={() => openTask(task.id)} title={`${workerTabName(tasks, task)} · ${task.title}`}><span className={`task-tab-dot ${task.status}`} /><span>{workerTabName(tasks, task)}</span><small>{task.title}</small></button>)}
         </div>
+        <CompletedTasksMenu tasks={completedTasks} onOpen={openTask} />
       </nav>
       <button ref={inspectorToggleRef} type="button" className={`inspector-toggle ${inspectorOpen ? 'selected' : ''}`} aria-controls="inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><Icon name="panel" /><span>세부</span></button>
     </div>
     <main id="workspace" className="workspace" role="tabpanel" aria-labelledby={tabId(activeTab)} tabIndex="-1">
-      {activeTab === 'director' ? <DirectorView director={director} goal={goalDetail || goal} summary={summary} refresh={refresh} onOpenDecision={() => setActiveTab('trace')} onGoalAccepted={id => { if (id) { selectGoal(id); setActiveTab('trace'); } }} />
+      {activeTab === 'director' ? <DirectorView director={director} goal={goalDetail || goal} summary={summary} refresh={refresh} chatScope={chatScope} setChatScope={setChatScope} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} onOpenDecision={() => setActiveTab('trace')} onGoalAccepted={id => { if (id) { selectGoal(id); setChatScope('goal'); setActiveTab('trace'); } }} />
         : activeTab.startsWith('task:') ? <WorkerView task={selectedTask} detail={taskDetail} trace={taskTrace} error={errors.task} onRetry={refresh} />
           : <TraceView goal={goalDetail || goal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={selectTask} onDirector={() => setActiveTab('director')} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} />}
     </main>

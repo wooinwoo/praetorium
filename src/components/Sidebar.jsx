@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Icon, initials, relativeTime, Status, statusTone, statusText } from './common.jsx';
 
 function GoalRow({ goal, selected, active, onSelect }) {
@@ -9,8 +9,7 @@ function GoalRow({ goal, selected, active, onSelect }) {
   </button>;
 }
 
-export default function Sidebar({ summary, selectedDirector, selectedGoal, goals, onDirector, onGoal, onSettings }) {
-  const [query, setQuery] = useState('');
+export default function Sidebar({ summary, selectedDirector, selectedGoal, goals, query, onQuery, historyFilter, onHistoryFilter, history, onLoadMore, onDirector, onGoal, onSettings }) {
   const visibleGoals = useMemo(() => {
     const value = query.trim().toLowerCase();
     if (!value) return goals;
@@ -19,10 +18,11 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
   const activeIds = new Set(summary?.activeGoals || []);
   const active = visibleGoals.filter(goal => activeIds.has(goal.id));
   const queued = visibleGoals.filter(goal => goal.status === 'queued');
-  const recent = visibleGoals.filter(goal => !activeIds.has(goal.id) && goal.status !== 'queued');
+  const recent = visibleGoals.filter(goal => !activeIds.has(goal.id) && goal.status !== 'queued')
+    .filter(goal => historyFilter === 'all' || (historyFilter === 'completed' ? goal.status === 'completed' : ['blocked', 'failed'].includes(goal.status)));
 
   return <aside className="sidebar" aria-label="디렉터와 목표">
-    <div className="sidebar-search"><Icon name="search" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Goal 검색" aria-label="Goal 검색" /></div>
+    <div className="sidebar-search"><Icon name="search" /><input value={query} onChange={event => onQuery(event.target.value)} placeholder="Goal·ID 검색" aria-label="Goal 기록 검색" /></div>
 
     <div className="sidebar-scroll">
       <section className="nav-section director-section">
@@ -45,11 +45,16 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
         {queued.map(goal => <GoalRow key={goal.id} goal={goal} selected={goal.id === selectedGoal?.id} onSelect={onGoal} />)}
       </section>}
 
-      {!!recent.length && <section className="nav-section recent-section">
-        <header><span>Recent</span><small>{recent.length}</small></header>
+      <section className="nav-section recent-section">
+        <header><span>History</span><small>{history?.total ?? recent.length}</small></header>
+        <div className="history-filters" role="group" aria-label="History 상태 필터">
+          {[['all', '전체'], ['completed', '완료'], ['problems', '문제']].map(([value, label]) => <button type="button" key={value} className={historyFilter === value ? 'selected' : ''} onClick={() => onHistoryFilter(value)}>{label}</button>)}
+        </div>
         {recent.map(goal => <GoalRow key={goal.id} goal={goal} selected={goal.id === selectedGoal?.id} onSelect={onGoal} />)}
-      </section>}
-      {!visibleGoals.length && <p className="nav-empty">표시할 Goal이 없습니다.</p>}
+        {!recent.length && <p className="nav-empty">{history?.loading ? '기록을 불러오는 중…' : '조건에 맞는 기록이 없습니다.'}</p>}
+        {history?.error && <p className="history-error">기록을 불러오지 못했습니다.</p>}
+        {history?.hasMore && <button type="button" className="history-more" disabled={history.loading} onClick={onLoadMore}>{history.loading ? '불러오는 중…' : `이전 기록 더 보기 · ${recent.length}/${history.total}`}</button>}
+      </section>
     </div>
 
     <footer className="sidebar-footer">

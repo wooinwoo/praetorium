@@ -34,6 +34,8 @@ function setup() {
     syncProjects: () => [],
     getRun: id => id === 'run-1' ? { id } : null,
     getGoal: id => id === activeGoal.id ? activeGoal : null,
+    getGoalHistory: (id, options) => ({ items: [{ id: 'goal-old', directorId: id }], total: 1, options }),
+    getMessageHistory: (id, options) => ({ items: [{ id: 'run-chat', directorId: id, output: 'full' }], total: 1, options }),
     answerGoalDecision: async (directorId, goalId, payload) => ({ directorId, goalId, ...payload }),
     controlGoal: async (directorId, goalId, action, options) => ({ directorId, goalId, action, ...options }),
     getBoard: () => [],
@@ -94,6 +96,24 @@ describe('director routes', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'awaiting_owner');
     assert.equal(res.body.objective, 'Ship API');
+  });
+
+  it('pages durable Goal and project conversation history', () => {
+    const goals = response();
+    routes['GET /api/directors/:id/goals']({
+      params: { id: 'project-director-1' }, query: { offset: '24', limit: '12', query: 'api', filter: 'completed' },
+    }, goals);
+    assert.equal(goals.status, 200);
+    assert.equal(goals.body.items[0].id, 'goal-old');
+    assert.deepEqual(goals.body.options, { offset: '24', limit: '12', query: 'api', filter: 'completed' });
+
+    const messages = response();
+    routes['GET /api/directors/:id/messages']({
+      params: { id: 'project-director-1' }, query: { offset: '20', limit: '20', known: 'run-chat,run-old' },
+    }, messages);
+    assert.equal(messages.status, 200);
+    assert.equal(messages.body.items[0].output, 'full');
+    assert.deepEqual(messages.body.options, { offset: '20', limit: '20', knownIds: 'run-chat,run-old' });
   });
 
   it('passes the exact Owner answer and selected option to the durable Goal', async () => {

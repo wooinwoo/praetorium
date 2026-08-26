@@ -147,6 +147,31 @@ function seedActiveGoal(svc, overrides = {}) {
 }
 
 describe('DirectorService', () => {
+  it('pages searchable terminal Goals and unscoped Director conversation without clipping output', () => {
+    const svc = service();
+    const active = seedActiveGoal(svc, { taskId: 't_history_active' });
+    svc.state.goals.push(
+      { ...active, id: 'goal-history-api', objective: 'Ship billing API', status: 'completed', phase: 'completed', completedAt: '2026-08-25T02:00:00.000Z', updatedAt: '2026-08-25T02:00:00.000Z' },
+      { ...active, id: 'goal-history-failed', objective: 'Fix import', status: 'failed', phase: 'failed', completedAt: '2026-08-25T01:00:00.000Z', updatedAt: '2026-08-25T01:00:00.000Z' },
+    );
+    const completed = svc.getGoalHistory('project-director-1', { query: 'billing', filter: 'completed', limit: 1 });
+    assert.equal(completed.total, 1);
+    assert.equal(completed.items[0].id, 'goal-history-api');
+    assert.equal(completed.hasMore, false);
+
+    svc.state.runs.push(
+      { id: 'goal-turn', directorId: 'project-director-1', goalId: active.id, output: 'exclude me', createdAt: '2026-08-25T01:00:00.000Z' },
+      { id: 'project-turn', directorId: 'project-director-1', goalId: null, prompt: 'p'.repeat(1600), output: 'x'.repeat(2400), createdAt: '2026-08-25T02:00:00.000Z' },
+    );
+    const messages = svc.getMessageHistory('project-director-1', { limit: 1, knownIds: ['project-turn', 'goal-turn', 'missing-turn'] });
+    assert.equal(messages.total, 1);
+    assert.equal(messages.items[0].id, 'project-turn');
+    assert.equal(messages.items[0].prompt.length, 1600);
+    assert.equal(messages.items[0].output.length, 2400);
+    assert.equal(messages.items[0].outputTruncated, false);
+    assert.deepEqual(messages.removedIds, ['goal-turn', 'missing-turn']);
+  });
+
   it('binds every materialized write-authority scope into the host candidate snapshot', async () => {
     let observed = null;
     const svc = service({ runtime: runtime({
@@ -2158,6 +2183,9 @@ describe('DirectorService', () => {
     const bytes = Buffer.byteLength(JSON.stringify(compact));
     assert.ok(bytes < 50000, `compact console payload was ${bytes} bytes`);
     assert.deepEqual(compact.activeGoals, [goal.id]);
+    assert.match(compact.observedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(compact.notificationGoals.some(item => item.id === goal.id));
+    assert.ok(Array.isArray(compact.notificationTasks));
     assert.equal(compact.goals.find(item => item.id === goal.id).events, undefined);
     assert.ok(compact.recentRuns.length <= 8);
     assert.ok(compact.recentRuns.every(run => run.output.length <= 1000));

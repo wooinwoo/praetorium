@@ -34,6 +34,31 @@ export function register(ctx) {
     json(res, goal);
   });
 
+  addRoute('GET', '/api/directors/:id/goals', (req, res) => {
+    try {
+      json(res, directorService.getGoalHistory(req.params.id, {
+        offset: req.query?.offset,
+        limit: req.query?.limit,
+        query: req.query?.query,
+        filter: req.query?.filter,
+      }));
+    } catch (err) {
+      json(res, { error: err.message }, /not found/i.test(err.message) ? 404 : 400);
+    }
+  });
+
+  addRoute('GET', '/api/directors/:id/messages', (req, res) => {
+    try {
+      json(res, directorService.getMessageHistory(req.params.id, {
+        offset: req.query?.offset,
+        limit: req.query?.limit,
+        knownIds: req.query?.known,
+      }));
+    } catch (err) {
+      json(res, { error: err.message }, /not found/i.test(err.message) ? 404 : 400);
+    }
+  });
+
   addRoute('POST', '/api/directors/:id/goals/:goalId/decision', async (req, res) => {
     try {
       const body = await readBody(req);
