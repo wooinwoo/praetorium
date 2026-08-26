@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { orderQueuedGoals } from '../domain/operator-model.js';
 import { Icon, initials, relativeTime, Status, statusTone, statusText } from './common.jsx';
 
 function GoalRow({ goal, selected, active, onSelect }) {
@@ -17,7 +18,7 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
   }, [goals, query]);
   const activeIds = new Set(summary?.activeGoals || []);
   const active = visibleGoals.filter(goal => activeIds.has(goal.id));
-  const queued = visibleGoals.filter(goal => goal.status === 'queued');
+  const queued = orderQueuedGoals(visibleGoals.filter(goal => goal.status === 'queued'));
   const recent = visibleGoals.filter(goal => !activeIds.has(goal.id) && goal.status !== 'queued')
     .filter(goal => historyFilter === 'all' || (historyFilter === 'completed' ? goal.status === 'completed' : ['blocked', 'failed'].includes(goal.status)));
 

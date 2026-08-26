@@ -8,7 +8,10 @@ export class ApiError extends Error {
 }
 
 export async function api(path, options = {}) {
-  const { body, headers, signal: externalSignal, timeoutMs: requestedTimeout, ...fetchOptions } = options;
+  const {
+    body, headers, signal: externalSignal, timeoutMs: requestedTimeout,
+    allowNotModified = false, ...fetchOptions
+  } = options;
   const method = String(fetchOptions.method || 'GET').toUpperCase();
   const timeoutMs = requestedTimeout === undefined && ['GET', 'HEAD'].includes(method) ? 10000 : requestedTimeout;
   const controller = new AbortController();
@@ -27,6 +30,7 @@ export async function api(path, options = {}) {
       headers: { 'Content-Type': 'application/json', ...headers },
       ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
     });
+    if (response.status === 304 && allowNotModified) return { notModified: true };
     if (response.status === 204) return null;
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new ApiError(data.error || `HTTP ${response.status}`, response.status, data);

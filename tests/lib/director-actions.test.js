@@ -23,10 +23,17 @@ function control(overrides = {}) {
 }
 
 describe('Director action control', () => {
-  it('leaves automatic routing to the Director and preserves explicit modes', () => {
-    assert.equal(inferRequestMode('지금 워커 몇 개야?'), 'auto');
+  it('answers operational summaries directly while imposing a deterministic mutation floor', () => {
+    assert.equal(inferRequestMode('지금 워커 몇 개야?'), 'conversation');
     assert.equal(inferRequestMode('깃허브 이력 기준으로 각 작업자 태스크 정리해줘'), 'auto');
-    assert.equal(inferRequestMode('코드 수정해줘'), 'auto');
+    assert.equal(inferRequestMode('작업들 요약좀'), 'conversation');
+    assert.equal(inferRequestMode('현황에는 왜 안 바뀌냐'), 'conversation');
+    assert.equal(inferRequestMode('현재 뭐 하고 있어?'), 'conversation');
+    assert.equal(inferRequestMode('Summarize the current worker status'), 'conversation');
+    assert.equal(inferRequestMode('현황 화면 안 바뀌니까 고쳐줘'), 'delegate');
+    assert.equal(inferRequestMode('코드 수정해줘'), 'delegate');
+    assert.equal(inferRequestMode('Implement the bounded fix'), 'delegate');
+    assert.equal(inferRequestMode('Did you already fix the bounded bug?'), 'auto');
     assert.equal(inferRequestMode('anything', 'conversation'), 'conversation');
     assert.equal(inferRequestMode('anything', 'delegate'), 'delegate');
   });

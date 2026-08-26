@@ -90,6 +90,8 @@ Owner objective
 
 Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, gate freshness, and stop conditions. Wave boundaries distinguish task dispatch from later Director judgment. Selecting a Worker exposes the full task contract, live public operational checkpoints, observed commands, raw worker log, lifecycle events, acceptance criteria, and final evidence. This is an evidence trace, not private model chain-of-thought.
 
+The console also subscribes to a bounded same-origin Server-Sent Events stream for public Director run, Goal, scheduler, and output-activity receipts. It reconnects and resynchronizes from durable state when needed. The stream reports lifecycle metadata and public checkpoints only; it never streams raw model output or private chain-of-thought.
+
 Owner communication follows the Owner's language. When an Owner request contains Korean, public Director summaries and questions plus Worker task text, checkpoints, and final reports are written in Korean. Machine contracts remain stable English: JSON keys, schema names, enum values, identifiers, and the `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` markers are never translated.
 
 New Worker tasks are required to publish concise `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` comments at meaningful checkpoints. These are public operational artifacts, not private chain-of-thought. Historical tasks still expose their raw Hermes log even when they predate the structured checkpoint contract.
@@ -102,6 +104,8 @@ The Owner can intervene without opening a Worker tab:
 - resume a paused task and return it to automatic dispatch;
 - reorder, defer, or cancel a queued Goal, and safely retry a stopped blocked or failed Goal;
 - answer a pending Goal decision with a listed option or a written answer, which records the decision and resumes supervision;
+- send durable guidance to the currently selected active Goal without creating another Goal; Praetorium records it first, forwards it to current non-terminal Workers, invalidates prior authority/gate conclusions, and performs fresh analysis after the current wave settles. An `awaiting_owner` Goal must use its exact decision control instead;
+- attach up to four local PNG, JPEG, WebP, or GIF images to a Director message or current-Goal guidance (5 MiB each, 12 MiB total); images are validated, hashed, stored locally, and exposed only through same-origin previews;
 - enlarge the Inspector or change global text scale for long traces;
 - drag the Inspector splitter to change its width and the activity splitter to change the activity area's height. Double-click resets a splitter, focused splitters accept Arrow keys, and both dimensions persist locally across reloads.
 
@@ -111,7 +115,10 @@ The local Goal API used by this screen is:
 
 ```text
 GET  /api/directors                         summary including activeGoals, queuedGoals, scheduler, and retention state
+GET  /api/directors/:id/activity            bounded public SSE lifecycle/checkpoint receipts; no raw model output
 GET  /api/directors/:id/goals/:goalId      one durable Goal with its bounded run history, waves, evidence, events, and decision state
+POST /api/directors/:id/goals/:goalId/guidance
+     { "message": "...", "attachments": [{ "name": "screen.png", "mimeType": "image/png", "dataBase64": "..." }] }
 POST /api/directors/:id/goals/:goalId/decision
      { "selectedOption": "..." } or { "answer": "..." }
 POST /api/directors/:id/goals/:goalId/control
@@ -122,6 +129,10 @@ POST /api/directors/:id/tasks/:taskId/interventions
      { "message": "..." }
 POST /api/directors/:id/tasks/:taskId/control
      { "action": "pause" | "resume" }
+POST /api/directors/:id/messages
+     { "prompt": "...", "mode": "auto" | "delegate" | "conversation", "attachments": [...] }
+GET  /api/directors/:id/attachments/:attachmentId
+     same-origin validated image preview
 ```
 
 The state-changing endpoints return `202 Accepted` and continue asynchronously. Decision answers are accepted only while that Goal is `awaiting_owner`; Goal cancellation and retry first prove that owned Worker cards have stopped, and orphan or terminal tasks reject new interventions. These are loopback-only, same-host application routes, not remote-control APIs.
@@ -191,12 +202,17 @@ npm test
 npm start
 ```
 
-The development server is available only at `http://127.0.0.1:3848`. Static UI changes are served directly; Node service changes require a restart. Persistent Director and project state is read from `%LOCALAPPDATA%\PraetoriumData`, while Hermes boards and logs remain in the selected Windows or WSL Hermes data directory.
+The production-style development server is available only at `http://127.0.0.1:3848`. `npm start` builds the React/Vite source in `src/` into `dist/`, then the loopback Node server serves that generated output. Re-run `npm run build` for UI source changes and restart the Node process for service changes; use `npm run dev` only for Vite's separate local development server. Persistent Director and project state, including validated local image attachments, is read from `%LOCALAPPDATA%\PraetoriumData`, while Hermes boards and logs remain in the selected Windows or WSL Hermes data directory.
 
 Useful verification commands:
 
 ```powershell
-node --check .\js\owner-console.js
+node --check .\server.js
+node --check .\routes\directors.js
+node --check .\lib\director-service.js
+node --check .\lib\director-attachments.js
+node --check .\lib\hermes-runtime.js
+npm run build
 npm test
 git diff --check
 ```
@@ -218,6 +234,7 @@ npm run tauri build -- --bundles nsis
 ## Security invariants
 
 - HTTP listens on `127.0.0.1` only; the product has no WebSocket or browser shell endpoint.
+- Live activity uses a same-origin, loopback-only SSE endpoint with bounded public metadata, connection limits, heartbeat/resync behavior, and no raw inference text.
 - The server acquires an atomic, token-bound single-writer lease before loading or recovering Director state; an append-only expected-token guard journal serializes stale recovery, and process-start identity distinguishes PID reuse while lookup uncertainty fails closed.
 - Non-loopback socket peers are rejected before routing.
 - Host headers are limited to `localhost`, `127.0.0.1`, and IPv6 loopback forms.
@@ -233,11 +250,15 @@ npm run tauri build -- --bundles nsis
 - Normal app exit and update require a clean backend activity check and graceful shutdown; unexpected server death or a failed bounded shutdown is contained and cleaned through the desktop-owned Windows Job Object before restart or exit.
 - Existing user project changes are never reset or discarded by the installer.
 - Worker logs and comments are read from local Hermes Kanban state and are never relayed to a remote Praetorium service.
+- Director image files stay in bounded local state storage. MIME signatures, dimensions, hashes, path containment, and symlink safety are checked before use; base64 payloads are excluded from durable summaries and activity events.
 
 ## Source map
 
-- `index.html`, `css/owner-console.css`, `js/owner-console.js`: trace-first Owner Console
+- `index.html`, `src/`, `vite.config.js`: production React/Vite trace-first Owner Console source
+- `dist/`: generated UI served by `server.js` and packaged by the desktop shell
+- `css/owner-console.css`, `js/owner-console.js`: legacy reference UI, not the production console
 - `lib/director-service.js`: Director turns, durable Goal lifecycle, wave materialization, board scheduler, restart recovery, Owner decisions, Worker intervention
+- `lib/director-attachments.js`: bounded local image validation, storage, integrity checks, and same-origin previews
 - `lib/goal-supervisor.js`: Goal normalization, task/wave synchronization, evidence snapshots, acceptance checks, and supervision prompts
 - `lib/director-actions.js`: strict Director analysis and action-envelope extraction/validation
 - `lib/owner-language.js`: Owner-language detection and public communication contract
@@ -245,7 +266,7 @@ npm run tauri build -- --bundles nsis
 - `lib/workflow-catalog.js`: nine built-in workflows, twelve operating skills, approved Worker profiles
 - `lib/hermes-runtime.js`: local Hermes process adapter, task evidence/logs, comments, pause/resume primitives
 - `lib/wsl-runtime.js`: WSL2 distribution discovery, project validation, readiness diagnostics, and injection-safe native launch bridge
-- `routes/directors.js`: local Director, Goal/decision, board, trace, intervention, and control HTTP API
+- `routes/directors.js`: local Director, Goal/guidance/decision, attachment, public activity SSE, board, trace, intervention, and control HTTP API
 - `.agents/skills/`: Director, reviewer, remediation, release, and quality-gate skills
 - `.agents/hermes-profiles/`: Director and Worker role profiles
 - `scripts/bootstrap-director-system.ps1`: deterministic local profile, skill, and board setup

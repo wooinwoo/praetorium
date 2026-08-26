@@ -1,9 +1,13 @@
-import { describe, it, beforeEach } from 'node:test';
+import { EventEmitter } from 'node:events';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { register } from '../../routes/directors.js';
+import { DirectorActivityStream, register } from '../../routes/directors.js';
 
 let routes;
 let service;
+let activityStream;
+let readBodyOptions;
+const ATTACHMENT_ID = 'attachment_11111111-1111-4111-8111-111111111111';
 
 function response() {
   return {
@@ -19,25 +23,93 @@ function response() {
   };
 }
 
+function streamRequest({ remoteAddress = '127.0.0.1', host = '127.0.0.1:3848', origin, fetchSite } = {}) {
+  const req = new EventEmitter();
+  req.params = { id: 'project-director-1' };
+  req.headers = {
+    host,
+    ...(origin ? { origin } : {}),
+    ...(fetchSite ? { 'sec-fetch-site': fetchSite } : {}),
+  };
+  req.socket = { remoteAddress, setTimeout() {}, setNoDelay() {} };
+  return req;
+}
+
+function streamResponse({ writeResults = [] } = {}) {
+  const res = new EventEmitter();
+  return Object.assign(res, {
+    status: 0,
+    headers: {},
+    headersSent: false,
+    destroyed: false,
+    writableEnded: false,
+    writes: [],
+    writeHead(status, headers = {}) {
+      this.status = status;
+      this.headersSent = true;
+      for (const [name, value] of Object.entries(headers)) this.headers[String(name).toLowerCase()] = value;
+    },
+    write(data) {
+      this.writes.push(String(data));
+      return writeResults.length ? writeResults.shift() : true;
+    },
+    end() { this.writableEnded = true; },
+  });
+}
+
+function binaryResponse() {
+  return {
+    status: 0,
+    body: null,
+    headers: {},
+    writeHead(status, headers = {}) {
+      this.status = status;
+      for (const [name, value] of Object.entries(headers)) this.headers[String(name).toLowerCase()] = value;
+    },
+    end(data) { this.body = data == null ? null : Buffer.from(data); },
+  };
+}
+
+function sseData(frame) {
+  const data = String(frame).split('\n').find(line => line.startsWith('data: '));
+  return data ? JSON.parse(data.slice(6)) : null;
+}
+
 function setup() {
   routes = {};
+  readBodyOptions = null;
   const activeGoal = {
     id: 'goal-1', directorId: 'project-director-1', objective: 'Ship API', status: 'awaiting_owner',
     ownerDecision: { required: true, question: 'Keep compatibility?', options: ['keep', 'change'] },
   };
-  service = {
+  service = Object.assign(new EventEmitter(), {
     summary: () => ({ localOnly: true, directors: [], goals: [activeGoal], activeGoals: [activeGoal] }),
     consoleSummary: ({ directorId } = {}) => ({
       schema: 'director-console.v1', revision: 'sha256:console-test', selectedDirectorId: directorId || null,
       localOnly: true, directors: [], goals: [activeGoal], activeGoals: [activeGoal.id], queuedGoals: [],
     }),
     syncProjects: () => [],
+    getDirector: id => id === 'project-director-1' ? { id } : null,
     getRun: id => id === 'run-1' ? { id } : null,
+    getRunDetailsForDirector: (directorId, runId) => (
+      directorId === 'project-director-1' && runId === 'run-1'
+        ? { id: runId, directorId, output: 'full', attachments: [{ id: ATTACHMENT_ID, name: 'screen.png' }] }
+        : null
+    ),
+    getAttachmentPreview: (directorId, attachmentId) => (
+      directorId === 'project-director-1' && attachmentId === ATTACHMENT_ID
+        ? { metadata: { id: attachmentId, mimeType: 'image/png' }, body: Buffer.from('safe-image') }
+        : null
+    ),
     getGoal: id => id === activeGoal.id ? activeGoal : null,
+    getGoalDetailsForDirector: (directorId, id) => (
+      directorId === 'project-director-1' && id === activeGoal.id ? activeGoal : null
+    ),
     getGoalHistory: (id, options) => ({ items: [{ id: 'goal-old', directorId: id }], total: 1, options }),
     getMessageHistory: (id, options) => ({ items: [{ id: 'run-chat', directorId: id, output: 'full' }], total: 1, options }),
     answerGoalDecision: async (directorId, goalId, payload) => ({ directorId, goalId, ...payload }),
     controlGoal: async (directorId, goalId, action, options) => ({ directorId, goalId, action, ...options }),
+    guideGoal: async (directorId, goalId, payload) => ({ directorId, goalId, ...payload }),
     getBoard: () => [],
     getBoardStatus: () => ({ refreshing: true }),
     getTaskDetails: async (_id, taskId) => ({ task: { id: taskId }, latest_summary: 'done' }),
@@ -49,17 +121,23 @@ function setup() {
     submitMessage: (id, prompt) => ({ id: 'run-1', directorId: id, prompt }),
     createObjective: async () => ({ id: 'task-1' }),
     tickDirector: async () => ({ spawned: 1 }),
-  };
+  });
+  activityStream = new DirectorActivityStream({ source: service, heartbeatMs: 60000 });
   register({
     directorService: service,
+    activityStream,
     addRoute(method, path, handler) { routes[`${method} ${path}`] = handler; },
     json(res, body, status = 200) { res.writeHead(status); res.end(JSON.stringify(body)); },
-    readBody: async req => req.body || {},
+    readBody: async (req, options) => {
+      readBodyOptions = options || null;
+      return req.body || {};
+    },
   });
 }
 
 describe('director routes', () => {
   beforeEach(setup);
+  afterEach(() => activityStream.close());
 
   it('exposes a local-only system summary', () => {
     const res = response();
@@ -96,6 +174,165 @@ describe('director routes', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'awaiting_owner');
     assert.equal(res.body.objective, 'Ship API');
+  });
+
+  it('serves full Run output only through its owning Director and omits local attachment paths', () => {
+    const owned = response();
+    routes['GET /api/directors/:id/runs/:runId']({
+      params: { id: 'project-director-1', runId: 'run-1' },
+    }, owned);
+    assert.equal(owned.status, 200);
+    assert.equal(owned.body.output, 'full');
+    assert.equal('path' in owned.body.attachments[0], false);
+    assert.equal('manifestPath' in owned.body.attachments[0], false);
+
+    const foreign = response();
+    routes['GET /api/directors/:id/runs/:runId']({
+      params: { id: 'project-director-2', runId: 'run-1' },
+    }, foreign);
+    assert.equal(foreign.status, 404);
+  });
+
+  it('does not fall back to a stale directorId when project-scoped Goal ownership rejects access', () => {
+    service.getGoal = () => ({
+      id: 'goal-stale', directorId: 'project-director-1', projectId: 'former-project', status: 'completed',
+    });
+    service.getGoalDetailsForDirector = () => null;
+    const res = response();
+    routes['GET /api/directors/:id/goals/:goalId']({
+      params: { id: 'project-director-1', goalId: 'goal-stale' },
+    }, res);
+    assert.equal(res.status, 404);
+    assert.equal(res.body.error, 'Goal not found');
+  });
+
+  it('serves an owned verified image with non-cacheable nosniff headers', () => {
+    const req = streamRequest({ origin: 'http://127.0.0.1:3848' });
+    req.params = { id: 'project-director-1', attachmentId: ATTACHMENT_ID };
+    const res = binaryResponse();
+    routes['GET /api/directors/:id/attachments/:attachmentId'](req, res);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers['content-type'], 'image/png');
+    assert.equal(res.headers['cache-control'], 'no-store');
+    assert.equal(res.headers['x-content-type-options'], 'nosniff');
+    assert.equal(res.headers['cross-origin-resource-policy'], 'same-origin');
+    assert.equal(res.headers['content-length'], Buffer.byteLength('safe-image'));
+    assert.deepEqual(res.body, Buffer.from('safe-image'));
+  });
+
+  it('rejects cross-origin and malformed attachment preview requests before storage lookup', () => {
+    let lookups = 0;
+    service.getAttachmentPreview = () => { lookups += 1; return null; };
+    const crossOrigin = streamRequest({ origin: 'https://attacker.example' });
+    crossOrigin.params = { id: 'project-director-1', attachmentId: ATTACHMENT_ID };
+    const forbidden = response();
+    routes['GET /api/directors/:id/attachments/:attachmentId'](crossOrigin, forbidden);
+    assert.equal(forbidden.status, 403);
+
+    const malformed = streamRequest();
+    malformed.params = { id: 'project-director-1', attachmentId: '../../secret.png' };
+    const invalid = response();
+    routes['GET /api/directors/:id/attachments/:attachmentId'](malformed, invalid);
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.code, 'INVALID_ATTACHMENT_ID');
+    assert.equal(lookups, 0);
+  });
+
+  it('does not disclose an attachment outside the selected Director ownership boundary', () => {
+    service.getDirector = id => ['project-director-1', 'project-director-2'].includes(id) ? { id } : null;
+    const req = streamRequest();
+    req.params = { id: 'project-director-2', attachmentId: ATTACHMENT_ID };
+    const res = response();
+    routes['GET /api/directors/:id/attachments/:attachmentId'](req, res);
+    assert.equal(res.status, 404);
+    assert.equal(res.body.error, 'Attachment not found');
+  });
+
+  it('streams only public Director activity and never raw model output', () => {
+    const req = streamRequest({ origin: 'http://127.0.0.1:3848' });
+    const res = streamResponse();
+    routes['GET /api/directors/:id/activity'](req, res);
+    assert.equal(res.status, 200);
+    assert.match(res.headers['content-type'], /^text\/event-stream/);
+    assert.equal(sseData(res.writes.find(frame => frame.includes('event: ready'))).resyncRequired, true);
+
+    service.emit('run', {
+      id: 'run-live', directorId: 'project-director-1', goalId: 'goal-live', kind: 'supervision',
+      status: 'running', phase: 'assessing_evidence', prompt: 'SECRET OWNER PROMPT',
+      output: 'PRIVATE CHAIN OF THOUGHT', analysis: { hidden: 'SECRET ANALYSIS' },
+      attachments: [{ name: 'secret.png', dataBase64: 'RAW_IMAGE_BASE64' }],
+      progressEvents: [{ at: '2026-08-26T00:00:00.000Z', phase: 'assessing_evidence', message: '공개 증거를 평가하고 있습니다.', details: { secret: 'HIDDEN' } }],
+    });
+    service.emit('output', {
+      runId: 'run-live', directorId: 'project-director-1', goalId: 'goal-live',
+      channel: 'stdout', text: 'SECRET STREAMED REASONING\nsecond line',
+    });
+    service.emit('goal', {
+      id: 'goal-live', directorId: 'project-director-1', status: 'executing', phase: 'monitoring',
+      objective: 'SECRET OBJECTIVE', analysis: { hidden: 'SECRET GOAL ANALYSIS' },
+      events: [{ at: '2026-08-26T00:00:01.000Z', kind: 'worker', phase: 'monitoring', message: 'Worker 완료 신호를 확인했습니다.', details: { secret: 'HIDDEN GOAL DETAIL' } }],
+    });
+    service.emit('tick', [{
+      directorId: 'project-director-1', ready: 2, running: 1, allocated: 1, spawned: ['task-1'],
+      error: 'SECRET TICK ERROR', supervision: { state: 'executing', privateEvidence: 'HIDDEN TICK DETAIL' },
+    }]);
+    activityStream.heartbeat();
+
+    const joined = res.writes.join('');
+    assert.doesNotMatch(joined, /SECRET|PRIVATE|HIDDEN|RAW_IMAGE_BASE64/);
+    const run = sseData(res.writes.find(frame => frame.includes('event: run')));
+    assert.equal(run.schema, 'director-activity.v1');
+    assert.equal(run.activity.phase, 'assessing_evidence');
+    assert.equal(run.activity.checkpoint.message, '공개 증거를 평가하고 있습니다.');
+    const output = sseData(res.writes.find(frame => frame.includes('event: output')));
+    assert.equal(output.activity.channel, 'stdout');
+    assert.equal(output.activity.chunkBytes, Buffer.byteLength('SECRET STREAMED REASONING\nsecond line'));
+    assert.equal('text' in output.activity, false);
+    const goal = sseData(res.writes.find(frame => frame.includes('event: goal')));
+    assert.equal(goal.activity.checkpoint.message, 'Worker 완료 신호를 확인했습니다.');
+    const tick = sseData(res.writes.find(frame => frame.includes('event: tick')));
+    assert.equal(tick.activity.status, 'error');
+    assert.equal(tick.activity.spawnedCount, 1);
+    assert.ok(res.writes.some(frame => frame.startsWith(': heartbeat ')));
+
+    const writesBeforeOtherDirector = res.writes.length;
+    service.emit('run', { id: 'run-other', directorId: 'project-director-2', status: 'running', phase: 'planning' });
+    assert.equal(res.writes.length, writesBeforeOtherDirector);
+
+    res.emit('close');
+    assert.equal(activityStream.clientCount, 0);
+    const writesAfterClose = res.writes.length;
+    service.emit('goal', { id: 'goal-live', directorId: 'project-director-1', status: 'completed' });
+    assert.equal(res.writes.length, writesAfterClose);
+  });
+
+  it('rejects non-loopback, rebound Host, and cross-origin activity streams', () => {
+    for (const req of [
+      streamRequest({ remoteAddress: '192.168.1.8' }),
+      streamRequest({ host: 'attacker.example:3848' }),
+      streamRequest({ origin: 'https://attacker.example' }),
+      streamRequest({ fetchSite: 'cross-site' }),
+    ]) {
+      const res = response();
+      routes['GET /api/directors/:id/activity'](req, res);
+      assert.equal(res.status, 403);
+      assert.match(res.body.error, /same-origin loopback/i);
+    }
+  });
+
+  it('drops activity for a slow client and emits one bounded resync receipt after drain', () => {
+    const req = streamRequest();
+    const res = streamResponse({ writeResults: [true, false] });
+    routes['GET /api/directors/:id/activity'](req, res);
+    service.emit('run', { id: 'run-slow', directorId: 'project-director-1', status: 'running', phase: 'planning' });
+    service.emit('goal', { id: 'goal-slow', directorId: 'project-director-1', status: 'executing', phase: 'monitoring' });
+    service.emit('output', { runId: 'run-slow', directorId: 'project-director-1', channel: 'stdout', text: 'hidden' });
+    assert.equal(res.writes.filter(frame => frame.includes('event: goal') || frame.includes('event: output')).length, 0);
+
+    res.emit('drain');
+    const receipt = sseData(res.writes.find(frame => frame.includes('event: resync')));
+    assert.equal(receipt.resyncRequired, true);
+    assert.equal(receipt.droppedEvents, 2);
   });
 
   it('pages durable Goal and project conversation history', () => {
@@ -187,11 +424,72 @@ describe('director routes', () => {
     assert.match(res.body.error, /Worker is running/);
   });
 
-  it('queues a message instead of blocking the HTTP request', async () => {
+  it('passes bounded image guidance to an active durable Goal', async () => {
+    let captured = null;
+    service.guideGoal = async (directorId, goalId, payload) => {
+      captured = { directorId, goalId, payload };
+      return { accepted: true, persisted: true, goalId, receipts: [], errors: [] };
+    };
+    const attachments = [{ name: 'screen.png', mimeType: 'image/png', dataBase64: 'encoded' }];
     const res = response();
-    await routes['POST /api/directors/:id/messages']({ params: { id: 'project-director-1' }, body: { prompt: 'go' } }, res);
+    await routes['POST /api/directors/:id/goals/:goalId/guidance']({
+      params: { id: 'project-director-1', goalId: 'goal-1' },
+      body: { message: 'use this layout', attachments },
+    }, res);
+    assert.equal(res.status, 202);
+    assert.deepEqual(captured, {
+      directorId: 'project-director-1', goalId: 'goal-1',
+      payload: { message: 'use this layout', attachments },
+    });
+    assert.equal(readBodyOptions.maxBytes, 17 * 1024 * 1024);
+  });
+
+  it('preserves Goal guidance attachment validation status and code', async () => {
+    service.guideGoal = async () => {
+      throw Object.assign(new Error('Image content does not match image/png.'), {
+        statusCode: 415, code: 'IMAGE_CONTENT_MISMATCH',
+      });
+    };
+    const res = response();
+    await routes['POST /api/directors/:id/goals/:goalId/guidance']({
+      params: { id: 'project-director-1', goalId: 'goal-1' },
+      body: { message: 'inspect', attachments: [] },
+    }, res);
+    assert.equal(res.status, 415);
+    assert.equal(res.body.code, 'IMAGE_CONTENT_MISMATCH');
+  });
+
+  it('queues a message with bounded image attachments instead of blocking the HTTP request', async () => {
+    let captured = null;
+    service.submitMessage = (directorId, prompt, options) => {
+      captured = { directorId, prompt, options };
+      return { id: 'run-1', directorId, prompt, attachments: [{ id: 'attachment-1' }] };
+    };
+    const res = response();
+    const attachments = [{ name: 'screen.png', mimeType: 'image/png', dataBase64: 'encoded' }];
+    await routes['POST /api/directors/:id/messages']({
+      params: { id: 'project-director-1' }, body: { prompt: 'go', mode: 'auto', attachments },
+    }, res);
     assert.equal(res.status, 202);
     assert.equal(res.body.prompt, 'go');
+    assert.deepEqual(captured, {
+      directorId: 'project-director-1', prompt: 'go', options: { mode: 'auto', attachments },
+    });
+    assert.equal(readBodyOptions.maxBytes, 17 * 1024 * 1024);
+  });
+
+  it('preserves attachment validation status and code', async () => {
+    service.submitMessage = () => {
+      throw Object.assign(new Error('Image content does not match image/png.'), {
+        statusCode: 415, code: 'IMAGE_CONTENT_MISMATCH',
+      });
+    };
+    const res = response();
+    await routes['POST /api/directors/:id/messages']({
+      params: { id: 'project-director-1' }, body: { prompt: 'go', attachments: [] },
+    }, res);
+    assert.equal(res.status, 415);
+    assert.equal(res.body.code, 'IMAGE_CONTENT_MISMATCH');
   });
 
   it('serves a cache-only board snapshot with refresh status', () => {

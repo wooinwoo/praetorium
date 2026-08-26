@@ -9,7 +9,7 @@ import { DirectorService } from './lib/director-service.js';
 import { DATA_DIR, MAX_PROJECTS, PORT, PROJECTS_ROOT, addProject, deleteProject, getProjects, projectKey } from './lib/praetorium-config.js';
 import { PROFILE_CATALOG } from './lib/workflow-catalog.js';
 import { LOCAL_BIND_ADDRESS, isIgnoredBindRequest, isLoopbackAddress, isLoopbackHost } from './lib/local-only.js';
-import { register as registerDirectors } from './routes/directors.js';
+import { DirectorActivityStream, register as registerDirectors } from './routes/directors.js';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
@@ -31,7 +31,11 @@ function findRoute(method, pathname) {
     const match = pathname.match(route.regex);
     if (!match) continue;
     const params = {};
-    route.parameterNames.forEach((name, index) => { params[name] = decodeURIComponent(match[index + 1]); });
+    try {
+      route.parameterNames.forEach((name, index) => { params[name] = decodeURIComponent(match[index + 1]); });
+    } catch {
+      return { malformed: true };
+    }
     return { handler: route.handler, params };
   }
   return null;
@@ -41,7 +45,7 @@ function securityHeaders(contentType) {
   return {
     'Content-Type': contentType,
     'Cache-Control': 'no-store',
-    'Content-Security-Policy': "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+    'Content-Security-Policy': "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
     'Cross-Origin-Resource-Policy': 'same-origin',
     'Referrer-Policy': 'no-referrer',
     'X-Content-Type-Options': 'nosniff',
@@ -55,12 +59,15 @@ function json(res, value, statusCode = 200) {
   res.end(body);
 }
 
-async function readBody(req) {
+async function readBody(req, { maxBytes = MAX_BODY_BYTES } = {}) {
   const chunks = [];
   let length = 0;
+  const limit = Math.max(1, Number(maxBytes) || MAX_BODY_BYTES);
   for await (const chunk of req) {
     length += chunk.length;
-    if (length > MAX_BODY_BYTES) throw new Error('Request body too large');
+    if (length > limit) {
+      throw Object.assign(new Error('Request body too large'), { statusCode: 413, code: 'REQUEST_BODY_TOO_LARGE' });
+    }
     chunks.push(chunk);
   }
   if (!length) return {};
@@ -97,9 +104,10 @@ const directorService = new DirectorService({
   getProjects,
 });
 directorService.on('error', error => console.error('[Praetorium:Director]', error.message));
+const directorActivityStream = new DirectorActivityStream({ source: directorService });
 directorService.startScheduler(10000);
 
-registerDirectors({ addRoute, json, readBody, directorService });
+registerDirectors({ addRoute, json, readBody, directorService, activityStream: directorActivityStream });
 
 addRoute('GET', '/api/health', (_req, res) => json(res, {
   status: 'ok',
@@ -150,6 +158,7 @@ addRoute('POST', '/api/system/shutdown', async (_req, res) => {
   if (!readiness.safe) return json(res, readiness, 409);
   json(res, readiness, 202);
   setImmediate(() => {
+    directorActivityStream.close();
     directorService.stopScheduler();
     server.close(() => {
       releaseServerLease();
@@ -279,6 +288,7 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if ((req.method === 'GET' || req.method === 'HEAD') && await serveStatic(url.pathname, res, req.method)) return;
     const route = findRoute(req.method, url.pathname);
+    if (route?.malformed) return json(res, { error: 'Malformed URL parameter.' }, 400);
     if (!route) return json(res, { error: 'Not found' }, 404);
     req.params = route.params;
     req.query = Object.fromEntries(url.searchParams);
@@ -301,12 +311,14 @@ server.listen(PORT, LOCAL_BIND_ADDRESS, () => {
 
 server.once('error', error => {
   console.error('[Praetorium] Local server failed:', error.message);
+  directorActivityStream.close();
   releaseServerLease();
   process.exitCode = 1;
   setImmediate(() => process.exit(1));
 });
 
 function shutdown() {
+  directorActivityStream.close();
   directorService.stopScheduler();
   server.close(() => {
     releaseServerLease();

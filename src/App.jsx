@@ -121,6 +121,8 @@ function AppShell() {
           taskDetail={data.taskDetail}
           taskTrace={data.taskTrace}
           errors={data.errors}
+          lastSyncedAt={data.lastSyncedAt}
+          liveActivity={data.liveActivity}
           refresh={data.refresh}
           projectMessages={data.projectMessages}
           loadMoreProjectMessages={data.loadMoreProjectMessages}

@@ -1,8 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
+import { useDirectorActivity } from './useDirectorActivity.js';
 
 const POLL_MS = 3000;
 const terminalTaskStates = new Set(['done', 'completed', 'succeeded', 'success', 'blocked', 'archived', 'failed', 'cancelled']);
+
+function sameJson(left, right) {
+  if (left === right) return true;
+  try { return JSON.stringify(left) === JSON.stringify(right); }
+  catch { return false; }
+}
+
+function usePageVisible() {
+  const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return visible;
+}
 
 export function useStoredState(key, initialValue) {
   const [value, setValue] = useState(() => {
@@ -44,6 +61,27 @@ export function runNeedsFullOutput(run, outputs) {
   return Boolean(preview && !outputs?.has(run.id));
 }
 
+export function taskEvidenceIsSettled({
+  status,
+  pausedByOwner = false,
+  detailStatus,
+  detailPausedByOwner = false,
+  selectedTaskId,
+  detailTaskId,
+  traceTaskId,
+  additionalTerminalStates = [],
+} = {}) {
+  const terminal = terminalTaskStates.has(status) || additionalTerminalStates.includes(status);
+  const detailTerminal = terminalTaskStates.has(detailStatus) || additionalTerminalStates.includes(detailStatus);
+  return terminal
+    && detailTerminal
+    && !(status === 'blocked' && pausedByOwner)
+    && !(detailStatus === 'blocked' && detailPausedByOwner)
+    && Boolean(selectedTaskId)
+    && detailTaskId === selectedTaskId
+    && traceTaskId === selectedTaskId;
+}
+
 function usePoll(load, dependencies, intervalMs = POLL_MS, enabled = true) {
   useEffect(() => {
     if (!enabled) return undefined;
@@ -63,6 +101,7 @@ function usePoll(load, dependencies, intervalMs = POLL_MS, enabled = true) {
 }
 
 export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnabled = false } = {}) {
+  const pageVisible = usePageVisible();
   const [selectedDirectorId, setSelectedDirectorId] = useStoredState('praetorium.director', '');
   const [selectedGoalId, setSelectedGoalId] = useStoredState('praetorium.goal', '');
   const [selectedTaskId, setSelectedTaskId] = useState('');
@@ -79,7 +118,9 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
   const [errors, setErrors] = useState({});
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [streamSummaryToken, setStreamSummaryToken] = useState(0);
   const summaryRequest = useRef(0);
+  const summaryRevision = useRef('');
   const taskRequest = useRef(0);
   const historyRequest = useRef(0);
   const messageRequest = useRef(0);
@@ -92,35 +133,59 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
     () => summary?.directors?.find(item => item.id === selectedDirectorId) || summary?.directors?.[0] || null,
     [summary, selectedDirectorId],
   );
+  const onActivityRefresh = useCallback(mode => {
+    if (mode === 'full') setRefreshToken(value => value + 1);
+    else setStreamSummaryToken(value => value + 1);
+  }, []);
+  const liveActivity = useDirectorActivity({ directorId: selectedDirector?.id, enabled: pageVisible, onRefresh: onActivityRefresh });
   const goals = useMemo(() => directorGoals(summary, selectedDirector, goalHistory.items), [summary, selectedDirector, goalHistory.items]);
   const selectedGoal = useMemo(
     () => goals.find(item => item.id === selectedGoalId) || goals[0] || null,
     [goals, selectedGoalId],
   );
-  const selectedTaskStatus = taskDetail?.task?.id === selectedTaskId
-    ? taskDetail.task.status
-    : board.find(task => task.id === selectedTaskId)?.status;
-  const taskEvidenceSettled = (terminalTaskStates.has(selectedTaskStatus) || summary?.terminalTaskStates?.includes(selectedTaskStatus))
-    && taskDetail?.task?.id === selectedTaskId
-    && taskTrace?.taskId === selectedTaskId;
+  const selectedBoardTask = board.find(task => task.id === selectedTaskId);
+  const detailMatchesTask = taskDetail?.task?.id === selectedTaskId;
+  const selectedTaskStatus = selectedBoardTask?.status || (detailMatchesTask ? taskDetail.task.status : null);
+  const selectedTaskPausedByOwner = Boolean(
+    selectedBoardTask?.pausedByOwner
+      || (detailMatchesTask && taskDetail?.praetoriumRecord?.pausedByOwner),
+  );
+  const detailTaskStatus = detailMatchesTask ? taskDetail.task.status : null;
+  const detailTaskPausedByOwner = Boolean(detailMatchesTask && taskDetail?.praetoriumRecord?.pausedByOwner);
+  const taskEvidenceSettled = taskEvidenceIsSettled({
+    status: selectedTaskStatus,
+    pausedByOwner: selectedTaskPausedByOwner,
+    detailStatus: detailTaskStatus,
+    detailPausedByOwner: detailTaskPausedByOwner,
+    selectedTaskId,
+    detailTaskId: taskDetail?.task?.id,
+    traceTaskId: taskTrace?.taskId,
+    additionalTerminalStates: summary?.terminalTaskStates || [],
+  });
 
   const loadSummary = useCallback(async signal => {
     const requestId = ++summaryRequest.current;
     try {
       const query = new URLSearchParams({ view: 'compact' });
       if (selectedDirectorId) query.set('directorId', selectedDirectorId);
-      const next = await api(`/api/directors?${query}`, { signal });
+      if (summaryRevision.current) query.set('revision', summaryRevision.current);
+      const next = await api(`/api/directors?${query}`, { signal, allowNotModified: true });
       if (requestId !== summaryRequest.current) return;
-      setSummary(withFullRunOutputs(next, fullRunOutputs.current));
       setLastSyncedAt(new Date());
       setErrors(current => ({ ...current, summary: null }));
+      if (next?.notModified) return;
+      summaryRevision.current = next.revision || '';
+      setSummary(withFullRunOutputs(next, fullRunOutputs.current));
       if (!selectedDirectorId || !next.directors?.some(item => item.id === selectedDirectorId)) {
         setSelectedDirectorId(next.selectedDirectorId || next.directors?.[0]?.id || '');
       }
 
       const clippedRuns = (next.recentRuns || []).filter(run => runNeedsFullOutput(run, fullRunOutputs.current));
       if (!clippedRuns.length) return;
-      const details = await Promise.allSettled(clippedRuns.map(run => api(`/api/directors/runs/${encodeURIComponent(run.id)}`, { signal })));
+      const details = await Promise.allSettled(clippedRuns.map(run => api(
+        `/api/directors/${encodeURIComponent(selectedDirectorId)}/runs/${encodeURIComponent(run.id)}`,
+        { signal },
+      )));
       if (signal.aborted || requestId !== summaryRequest.current) return;
       const resolved = new Map();
       details.forEach((result, index) => {
@@ -134,8 +199,10 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
       if (error.name !== 'AbortError') setErrors(current => ({ ...current, summary: error.message }));
       throw error;
     }
-  }, [selectedDirectorId, setSelectedDirectorId, refreshToken]);
-  usePoll(loadSummary, [loadSummary]);
+  }, [selectedDirectorId, setSelectedDirectorId, refreshToken, streamSummaryToken]);
+  // Keep one cheap conditional heartbeat for background notifications. Heavy
+  // board, Goal, and Worker evidence reads stop entirely while hidden.
+  usePoll(loadSummary, [loadSummary, pageVisible], pageVisible ? POLL_MS : 30000);
 
   const fetchGoalHistory = useCallback(async ({ offset = 0, append = false, signal } = {}) => {
     if (!selectedDirector?.id) return;
@@ -166,10 +233,11 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
   }, [selectedDirector?.id, goalSearch, historyFilter]);
 
   useEffect(() => {
+    if (!pageVisible) return undefined;
     const controller = new AbortController();
     const timer = window.setTimeout(() => void fetchGoalHistory({ signal: controller.signal }), 180);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [fetchGoalHistory]);
+  }, [fetchGoalHistory, pageVisible]);
 
   const loadMoreGoals = useCallback(() => {
     if (goalHistory.loading || !goalHistory.hasMore) return;
@@ -215,7 +283,7 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
     signal => fetchProjectMessages({ preserve: true, signal }),
     [fetchProjectMessages],
   );
-  usePoll(pollProjectMessages, [pollProjectMessages], POLL_MS, projectMessagesEnabled);
+  usePoll(pollProjectMessages, [pollProjectMessages, pageVisible], POLL_MS, projectMessagesEnabled && pageVisible);
 
   const loadMoreProjectMessages = useCallback(() => {
     if (projectMessages.loading || !projectMessages.hasMore) return;
@@ -237,15 +305,17 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
     }
     try {
       const next = await api(`/api/directors/${encodeURIComponent(selectedDirector.id)}/board`, { signal });
-      setBoard(next.tasks || []);
-      setBoardStatus(next.status || null);
+      const nextTasks = next.tasks || [];
+      const nextStatus = next.status || null;
+      setBoard(current => sameJson(current, nextTasks) ? current : nextTasks);
+      setBoardStatus(current => sameJson(current, nextStatus) ? current : nextStatus);
       setErrors(current => ({ ...current, board: null }));
     } catch (error) {
       if (error.name !== 'AbortError') setErrors(current => ({ ...current, board: error.message }));
       throw error;
     }
   }, [selectedDirector?.id, selectedDirector?.cwd, refreshToken]);
-  usePoll(loadBoard, [loadBoard]);
+  usePoll(loadBoard, [loadBoard, pageVisible], POLL_MS, pageVisible);
 
   const loadGoal = useCallback(async signal => {
     if (!selectedDirector?.id || !selectedGoal?.id) {
@@ -261,7 +331,12 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
       throw error;
     }
   }, [selectedDirector?.id, selectedGoal?.id, selectedGoal?.detailRevision, refreshToken]);
-  usePoll(loadGoal, [loadGoal]);
+  useEffect(() => {
+    if (!pageVisible) return undefined;
+    const controller = new AbortController();
+    void loadGoal(controller.signal).catch(() => {});
+    return () => controller.abort();
+  }, [loadGoal, pageVisible]);
 
   const loadTask = useCallback(async signal => {
     if (!taskPollingEnabled) return;
@@ -288,7 +363,7 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
       setErrors(current => ({ ...current, trace: trace.reason.message }));
     }
   }, [selectedDirector?.id, selectedTaskId, refreshToken, taskPollingEnabled, taskEvidenceSettled]);
-  usePoll(loadTask, [loadTask, taskPollingEnabled], 5000, taskPollingEnabled);
+  usePoll(loadTask, [loadTask, taskPollingEnabled, pageVisible], 5000, taskPollingEnabled && pageVisible);
 
   const refresh = useCallback(() => setRefreshToken(value => value + 1), []);
   const selectDirector = useCallback(id => {
@@ -340,6 +415,7 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
     selectedDirector, selectedDirectorId, selectedGoal, selectedGoalId, selectedTaskId, goals,
     goalSearch, setGoalSearch, historyFilter, setHistoryFilter, goalHistory, loadMoreGoals,
     projectMessages, loadMoreProjectMessages,
+    pageVisible, liveActivity,
     selectDirector, selectGoal, revealGoal, selectTask, refresh,
   };
 }

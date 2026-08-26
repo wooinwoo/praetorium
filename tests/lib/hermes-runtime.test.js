@@ -27,6 +27,27 @@ describe('HermesRuntime helpers', () => {
     assert.doesNotThrow(() => _test.assertSafeId('project-director-1', 'profile'));
   });
 
+  it('converts local attachment paths into absolute WSL-readable paths without shell interpolation', async () => {
+    const conversions = [];
+    const runtime = new HermesRuntime({
+      wslRuntime: {
+        toWslPath: async (distro, path) => {
+          conversions.push({ distro, path });
+          return '/mnt/c/Users/Owner/PraetoriumData/attachments/screen.png';
+        },
+      },
+    });
+    const source = 'C:\\Users\\Owner\\PraetoriumData\\attachments\\screen.png';
+    assert.equal(await runtime.resolveReadOnlyPath({
+      path: source, target: { kind: 'wsl', distro: 'Ubuntu-24.04' },
+    }), '/mnt/c/Users/Owner/PraetoriumData/attachments/screen.png');
+    assert.deepEqual(conversions, [{ distro: 'Ubuntu-24.04', path: source }]);
+    await assert.rejects(
+      runtime.resolveReadOnlyPath({ path: '..\\screen.png', target: { kind: 'windows' } }),
+      /must be absolute/,
+    );
+  });
+
   it('adapts parallelism to ready work and available resources', () => {
     assert.equal(adaptiveWorkerLimit({ ready: 0, cpuCount: 16, memoryBytes: 64 * 1024 ** 3 }), 0);
     assert.equal(adaptiveWorkerLimit({ ready: 20, running: 0, cpuCount: 8, memoryBytes: 64 * 1024 ** 3 }), 6);

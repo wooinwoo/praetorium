@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildConversation, buildTrace, goalControlOptions, goalTasks, interventionReceiptText, ownerDecisionPayload, statusText, statusTone, textValue } from '../../src/domain/operator-model.js';
+import {
+  buildConversation, buildTrace, deriveSupervisionHealth, goalControlOptions, goalSupervisionHealth,
+  goalTasks, interventionReceiptText, orderQueuedGoals, ownerDecisionPayload, statusText, statusTone,
+  taskDisplayStatus, taskIsTerminal, taskPausedByOwner, textValue,
+} from '../../src/domain/operator-model.js';
 import { connectionNotification, deriveGoalNotifications, deriveWorkerNotifications, mergeNotifications } from '../../src/domain/notification-model.js';
-import { runNeedsFullOutput, withFullRunOutputs } from '../../src/hooks/usePraetorium.js';
+import { directorActivityMessage } from '../../src/hooks/useDirectorActivity.js';
+import { runNeedsFullOutput, taskEvidenceIsSettled, withFullRunOutputs } from '../../src/hooks/usePraetorium.js';
+import { timestampMs } from '../../src/lib/time.js';
+import { validateImageSelection } from '../../src/lib/image-attachments.js';
 
 test('operator model merges durable task records with fresher board state', () => {
   const tasks = goalTasks([
@@ -70,6 +77,20 @@ test('operator model separates project chat from the selected Goal record', () =
   const director = { kind: 'project', projectId: 'p1' };
   assert.deepEqual(buildConversation(goal, summary, director, 'goal').map(item => item.text), ['build', 'delegated']);
   assert.deepEqual(buildConversation(goal, summary, director, 'project').map(item => item.text), ['status?', 'healthy']);
+});
+
+test('operator model restores persisted attachment thumbnails through the selected Director route', () => {
+  const attachment = {
+    id: 'attachment_11111111-1111-4111-8111-111111111111', name: 'screen.png', mimeType: 'image/png',
+  };
+  const [message] = buildConversation({
+    id: 'g1',
+    runs: [{ id: 'r1', goalId: 'g1', prompt: '이 화면대로', status: 'completed', attachments: [attachment] }],
+  }, {}, { id: 'project-director-1', kind: 'project', projectId: 'p1' }, 'goal');
+  assert.equal(
+    message.attachments[0].previewUrl,
+    '/api/directors/project-director-1/attachments/attachment_11111111-1111-4111-8111-111111111111',
+  );
 });
 
 test('operator notifications emit only state transitions and group worker completions', () => {
@@ -158,6 +179,114 @@ test('React Goal controls and intervention receipts preserve operational truth',
   assert.deepEqual(goalControlOptions({ status: 'failed', phase: 'cancelled' }), []);
   assert.match(interventionReceiptText({ status: 'delivery_failed' }), /자동 재시도.*다시 보내지 마세요/);
   assert.equal(interventionReceiptText({ workerObserved: true }), 'Worker 확인됨');
+});
+
+test('selected Worker public checkpoints appear in the Goal trace', () => {
+  const trace = buildTrace({
+    id: 'g-checkpoints', objective: 'ship', status: 'executing', createdAt: '2026-08-26T01:00:00Z',
+    taskIds: ['worker'], waves: [{ id: 'wave', index: 1, status: 'running', taskIds: ['worker'] }],
+  }, [], [{
+    id: 'worker', waveId: 'wave', status: 'running', title: '검증', started_at: 1787750437,
+    comments: [
+      { body: 'PLAN: 원문을 확인한다.', author: 'codex-implementer', created_at: 1787750438 },
+      { body: 'OBSERVED: 후보 4건을 확인했다.', author: 'codex-implementer', created_at: 1787750439 },
+    ],
+  }]);
+  const checkpoints = trace.filter(item => item.type === 'worker_checkpoint');
+  assert.deepEqual(checkpoints.map(item => item.eyebrow), ['WAVE 1 · PLAN', 'WAVE 1 · OBSERVED']);
+  assert.deepEqual(checkpoints.map(item => item.title), ['원문을 확인한다.', '후보 4건을 확인했다.']);
+  assert.ok(trace.indexOf(checkpoints[0]) > trace.findIndex(item => item.id === 'task:worker'));
+});
+
+test('paused blocked Workers remain active, resumable, and visibly paused', () => {
+  const paused = { id: 't-paused', status: 'blocked', pausedByOwner: true };
+  assert.equal(taskPausedByOwner(paused), true);
+  assert.equal(taskDisplayStatus(paused), 'paused');
+  assert.equal(taskIsTerminal(paused), false);
+  assert.equal(taskIsTerminal({ id: 't-blocked', status: 'blocked' }), true);
+  assert.equal(taskEvidenceIsSettled({
+    status: 'blocked', pausedByOwner: true, selectedTaskId: 't-paused',
+    detailStatus: 'blocked', detailPausedByOwner: true, detailTaskId: 't-paused', traceTaskId: 't-paused',
+  }), false);
+  assert.equal(taskEvidenceIsSettled({
+    status: 'blocked', pausedByOwner: false, selectedTaskId: 't-blocked',
+    detailStatus: 'blocked', detailTaskId: 't-blocked', traceTaskId: 't-blocked',
+  }), true);
+  assert.equal(taskEvidenceIsSettled({
+    status: 'running', pausedByOwner: false, selectedTaskId: 't-paused',
+    detailStatus: 'running', detailTaskId: 't-paused', traceTaskId: 't-paused',
+  }), false);
+  assert.equal(taskEvidenceIsSettled({
+    status: 'done', pausedByOwner: false, selectedTaskId: 't-final',
+    detailStatus: 'running', detailTaskId: 't-final', traceTaskId: 't-final',
+  }), false, 'a terminal board card must force one final detail/log fetch');
+  assert.equal(buildTrace({ id: 'g1', objective: 'ship', status: 'executing' }, [], [paused])
+    .find(item => item.id === 'task:t-paused').status, 'paused');
+});
+
+test('queued Goal navigation follows durable queue position', () => {
+  const ordered = orderQueuedGoals([
+    { id: 'third', queuePosition: 3, createdAt: '2026-08-26T01:00:00Z' },
+    { id: 'missing-new', createdAt: '2026-08-26T03:00:00Z' },
+    { id: 'first', queuePosition: 1, createdAt: '2026-08-26T02:00:00Z' },
+    { id: 'missing-old', createdAt: '2026-08-26T01:00:00Z' },
+  ]);
+  assert.deepEqual(ordered.map(goal => goal.id), ['first', 'third', 'missing-old', 'missing-new']);
+});
+
+test('supervision health distinguishes active inference, stale scheduler, and stale UI sync', () => {
+  const nowMs = Date.parse('2026-08-26T02:00:00Z');
+  const inference = deriveSupervisionHealth({
+    active: true,
+    inferenceActive: true,
+    inferenceStartedAt: '2026-08-26T01:58:00Z',
+    checkpointAt: '2026-08-26T01:59:30Z',
+    schedulerTickAt: '2026-08-26T01:59:55Z',
+    lastSyncedAt: '2026-08-26T01:59:58Z',
+    nowMs,
+  });
+  assert.equal(inference.stalled, false);
+  assert.equal(inference.label, '판단 진행 중');
+  const stalled = deriveSupervisionHealth({
+    active: true,
+    schedulerTickAt: '2026-08-26T01:57:00Z',
+    schedulerNextDelayMs: 3000,
+    lastSyncedAt: '2026-08-26T01:59:58Z',
+    nowMs,
+  });
+  assert.equal(stalled.stalled, true);
+  assert.equal(stalled.label, '감독 신호 지연');
+  const staleSync = goalSupervisionHealth({
+    director: { id: 'd1', status: 'idle', kind: 'project' },
+    goal: { id: 'g1', status: 'executing', updatedAt: '2026-08-26T01:59:50Z', events: [] },
+    scheduler: { lastTickAt: '2026-08-26T01:59:55Z', nextDelayMs: 3000, boards: [] },
+    lastSyncedAt: '2026-08-26T01:58:00Z',
+    nowMs,
+  });
+  assert.equal(staleSync.stalled, true);
+  assert.equal(staleSync.label, '화면 동기화 지연');
+});
+
+test('public Director activity labels expose checkpoints without raw model output', () => {
+  assert.equal(directorActivityMessage('run', { activity: { phase: 'planning_workers' } }), 'Director 단계 · planning workers');
+  assert.equal(directorActivityMessage('goal', { activity: { ownerActionRequired: true } }), 'Owner 결정이 필요합니다.');
+  assert.equal(directorActivityMessage('output', { activity: { chunkCharacters: 480 } }), 'Director 응답 수신 · 480자');
+  assert.equal(directorActivityMessage('tick', { activity: { running: 2, ready: 1, awaitingOwner: true } }), '감독 동기화 · 실행 2 · 대기 1 · Owner 결정 대기');
+  assert.equal(directorActivityMessage('run', { activity: { checkpoint: { message: '보안 검토 시작' } } }), '보안 검토 시작');
+});
+
+test('Hermes Unix-second timestamps are normalized before display and trace sorting', () => {
+  assert.equal(timestampMs(1787750437), 1787750437000);
+  assert.equal(timestampMs('1787750437'), 1787750437000);
+  assert.equal(timestampMs('2026-08-26T13:20:37.000Z'), 1787750437000);
+});
+
+test('Director image selection applies the same bounded client limits as the local API', () => {
+  const image = (name, type = 'image/png', size = 1024) => ({ name, type, size });
+  assert.equal(validateImageSelection([image('shot.png')]).ok, true);
+  assert.match(validateImageSelection([image('vector.svg', 'image/svg+xml')]).error, /지원하지 않는/);
+  assert.match(validateImageSelection([image('huge.png', 'image/png', 5 * 1024 * 1024 + 1)]).error, /5 MB/);
+  assert.match(validateImageSelection([image('fifth.png')], [image('1.png'), image('2.png'), image('3.png'), image('4.png')]).error, /최대 4개/);
 });
 
 test('operator model formats evidence without dumping raw object braces', () => {

@@ -24,6 +24,7 @@ The product's distinct mechanism is a trace-first control surface over durable H
 - A project may use the native Windows runtime or a selected WSL2 distribution and Linux path.
 - Hermes profiles, boards, task lifecycle, logs, and public checkpoints provide durable operating evidence.
 - The Owner regularly monitors long-running work, changes projects and runtimes, inspects role configuration, and intervenes in active Workers.
+- The Owner can steer the selected active Goal in place, including with validated local image references, instead of accidentally creating a second Goal.
 
 ## Capabilities and Constraints
 
@@ -33,6 +34,7 @@ The product's distinct mechanism is a trace-first control surface over durable H
 - Existing project files, Git state, active sessions, and durable Praetorium/Hermes state must never be reset, cleaned, or discarded automatically.
 - Director and reviewer read-only boundaries, Worker workspace-write boundaries, and Owner-controlled external authority remain intact.
 - The execution trace remains the primary navigation and the Inspector remains the primary detail/control surface.
+- Live activity is limited to public lifecycle metadata and `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` checkpoints; private model chain-of-thought is never a product surface.
 
 ## Brand Commitments
 
@@ -41,7 +43,9 @@ The product name is Praetorium. Its voice is calm, technical, direct, and operat
 ## Evidence on Hand
 
 - Product and security contract: `AGENTS.md`
-- Existing Owner Console: `index.html`, `css/owner-console.css`, `js/owner-console.js`
+- Production Owner Console source: `index.html`, `src/`, `vite.config.js`; generated output: `dist/`
+- Legacy UI reference only: `css/owner-console.css`, `js/owner-console.js`
+- Local image and public activity implementation: `lib/director-attachments.js`, `routes/directors.js`
 - Runtime and lifecycle implementation: `lib/hermes-runtime.js`, `lib/director-service.js`
 - Role and workflow assets: `.agents/hermes-profiles/`, `.agents/skills/`, `lib/workflow-catalog.js`
 - Existing tests under `tests/`

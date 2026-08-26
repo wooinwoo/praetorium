@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { statusText, statusTone } from '../domain/operator-model.js';
+import { timestampDate, timestampMs } from '../lib/time.js';
 
 export { statusText, statusTone };
 
@@ -13,6 +14,7 @@ const paths = {
   chevron: '<path d="m9 18 6-6-6-6"/>',
   command: '<path d="m7 8-4 4 4 4M11 16h10"/>',
   folder: '<path d="M3 6h6l2 2h10v10H3z"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 15-5-5L5 20"/>',
   layers: '<path d="m12 3-9 5 9 5 9-5-9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>',
   message: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/>',
@@ -108,13 +110,13 @@ export function RichText({ children }) {
 
 export function formatClock(value) {
   if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return '—';
+  const date = timestampDate(value);
+  if (!date) return '—';
   return new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date);
 }
 
 export function relativeTime(value) {
-  const ms = Date.now() - Date.parse(value || '');
+  const ms = Date.now() - timestampMs(value);
   if (!Number.isFinite(ms)) return '';
   const seconds = Math.max(0, Math.floor(ms / 1000));
   if (seconds < 60) return `${seconds}초 전`;

@@ -60,6 +60,7 @@
       "../package.json": "./",
       "../dist/": "./dist/",
       "../lib/director-service.js": "./lib/director-service.js",
+      "../lib/director-attachments.js": "./lib/director-attachments.js",
       "../lib/director-actions.js": "./lib/director-actions.js",
       "../lib/candidate-snapshot.js": "./lib/candidate-snapshot.js",
       "../lib/goal-supervisor.js": "./lib/goal-supervisor.js",

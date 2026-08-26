@@ -16,3 +16,14 @@ test('API client preserves server errors and times out stalled local requests', 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('API client can treat a conditional 304 response as an unchanged snapshot', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({ ok: false, status: 304, json: async () => { throw new Error('no body'); } });
+    assert.deepEqual(await api('/api/directors?view=compact', { allowNotModified: true }), { notModified: true });
+    await assert.rejects(api('/api/directors?view=compact'), error => error instanceof ApiError && error.status === 304);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

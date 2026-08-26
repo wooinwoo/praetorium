@@ -83,7 +83,7 @@ test('Owner console orders selectable active, queued, and recent Goals and prese
   assert.match(hook, /selectedGoalId/);
   assert.match(hook, /\.sort\(\(a, b\) => Date\.parse\(b\.updatedAt/);
   assert.match(sidebar, /const active = visibleGoals\.filter/);
-  assert.match(sidebar, /const queued = visibleGoals\.filter/);
+  assert.match(sidebar, /const queued = orderQueuedGoals\(visibleGoals\.filter/);
   assert.match(sidebar, /const recent = visibleGoals\.filter/);
   assert.match(workspace, /accepted\?\.goalId/);
   const ordered = _test.orderGoalsForSelector([
@@ -458,8 +458,11 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   assert.match(sidebar, />History</);
   assert.match(sidebar, /이전 기록 더 보기/);
   assert.match(workspace, /channel-scope/);
+  assert.match(workspace, /const guideableGoalStates = new Set/);
+  assert.doesNotMatch(workspace.match(/const guideableGoalStates[^;]+;/)?.[0] || '', /awaiting_owner/);
+  assert.match(workspace, /key=\{`\$\{director\?\.id\}:\$\{chatScope\}:\$\{chatScope === 'goal' \? goal\?\.id \|\| 'none' : 'project'\}`\}/);
   assert.match(workspace, /CompletedTasksMenu/);
-  assert.match(workspace, /!terminalStates\.has\(task\.status\) \|\| activeTab ===/);
+  assert.match(workspace, /!taskIsTerminal\(task\) \|\| activeTab ===/);
   assert.match(notifications, /!document\.hidden && document\.hasFocus\(\)/);
   assert.match(notifications, /show_operator_notification/);
   assert.match(notifications, /operator-notification-open/);
@@ -472,4 +475,48 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   assert.doesNotMatch(css, /@media \(max-width: 760px\) \{\n  \.operator-grid/);
   assert.match(hook, /preserve: true/);
   assert.match(hook, /\[\.\.\.dependencies, enabled\]/);
+});
+
+test('React operator UI keeps resumable Workers active and renders complete decision and Worker evidence', async () => {
+  const [model, sidebar, workspace, forms, css] = await Promise.all([
+    source('src/domain/operator-model.js'), source('src/components/Sidebar.jsx'),
+    source('src/components/Workspace.jsx'), source('src/components/forms.jsx'), source('src/styles.css'),
+  ]);
+  assert.match(model, /function taskPausedByOwner/);
+  assert.match(model, /function taskIsTerminal/);
+  assert.match(model, /function orderQueuedGoals/);
+  assert.match(sidebar, /orderQueuedGoals\(visibleGoals\.filter/);
+  assert.match(workspace, /tasks\.filter\(task => taskIsTerminal\(task\)\)/);
+  assert.match(workspace, /일시정지 · 재개 가능/);
+  assert.match(workspace, /lastSyncedAt = null/);
+  assert.match(workspace, /goalSupervisionHealth/);
+  for (const field of ['approvalKind', 'effect', 'target', 'writeScope', 'throughWave', 'planDigest', 'candidateDigest', 'plannedActions']) {
+    assert.match(forms, new RegExp(`\\b${field}\\b`), field);
+  }
+  assert.match(forms, /승인 권한과 적용 범위/);
+  assert.match(workspace, /omittedComments/);
+  assert.match(workspace, /omittedEvents/);
+  assert.match(workspace, /이전 \{Math\.min\(EVIDENCE_PAGE_SIZE, omittedComments\)\}개 보기/);
+  assert.match(workspace, /detail\?\.validation/);
+  assert.match(workspace, /구조화 검증/);
+  assert.match(css, /\.supervision-health\.stalled/);
+  assert.match(css, /\.authority-decision/);
+  assert.match(css, /\.evidence-more/);
+  assert.match(css, /\.task-tab-dot\.blocked, \.task-tab-dot\.paused/);
+});
+
+test('Director image composer keeps previews visible, expandable, and submission-safe', async () => {
+  const [forms, server, css] = await Promise.all([
+    source('src/components/forms.jsx'), source('server.js'), source('src/styles.css'),
+  ]);
+  assert.match(forms, /previewUrl: `data:\$\{file\.type\};base64,\$\{encoded\[index\]\}`/);
+  assert.match(forms, /\[result, action, actionPending\] = useActionState/);
+  assert.match(forms, /submittingRef\.current/);
+  assert.match(forms, /className="image-lightbox" role="dialog" aria-modal="true"/);
+  assert.match(forms, /Goal 기록은 유지됩니다\. Worker 상세에서 수신 상태를 확인한 뒤 필요한 작업에 직접 지시하세요/);
+  assert.match(server, /img-src 'self' data: blob:/);
+  assert.match(server, /return \{ malformed: true \}/);
+  assert.match(server, /route\?\.malformed[^\n]+Malformed URL parameter/);
+  assert.match(css, /\.chat-attachments \.chat-image-preview/);
+  assert.match(css, /\.image-lightbox/);
 });

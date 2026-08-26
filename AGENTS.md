@@ -17,6 +17,7 @@ The product must answer these questions without opening another tab:
 7. Was an Owner instruction merely persisted, accepted by Hermes, or actually acknowledged by the Worker?
 8. Which Goal is active, queued, cancelled, or recently terminal, and what queue control is safe now?
 9. Is this Director turn finished, or is the durable Goal actually complete?
+10. Did a new Owner message create work, or steer the currently selected Goal and its active Workers?
 
 Do not regress the UI into a generic dashboard, a Kanban card wall, or a chat-only interface. The execution trace is the primary navigation; the Inspector is the primary detail and control surface.
 
@@ -45,6 +46,8 @@ Do not regress the UI into a generic dashboard, a Kanban card wall, or a chat-on
 - Worker tasks must publish concise `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` Kanban comments at meaningful checkpoints. Do not publish secrets, private chain-of-thought, or repetitive narration.
 - Public communication follows the Owner's language. If an Owner request contains Korean, Director summaries and questions plus Worker task text, checkpoints, and final reports must be Korean. Keep JSON keys, schema names, enum values, identifiers, and the literal `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` markers in English so machine contracts remain stable.
 - Owner comments are a live Worker steering channel. Persist a unique intervention ID before Hermes delivery, retry a failed delivery under a lease with that same ID, and distinguish `delivery_pending`, `delivery_failed`, `accepted_queued`, and `worker_observed`. Accepted delivery is not Worker acknowledgement; observation requires later Worker-authored public evidence containing the ID. Reject interventions for orphan, legacy, or terminal cards.
+- Current-Goal guidance is a durable steering channel, not a new Goal. Persist its text and attachment references before delivery, retain it in later Director/Worker context, and report per-Worker delivery failures without discarding the accepted guidance. Guidance invalidates prior exact-authority approvals and final gate state, then forces fresh analysis and planning after the current Worker wave settles; an `awaiting_owner` Goal accepts only its exact decision endpoint.
+- Director messages and current-Goal guidance may include bounded local image attachments. Accept PNG, JPEG, WebP, and GIF only; verify content signatures, dimensions, hashes, storage containment, and symlink safety. Persist files in Praetorium's local state, expose only bounded metadata and same-origin previews, and never place base64 image data or private model output in state summaries, events, or the activity stream.
 - Pausing a running Worker must reclaim and terminate its local process before parking the task. Resuming must return it to dispatch safely.
 - Goal cancellation must quiesce every owned non-terminal Worker and confirm its live status before terminalizing the Goal. Missing cached cards do not prove that a Worker stopped; a Goal with no Worker tasks may still be cancelled during an infrastructure outage.
 - Implementers do not review their own work. Reviewers are fresh-context and read-only. Remediators are separate from reviewers. Relevant review evidence becomes stale after the candidate revision changes. Every materialized current review participates in the gate even when it was supplemental to the workflow minimum.
@@ -67,13 +70,16 @@ Do not regress the UI into a generic dashboard, a Kanban card wall, or a chat-on
 - `lib/director-service.js`: Director registry, durable Goal lifecycle, bounded context, wave materialization, scheduler, restart recovery, Worker controls
 - `lib/goal-supervisor.js`: Goal normalization, wave/task synchronization, evidence snapshots, acceptance checks, and fresh supervision prompts
 - `lib/director-actions.js`: schema extraction and validation for Director checkpoints
+- `lib/director-attachments.js`: bounded local image validation, storage, integrity checks, and preview reads
 - `lib/owner-language.js`: Owner-language detection and public communication contract
 - `lib/candidate-snapshot.js`: bounded candidate identity, declared-output binding, and runtime-aware path safety
 - `lib/workflow-catalog.js`: workflows, skills, and Worker profile catalog
 - `lib/hermes-runtime.js`: stdio-only Hermes adapter and sandbox environment
 - `lib/local-only.js`: loopback peer and Host invariants
 - `lib/praetorium-config.js`: project slots and configuration migration
-- `index.html`, `css/owner-console.css`, `js/owner-console.js`: trace-first local UI
+- `index.html`, `src/`, `vite.config.js`: production React/Vite Owner Console source
+- `dist/`: generated UI served by the loopback Node server and packaged by the desktop shell
+- `css/owner-console.css`, `js/owner-console.js`: legacy reference UI; not served as the production console
 - `.agents/skills/`: reusable orchestration and review procedures
 - `.agents/hermes-profiles/`: role prompts and policies
 - `scripts/bootstrap-director-system.ps1`: deterministic local setup
@@ -91,6 +97,7 @@ Keep route handlers thin. Put lifecycle and policy in `DirectorService`; put CLI
 - Keep active, queued, and recent Goals selectable. Show queue position and explicit receipts for reorder, defer, cancel, and retry; render Owner cancellation as cancelled even when the durable compatibility status is `failed`.
 - Show concrete product language: Worker name, task, evidence, command, status, dependency, and elapsed time.
 - Do not hide actual Worker execution behind a completion summary. Show structured public checkpoints, extracted observed steps, raw local log, events, and final evidence.
+- Use the same-origin SSE activity stream for bounded public lifecycle/checkpoint receipts and reconnect/resync state. Never present raw model output or private chain-of-thought as live reasoning.
 - Display intervention delivery separately from Worker acknowledgement: pending is amber, failed is red, accepted/queued is a receipt only, and observed requires Worker evidence. A delivery failure that will retry must tell the Owner not to resend and create a duplicate instruction.
 - On wide layouts, make the Inspector width and activity-region height directly adjustable with pointer-draggable splitters. Double-click restores defaults, focused splitters support Arrow-key adjustment, and clamped values persist in `localStorage`; polling and rerendering must not reset or jitter the chosen layout.
 - Preserve readable text scale controls, keyboard focus, responsive layout, empty/loading/error states, and an expandable detail view.
@@ -113,9 +120,12 @@ Keep route handlers thin. Put lifecycle and policy in `DirectorService`; put CLI
 For ordinary source changes, run:
 
 ```powershell
-node --check .\js\owner-console.js
+node --check .\server.js
+node --check .\routes\directors.js
 node --check .\lib\director-service.js
+node --check .\lib\director-attachments.js
 node --check .\lib\hermes-runtime.js
+npm run build
 npm test
 git diff --check
 ```

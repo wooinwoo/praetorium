@@ -1,8 +1,14 @@
+import { timestampMs } from '../lib/time.js';
+
 const terminalStates = new Set(['done', 'completed', 'succeeded', 'success', 'blocked', 'archived', 'failed', 'cancelled']);
+const activeGoalStates = new Set(['clarifying', 'planning', 'executing', 'evaluating', 'remediating', 'verifying', 'awaiting_owner']);
+const resumableTaskStates = new Set(['blocked', 'paused', 'scheduled']);
+const DIRECTOR_INFERENCE_STALE_MS = 600000;
+const SCHEDULER_GRACE_MS = 30000;
 
 export const statusText = status => ({
   idle: '대기', running: '실행 중', queued: '대기열', ready: '실행 대기', todo: '선행 대기',
-  review: '리뷰 중', blocked: '판단 필요', scheduled: '일시정지', done: '완료', completed: '완료',
+  review: '리뷰 중', blocked: '판단 필요', paused: '오너 일시정지', scheduled: '일시정지', done: '완료', completed: '완료',
   archived: '완료', succeeded: '완료', success: '완료', failed: '실패', error: '오류', clarifying: '명세 확인', planning: '계획',
   executing: '실행 중', evaluating: '평가', remediating: '재작업', verifying: '검증',
   awaiting_owner: '오너 판단', cancelled: '취소', materializing: '작업 생성',
@@ -12,9 +18,109 @@ export const statusTone = status => {
   if (['running', 'executing', 'materializing', 'planning', 'clarifying', 'evaluating', 'remediating', 'verifying'].includes(status)) return 'running';
   if (['done', 'completed', 'succeeded', 'success', 'archived'].includes(status)) return 'done';
   if (['failed', 'error', 'cancelled'].includes(status)) return 'failed';
-  if (['blocked', 'awaiting_owner'].includes(status)) return 'attention';
+  if (['blocked', 'paused', 'awaiting_owner'].includes(status)) return 'attention';
   return 'idle';
 };
+
+function timeMs(value) {
+  const parsed = timestampMs(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function taskPausedByOwner(task, record = null) {
+  const status = String(task?.status || record?.status || '').toLowerCase();
+  return resumableTaskStates.has(status)
+    && Boolean(task?.pausedByOwner || task?.pausePending || task?.resumePending || record?.pausedByOwner || record?.pausePending || record?.resumePending);
+}
+
+export function taskDisplayStatus(task, record = null) {
+  return taskPausedByOwner(task, record) ? 'paused' : String(task?.status || record?.status || '');
+}
+
+export function taskIsTerminal(task, record = null) {
+  return terminalStates.has(String(task?.status || record?.status || '').toLowerCase()) && !taskPausedByOwner(task, record);
+}
+
+export function orderQueuedGoals(goals = []) {
+  const position = goal => {
+    const value = Number(goal?.queuePosition);
+    return Number.isInteger(value) && value > 0 ? value : Number.MAX_SAFE_INTEGER;
+  };
+  return [...goals].sort((left, right) => position(left) - position(right)
+    || timeMs(left?.createdAt) - timeMs(right?.createdAt));
+}
+
+export function deriveSupervisionHealth({
+  active = false,
+  inferenceActive = false,
+  inferenceStartedAt = null,
+  checkpointAt = null,
+  schedulerTickAt = null,
+  schedulerNextDelayMs = 0,
+  schedulerError = null,
+  lastSyncedAt = null,
+  nowMs = Date.now(),
+} = {}) {
+  const checkpointMs = timeMs(checkpointAt);
+  const inferenceStartedMs = timeMs(inferenceStartedAt);
+  const tickMs = timeMs(schedulerTickAt);
+  const syncedMs = timeMs(lastSyncedAt);
+  const checkpointAgeMs = checkpointMs ? Math.max(0, nowMs - checkpointMs) : 0;
+  const tickAgeMs = tickMs ? Math.max(0, nowMs - tickMs) : 0;
+  const syncAgeMs = syncedMs ? Math.max(0, nowMs - syncedMs) : 0;
+  const schedulerLimitMs = Math.max(90000, Number(schedulerNextDelayMs || 0) + SCHEDULER_GRACE_MS);
+  const syncLimitMs = Math.max(30000, Math.min(120000, schedulerLimitMs));
+  if (schedulerError) return { stalled: true, tone: 'failed', label: '감독 오류', detail: String(schedulerError) };
+  if (active && syncedMs && syncAgeMs > syncLimitMs) {
+    return { stalled: true, tone: 'failed', label: '화면 동기화 지연', detail: `마지막 동기화 ${relativeDuration(syncAgeMs)} 전` };
+  }
+  if (inferenceActive) {
+    if (checkpointMs && checkpointAgeMs > DIRECTOR_INFERENCE_STALE_MS) {
+      return { stalled: true, tone: 'failed', label: '디렉터 판단 응답 지연', detail: `마지막 공개 체크포인트 ${relativeDuration(checkpointAgeMs)} 전` };
+    }
+    const elapsed = inferenceStartedMs ? `판단 ${relativeDuration(Math.max(0, nowMs - inferenceStartedMs))}` : '판단 진행';
+    return { stalled: false, tone: 'running', label: '판단 진행 중', detail: checkpointMs ? `${elapsed} · 체크포인트 ${relativeDuration(checkpointAgeMs)} 전` : `${elapsed} · 첫 체크포인트 준비 중` };
+  }
+  if (active && tickMs && tickAgeMs > schedulerLimitMs) {
+    return { stalled: true, tone: 'failed', label: '감독 신호 지연', detail: `마지막 스케줄러 신호 ${relativeDuration(tickAgeMs)} 전` };
+  }
+  if (checkpointMs) return { stalled: false, tone: 'done', label: '감독 정상', detail: `마지막 체크포인트 ${relativeDuration(checkpointAgeMs)} 전` };
+  if (tickMs) return { stalled: false, tone: 'done', label: '감독 정상', detail: `마지막 스케줄러 신호 ${relativeDuration(tickAgeMs)} 전` };
+  return { stalled: false, tone: 'idle', label: active ? '감독 시작 대기' : '감독 대기', detail: active ? '첫 체크포인트를 기다리는 중' : '활성 Goal이 없습니다.' };
+}
+
+export function goalSupervisionHealth({ director, goal, runs = [], scheduler = null, lastSyncedAt = null, nowMs = Date.now() } = {}) {
+  if (!goal || !activeGoalStates.has(goal.status)) return null;
+  const run = [...runs].sort((left, right) => timeMs(left?.startedAt || left?.createdAt) - timeMs(right?.startedAt || right?.createdAt)).at(-1) || null;
+  const checkpointAt = Math.max(
+    timeMs(goal.updatedAt || goal.createdAt),
+    timeMs(run?.startedAt || run?.createdAt),
+    ...(goal.events || []).map(event => timeMs(event.at || event.createdAt)),
+    ...(run?.progressEvents || []).map(event => timeMs(event.at || event.createdAt)),
+  );
+  const board = (scheduler?.boards || []).find(item => item.directorId === director?.id) || null;
+  return deriveSupervisionHealth({
+    active: true,
+    inferenceActive: run?.status === 'running' || director?.status === 'running',
+    inferenceStartedAt: run?.startedAt || run?.createdAt,
+    checkpointAt: checkpointAt || null,
+    schedulerTickAt: board?.lastTickAt || scheduler?.lastTickAt,
+    schedulerNextDelayMs: scheduler?.nextDelayMs,
+    schedulerError: board?.lastTickError || (director?.kind === 'skill' ? scheduler?.lastError : null),
+    lastSyncedAt,
+    nowMs,
+  });
+}
+
+function relativeDuration(ms) {
+  const seconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}분`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간`;
+  return `${Math.floor(hours / 24)}일`;
+}
 
 export function textValue(value) {
   if (value == null) return '';
@@ -67,7 +173,7 @@ export function goalTasks(board, goal) {
   const records = new Map((goal?.taskRecords || []).map(record => [record.taskId, record]));
   const merged = (board || []).filter(task => ids.has(task.id)).map(task => ({ ...records.get(task.id), ...task }));
   for (const [id, record] of records) if (!merged.some(task => task.id === id)) merged.push({ id, ...record });
-  return merged.sort((a, b) => Date.parse(taskTime(a) || 0) - Date.parse(taskTime(b) || 0));
+  return merged.sort((a, b) => timestampMs(taskTime(a) || 0) - timestampMs(taskTime(b) || 0));
 }
 
 export function buildTrace(goal, runs, tasks) {
@@ -123,13 +229,28 @@ export function buildTrace(goal, runs, tasks) {
   for (const task of tasks || []) {
     const wave = taskWave(task);
     const parents = task.parentTaskIds || task.parents || [];
+    const taskDepthValue = taskDepth(task.id);
     entries.push({
-      id: `task:${task.id}`, type: 'task', taskId: task.id, status: task.status, at: taskTime(task),
+      id: `task:${task.id}`, type: 'task', taskId: task.id, status: taskDisplayStatus(task), at: taskTime(task),
       eyebrow: `${wave?.index ? `WAVE ${wave.index} · ` : ''}${task.assignee || task.profile || 'WORKER'}`,
       title: task.title || task.task || `Worker ${task.id}`,
       detail: [parents.length ? `선행 작업 · ${parents.join(', ')}` : '', textValue(task.summary || task.checkpoint || task.report)].filter(Boolean).join('\n'),
-      raw: task, depth: taskDepth(task.id),
+      raw: task, depth: taskDepthValue,
     });
+    for (const [index, comment] of (task.comments || []).entries()) {
+      const body = String(comment?.body || comment?.message || '').trim();
+      const markerMatch = body.match(/^\s*(PLAN|OBSERVED|DECISION|VERIFY)\s*:\s*/i);
+      if (!markerMatch) continue;
+      const marker = markerMatch[1].toUpperCase();
+      entries.push({
+        id: `task-comment:${task.id}:${comment?.id || comment?.created_at || comment?.createdAt || index}`,
+        type: 'worker_checkpoint', taskId: task.id, status: marker === 'DECISION' ? 'attention' : taskDisplayStatus(task),
+        at: comment?.created_at || comment?.createdAt || taskTime(task),
+        eyebrow: `${wave?.index ? `WAVE ${wave.index} · ` : ''}${marker}`,
+        title: body.replace(/^\s*(?:PLAN|OBSERVED|DECISION|VERIFY)\s*:\s*/i, '') || 'Worker 체크포인트',
+        detail: comment?.author || task.assignee || task.profile || 'Worker', raw: comment, depth: taskDepthValue + 1,
+      });
+    }
   }
   if (goal.ownerDecision?.required) entries.push({
     id: `decision:${goal.id}`, type: 'decision', status: 'awaiting_owner', at: goal.ownerDecision.askedAt,
@@ -140,7 +261,18 @@ export function buildTrace(goal, runs, tasks) {
     eyebrow: 'FINAL REPORT', title: '디렉터 최종 결론', detail: textValue(goal.finalReport), raw: goal.finalReport, depth: 1,
   });
   const unique = new Map(entries.map(entry => [entry.id, entry]));
-  return [...unique.values()].sort((a, b) => Date.parse(a.at || 0) - Date.parse(b.at || 0));
+  return [...unique.values()].sort((a, b) => timestampMs(a.at || 0) - timestampMs(b.at || 0));
+}
+
+function previewAttachments(attachments, directorId) {
+  if (!Array.isArray(attachments)) return [];
+  return attachments.map(attachment => {
+    if (!attachment || attachment.previewUrl || !directorId || !attachment.id) return attachment;
+    return {
+      ...attachment,
+      previewUrl: `/api/directors/${encodeURIComponent(directorId)}/attachments/${encodeURIComponent(attachment.id)}`,
+    };
+  }).filter(Boolean);
 }
 
 export function buildConversation(goal, summary, director, scope = goal ? 'goal' : 'project') {
@@ -154,13 +286,18 @@ export function buildConversation(goal, summary, director, scope = goal ? 'goal'
   const runs = [...new Map([...goalRuns, ...directRuns].map(run => [run.id, run])).values()];
   const messages = [];
   for (const run of runs) {
-    if (run.prompt) messages.push({ id: `${run.id}:owner`, role: 'owner', text: run.prompt, at: run.createdAt, kind: run.requestedMode === 'delegate' ? '실행 요청' : '요청' });
+    if (run.prompt) messages.push({ id: `${run.id}:owner`, role: 'owner', text: run.prompt, attachments: previewAttachments(run.attachments, director?.id), at: run.createdAt, kind: run.requestedMode === 'delegate' ? '실행 요청' : '요청' });
     const answer = run.output || run.error || (!terminalStates.has(run.status) ? `판단 진행 중 · ${statusText(run.phase || run.status)}` : '');
     if (answer) messages.push({ id: `${run.id}:director`, role: 'director', text: answer, at: run.completedAt || run.startedAt || run.createdAt, kind: run.error ? '실패' : run.status === 'running' ? '판단 중' : '답변' });
   }
   for (const answer of scope === 'goal' ? (goal?.ownerAnswers || []) : []) {
-    messages.push({ id: `owner-answer:${answer.id || answer.at}`, role: 'owner', text: answer.answer || answer.selectedOption, at: answer.at, kind: '오너 결정' });
+    const attachmentIds = new Set(answer.attachmentIds || []);
+    messages.push({
+      id: `owner-answer:${answer.id || answer.at}`, role: 'owner', text: answer.answer || answer.selectedOption,
+      attachments: previewAttachments((goal?.attachments || []).filter(item => attachmentIds.has(item.id)), director?.id),
+      at: answer.at, kind: answer.kind === 'guidance' ? 'Goal 수정' : '오너 결정',
+    });
   }
   if (scope === 'goal' && goal?.finalReport) messages.push({ id: `goal-final:${goal.id}`, role: 'director', text: textValue(goal.finalReport), at: goal.completedAt || goal.updatedAt, kind: '최종 결론' });
-  return messages.sort((a, b) => Date.parse(a.at || 0) - Date.parse(b.at || 0));
+  return messages.sort((a, b) => timestampMs(a.at || 0) - timestampMs(b.at || 0));
 }
