@@ -6,6 +6,13 @@
     "core:default",
     "core:tray:default",
     "core:menu:default",
-    "core:webview:default"
+    "core:webview:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" }
+      ]
+    }
   ]
 }

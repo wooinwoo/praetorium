@@ -243,7 +243,9 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(common, /className="rich-code"/);
   assert.match(common, /const ordered = line\.match/);
   assert.match(common, /<blockquote/);
-  assert.doesNotMatch(common, /target="_blank"/);
+  assert.match(common, /openUrl\(href\)/);
+  assert.match(common, /event\.preventDefault\(\)/);
+  assert.doesNotMatch(common, /location\.assign/);
   assert.match(css, /\.splitter[\s\S]*cursor: ew-resize/);
   assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: 48px minmax\(0, 1fr\)/);
   assert.match(css, /\.workspace-shell > \.splitter-right \{ grid-column: 2; grid-row: 2; \}/);

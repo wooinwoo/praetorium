@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { statusText, statusTone } from '../domain/operator-model.js';
 
 export { statusText, statusTone };
@@ -33,6 +34,15 @@ export function Status({ value, dot = true }) {
   return <span className={`status status-${statusTone(value)}`}>{dot && <i />}{statusText(value)}</span>;
 }
 
+function ExternalLink({ href, children }) {
+  const open = event => {
+    if (!window.__TAURI_INTERNALS__) return;
+    event.preventDefault();
+    void openUrl(href).catch(error => console.error('Failed to open external link', error));
+  };
+  return <a href={href} target="_blank" rel="noreferrer" onClick={open}>{children}</a>;
+}
+
 function inlineContent(value, keyPrefix) {
   const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<]+)/g;
   return String(value).split(pattern).filter(Boolean).map((part, index) => {
@@ -40,8 +50,8 @@ function inlineContent(value, keyPrefix) {
     if (part.startsWith('`') && part.endsWith('`')) return <code key={key}>{part.slice(1, -1)}</code>;
     if (part.startsWith('**') && part.endsWith('**')) return <strong key={key}>{part.slice(2, -2)}</strong>;
     const markdownLink = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
-    if (markdownLink) return <a key={key} href={markdownLink[2]}>{markdownLink[1]}</a>;
-    if (/^https?:\/\//.test(part)) return <a key={key} href={part}>{part}</a>;
+    if (markdownLink) return <ExternalLink key={key} href={markdownLink[2]}>{markdownLink[1]}</ExternalLink>;
+    if (/^https?:\/\//.test(part)) return <ExternalLink key={key} href={part}>{part}</ExternalLink>;
     return part;
   });
 }

@@ -1046,6 +1046,7 @@ pub fn run() {
     let shutdown = ShutdownState::default();
     let menu_shutdown = shutdown.clone();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Praetorium", true, None::<&str>)?;
