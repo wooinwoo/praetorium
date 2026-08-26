@@ -23,25 +23,12 @@ function control(overrides = {}) {
 }
 
 describe('Director action control', () => {
-  it('classifies execution requests before conversational question patterns', () => {
-    assert.equal(inferRequestMode('이 공고들 조사해줄래?'), 'delegate');
-    assert.equal(inferRequestMode('지금 워커 몇 개야?'), 'conversation');
-    assert.equal(inferRequestMode('작업들 요약좀'), 'conversation');
-    assert.equal(inferRequestMode('현재 상태 정리해줘'), 'conversation');
-    assert.equal(inferRequestMode('현재 작업 상태 확인해줘'), 'conversation');
-    assert.equal(inferRequestMode('이번 변경사항 설명해줘'), 'conversation');
-    assert.equal(inferRequestMode('상태 요약하고 코드 수정해줘'), 'delegate');
-    assert.equal(inferRequestMode('요약 문서 작성해줘'), 'delegate');
-    assert.equal(inferRequestMode('ㅎㅇ'), 'conversation');
-    assert.equal(inferRequestMode('do the thing'), 'delegate');
-  });
-
-  it('keeps Korean completion-status questions conversational without hiding a follow-up command', () => {
-    for (const prompt of ['이거 구현됐어?', '테스트 했어?', '배포됐어?', '버그 고쳤어?', '작업 완료됐나요?']) {
-      assert.equal(inferRequestMode(prompt), 'conversation', prompt);
-    }
-    assert.equal(inferRequestMode('테스트 했어? 안 했으면 지금 돌려'), 'delegate');
-    assert.equal(inferRequestMode('배포됐어? 아니면 배포해줘'), 'delegate');
+  it('leaves automatic routing to the Director and preserves explicit modes', () => {
+    assert.equal(inferRequestMode('지금 워커 몇 개야?'), 'auto');
+    assert.equal(inferRequestMode('깃허브 이력 기준으로 각 작업자 태스크 정리해줘'), 'auto');
+    assert.equal(inferRequestMode('코드 수정해줘'), 'auto');
+    assert.equal(inferRequestMode('anything', 'conversation'), 'conversation');
+    assert.equal(inferRequestMode('anything', 'delegate'), 'delegate');
   });
 
   it('extracts the tagged control envelope without exposing it to the Owner', () => {

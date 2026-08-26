@@ -1140,14 +1140,15 @@ function renderMissionHeader() {
       : '운영 환경에서 로컬 프로젝트를 연결한 뒤 목표를 보내면 실행 흐름이 시작됩니다.';
   const goalOccupiesDirector = Boolean(activeDirectorGoal && goalIsActive(activeDirectorGoal));
   const messageMode = $('owner-message-mode').value;
-  const conversationBlocked = messageMode === 'conversation' && director?.status === 'running';
+  const conversationBlocked = messageMode !== 'delegate' && director?.status === 'running';
   const unavailable = controlPlaneUnavailable();
   const canMessage = !unavailable && Boolean(director?.cwd) && !conversationBlocked && !state.busyActions.has('send-message');
   $('owner-message-input').disabled = !canMessage;
   $('owner-message-input').placeholder = director?.cwd
     ? unavailable ? '최신 상태를 다시 확인한 뒤 요청을 보낼 수 있습니다.'
       : conversationBlocked ? '현재 디렉터 판단 턴이 끝나면 질문을 보낼 수 있습니다.'
-        : messageMode !== 'conversation' && (goalOccupiesDirector || director.status === 'running') ? '새 목표를 입력하세요. 현재 목표 뒤 디렉터 대기열에 안전하게 추가됩니다…'
+        : messageMode === 'delegate' && (goalOccupiesDirector || director.status === 'running') ? '새 목표를 입력하세요. 현재 목표 뒤 디렉터 대기열에 안전하게 추가됩니다…'
+          : messageMode === 'auto' && goalOccupiesDirector ? '디렉터가 직접 답할지, Worker 목표로 넘길지 자율 판단합니다…'
           : activeDirectorGoal?.status === 'awaiting_owner' ? '결정은 위 카드에서 답하고, 별도 질문은 여기서 보낼 수 있습니다.'
             : goalOccupiesDirector ? '현재 목표의 상태·근거를 디렉터에게 질문하세요…'
               : '목표, 제약, 완료 기준을 입력하세요…'
@@ -2821,6 +2822,22 @@ async function performLoadConsole({ quiet = false } = {}) {
       state.selectedId = state.summary.directors[0]?.id;
       state.uiPreferences.workspaceDirectorId = state.selectedId;
       persistUiPreferences();
+    }
+    if (state.directConversationRunId) {
+      const routedRun = (state.summary.recentRuns || []).find(run => run.id === state.directConversationRunId && run.goalId);
+      if (routedRun) {
+        state.selectedGoalId = routedRun.goalId;
+        state.directConversationRunId = null;
+        state.conversationAnnouncementKey = null;
+        state.selection = { type: 'goal', id: routedRun.goalId };
+        state.goalSubmissionReceipt = {
+          directorId: state.selectedId,
+          goalId: routedRun.goalId,
+          queuePosition: routedRun.queuePosition || null,
+          at: new Date().toISOString(),
+          message: 'Director가 직접 조사한 뒤 Worker 위임이 필요하다고 판단해 지속형 목표로 전환했습니다.',
+        };
+      }
     }
     if (state.selectedGoalId && !selectedGoals().some(goal => goal.id === state.selectedGoalId)) state.selectedGoalId = null;
     await loadBoard();

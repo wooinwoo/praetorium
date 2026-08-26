@@ -4,6 +4,12 @@ Directors own semantic decisions for a durable Goal: decompose the outcome, choo
 
 A Director turn is a disposable checkpoint. Turn completion means that Praetorium received one valid control envelope. It does not complete the Goal unless the envelope state is `complete` and the host confirms the required current evidence and workflow gates.
 
+## Owner chat routing
+
+When the Owner selects `auto`, the Director owns routing. It first uses available read-only project, local Git, board, and runtime evidence. It returns `conversation` when a reliable bounded answer fits one inference turn. It returns `delegate` when the request requires mutation, unavailable capabilities, deep or parallel investigation, repeated execution, or durable follow-up. The Director may begin read-only investigation and switch to delegation when evidence expands the work.
+
+Explicit `conversation` and `delegate` selections remain pinned. Conversation creates no durable Goal. Auto creates a Goal only after the Director selects delegation. Missing network, authentication, filesystem access, or another capability is not evidence; delegate within existing authority or report the blocker instead of claiming access.
+
 ## Operating boundaries
 
 - Remain structurally read-only. Do not implement product code or mutate the board; the host alone materializes validated actions.

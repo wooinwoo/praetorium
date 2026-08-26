@@ -870,6 +870,109 @@ describe('DirectorService', () => {
     assert.match(seen[1].prompt, /CURRENT OWNER MESSAGE\]\n\nsecond/);
   });
 
+  it('lets an automatic Director inspect and answer without creating a Goal', async () => {
+    const prompts = [];
+    const svc = service({ runtime: runtime({
+      chat: async ({ prompt }) => {
+        prompts.push(prompt);
+        return { stdout: conversationOutput('Git 이력을 직접 확인해 요약했습니다.') };
+      },
+    }) });
+
+    const submitted = svc.submitMessage('project-director-1', '깃허브 이력 기준으로 작업을 정리해줘');
+    assert.equal(submitted.resolvedMode, 'auto');
+    assert.equal(submitted.goalId, undefined);
+    await new Promise(resolve => setTimeout(resolve, 40));
+
+    const completed = svc.getRun(submitted.id);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.resolvedMode, 'conversation');
+    assert.equal(completed.goalId, undefined);
+    assert.match(completed.output, /직접 확인/);
+    assert.match(prompts[0], /Required request mode: auto/);
+    assert.match(prompts[0], /try the bounded read-only work yourself first/);
+  });
+
+  it('lets an automatic Director investigate first and then delegate', async () => {
+    const prompts = [];
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async ({ prompt }) => {
+        prompts.push(prompt);
+        chatCalls += 1;
+        return { stdout: chatCalls === 1 ? delegationOutput() : combinedDelegationOutput() };
+      },
+    }) });
+
+    const submitted = svc.submitMessage('project-director-1', '필요하면 조사하고 구현까지 해줘');
+    assert.equal(submitted.goalId, undefined);
+    await new Promise(resolve => setTimeout(resolve, 80));
+
+    const completed = svc.getRun(submitted.id);
+    const goal = svc.getGoal(completed.goalId);
+    assert.equal(chatCalls, 2);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.resolvedMode, 'delegate');
+    assert.equal(completed.autoDecision.mode, 'delegate');
+    assert.equal(goal.status, 'executing');
+    assert.equal(goal.waves.length, 1);
+    assert.match(prompts[1], /AUTONOMOUS ROUTING RESULT/);
+  });
+
+  it('queues an autonomously delegated Goal behind active work', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => ({ stdout: ++chatCalls === 1 ? combinedDelegationOutput() : delegationOutput() }),
+    }) });
+
+    const active = svc.submitMessage('project-director-1', '첫 작업', { mode: 'delegate' });
+    await new Promise(resolve => setTimeout(resolve, 70));
+    assert.equal(svc.getRun(active.id).status, 'completed');
+    assert.equal(svc.getGoal(active.goalId).status, 'executing');
+
+    const submitted = svc.submitMessage('project-director-1', '직접 보고 필요하면 다음 작업으로 넘겨줘');
+    await new Promise(resolve => setTimeout(resolve, 40));
+    const queuedRun = svc.getRun(submitted.id);
+    const queuedGoal = svc.getGoal(queuedRun.goalId);
+    assert.equal(chatCalls, 2);
+    assert.equal(queuedRun.status, 'queued');
+    assert.equal(queuedRun.resolvedMode, 'delegate');
+    assert.equal(queuedRun.output, '위임합니다.');
+    assert.deepEqual(queuedRun.publicDecisions, ['small isolated change']);
+    assert.equal(queuedGoal.status, 'queued');
+    assert.equal(queuedGoal.queuePosition, 1);
+    assert.equal(svc.summary().recentRuns.find(item => item.id === queuedRun.id).queuePosition, 1);
+  });
+
+  it('keeps an autonomously delegated Goal behind an older queued Goal', async () => {
+    const svc = service({ runtime: runtime({
+      chat: async () => ({ stdout: delegationOutput() }),
+    }) });
+    const director = svc.getDirector('project-director-1');
+    const olderRun = {
+      id: 'older-queued-run', directorId: director.id, projectId: director.projectId,
+      kind: 'chat', status: 'queued', prompt: '먼저 접수된 작업', output: '', error: null,
+      createdAt: '2026-08-24T00:00:00.000Z', startedAt: null, completedAt: null,
+      requestedMode: 'delegate', resolvedMode: 'delegate', phase: 'waiting_for_previous_goal',
+      attempt: 0, analysisAttempt: 0, planAttempt: 0, maxAttempts: 2,
+      analysis: null, workflowId: null, taskIds: [], actions: [], publicDecisions: [], progressEvents: [],
+    };
+    svc.state.runs.push(olderRun);
+    const olderGoal = svc._createGoal(director, olderRun, olderRun.prompt, { queued: true });
+
+    const submitted = svc.submitMessage(director.id, '조사 후 필요하면 위임해줘');
+    await new Promise(resolve => setTimeout(resolve, 40));
+
+    const queuedRun = svc.getRun(submitted.id);
+    const queuedGoal = svc.getGoal(queuedRun.goalId);
+    assert.equal(olderGoal.queuePosition, 1);
+    assert.equal(queuedRun.status, 'queued');
+    assert.equal(queuedRun.completedAt, null);
+    assert.equal(queuedGoal.status, 'queued');
+    assert.equal(queuedGoal.queuePosition, 2);
+    assert.equal(svc.summary().recentRuns.find(item => item.id === queuedRun.id).queuePosition, 2);
+  });
+
   it('materializes a validated delegation plan as durable worker tasks', async () => {
     const created = [];
     let chatCalls = 0;
@@ -877,7 +980,7 @@ describe('DirectorService', () => {
       chat: async () => ({ stdout: ++chatCalls === 1 ? analysisOutput() : delegationOutput(), sessionId: 'plan-session' }),
       createTask: async options => { created.push(options); return { json: { id: 't_worker_1' } }; },
     }) });
-    const run = svc.submitMessage('project-director-1', '고쳐줘');
+    const run = svc.submitMessage('project-director-1', '고쳐줘', { mode: 'delegate' });
     await new Promise(resolve => setTimeout(resolve, 50));
     const completed = svc.getRun(run.id);
     assert.equal(completed.status, 'completed');
@@ -1763,7 +1866,7 @@ describe('DirectorService', () => {
     const svc = service({ runtime: runtime({
       chat: async () => ({ stdout: ++calls === 1 ? analysisOutput() : calls === 2 ? 'direct result without control' : delegationOutput() }),
     }) });
-    const run = svc.submitMessage('project-director-1', '구현해줘');
+    const run = svc.submitMessage('project-director-1', '구현해줘', { mode: 'delegate' });
     await new Promise(resolve => setTimeout(resolve, 60));
     const completed = svc.getRun(run.id);
     assert.equal(calls, 3);

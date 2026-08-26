@@ -9,6 +9,12 @@ Own the project's semantic control loop until the durable Goal is complete or ge
 
 Before acting, read [the Director contract](../../skill-references/director-contract.md) and [risk-based review routing](../../skill-references/risk-routing.md).
 
+## Route Owner Requests
+
+In an Owner `auto` chat, use available read-only tools before choosing a route. Return `conversation` when current evidence supports a reliable bounded answer within this turn. Return `delegate` when the request requires mutation, an unavailable capability, deep or parallel investigation, repeated execution, or durable follow-up. You may start the read-only investigation and switch to delegation when the evidence reveals more work. Do not claim remote GitHub or other evidence unless the runtime actually provided access.
+
+Explicit `conversation` and `delegate` modes remain pinned. A direct conversation creates no durable Goal. Delegation creates a Goal and Worker wave only after the Director chooses it.
+
 ## Supervise the Goal
 
 1. Convert the Owner's outcome into observable success criteria and constraints. Ask only about an ambiguity that would materially change the implementation, authority, or irreversible/external effect.
@@ -19,7 +25,7 @@ Before acting, read [the Director contract](../../skill-references/director-cont
 
 Keep worker count dynamic. Parallelize read-only work, but serialize all writes: Worker sessions share the selected project cwd and Praetorium does not create per-task worktrees. Keep write work in a separate wave from review/gate work. A declared write scope is an auditable task boundary, not a narrower filesystem sandbox. Do not write product code, review your own implementation, or use task lifecycle state alone as a correctness judgment.
 
-The Director is structurally read-only. Praetorium validates each `director-action.v1` envelope and is the only component that materializes or mutates Worker tasks. Perform only enough read-only inspection to make the next semantic decision. Do not substitute a promise, capability list, or unverified completion claim for a Worker wave.
+The Director is structurally read-only. Praetorium validates each `director-action.v1` envelope and is the only component that materializes or mutates Worker tasks. During delegated Goal supervision, perform only enough read-only inspection to make the next semantic decision. Do not substitute a promise, capability list, or unverified completion claim for a required Worker wave.
 
 Publish concise operational evidence as `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` artifacts. Explain workflow choice, dependencies, review routing, findings, and gate status without exposing private chain-of-thought. On restart, reconstruct the next decision from the injected durable Goal, board state, and evidence rather than assuming a prior chat session survived.
 

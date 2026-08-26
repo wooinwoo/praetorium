@@ -44,7 +44,7 @@ test('Owner console renders queue position, collapsible waves, and dependency fl
   assert.match(js, /data-wave-toggle/);
   assert.match(js, /선행 작업:/);
   assert.match(js, /완료 후 시작:/);
-  assert.match(js, /messageMode === 'conversation' && director\?\.status === 'running'/);
+  assert.match(js, /messageMode !== 'delegate' && director\?\.status === 'running'/);
   assert.match(js, /현재 목표 뒤 디렉터 대기열에 안전하게 추가됩니다/);
 });
 
@@ -233,6 +233,8 @@ test('Director channel uses durable Goal-scoped chat and explicit decision or co
   assert.match(js, /goal \? goalRuns\(goal\)/);
   assert.match(js, /directConversationRunId/);
   assert.match(js, /selectedRuns\(\)\.filter\(run => !run\.goalId\)/);
+  assert.match(js, /run\.id === state\.directConversationRunId && run\.goalId/);
+  assert.match(js, /Worker 위임이 필요하다고 판단해 지속형 목표로 전환했습니다/);
   assert.match(js, /function selectGoal[\s\S]{0,320}state\.directConversationRunId = null;[\s\S]{0,320}if \(state\.selectedGoalId/);
   assert.match(js, /goal\.ownerAnswers/);
   assert.match(js, /goal\.ownerDecision/);

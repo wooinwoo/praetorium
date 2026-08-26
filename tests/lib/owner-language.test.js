@@ -105,4 +105,18 @@ describe('Owner communication language', () => {
       if (!profile.endsWith('director')) assert.match(source, /assigned (?:role|quality-gate decision|specialist review)/, profile);
     }
   });
+
+  it('keeps the packaged Director profile aligned with autonomous Owner chat routing', () => {
+    const soul = readFileSync(join(process.cwd(), '.agents', 'hermes-profiles', 'souls', 'project-director.SOUL.md'), 'utf8');
+    const skill = readFileSync(join(process.cwd(), '.agents', 'skills', 'project-director', 'SKILL.md'), 'utf8');
+    const contract = readFileSync(join(process.cwd(), '.agents', 'skill-references', 'director-contract.md'), 'utf8');
+    for (const source of [soul, skill, contract]) {
+      assert.match(source, /Owner[^\n]*`auto`/);
+      assert.match(source, /reliable bounded answer/);
+      assert.match(source, /unavailable capabilit/);
+      assert.match(source, /delegate/);
+    }
+    assert.match(skill, /direct conversation creates no durable Goal/i);
+    assert.match(contract, /Auto creates a Goal only after the Director selects delegation/);
+  });
 });
