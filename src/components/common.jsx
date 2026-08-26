@@ -40,8 +40,8 @@ function inlineContent(value, keyPrefix) {
     if (part.startsWith('`') && part.endsWith('`')) return <code key={key}>{part.slice(1, -1)}</code>;
     if (part.startsWith('**') && part.endsWith('**')) return <strong key={key}>{part.slice(2, -2)}</strong>;
     const markdownLink = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
-    if (markdownLink) return <a key={key} href={markdownLink[2]} target="_blank" rel="noreferrer">{markdownLink[1]}</a>;
-    if (/^https?:\/\//.test(part)) return <a key={key} href={part} target="_blank" rel="noreferrer">{part}</a>;
+    if (markdownLink) return <a key={key} href={markdownLink[2]}>{markdownLink[1]}</a>;
+    if (/^https?:\/\//.test(part)) return <a key={key} href={part}>{part}</a>;
     return part;
   });
 }
