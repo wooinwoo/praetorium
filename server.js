@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { dirname, join, normalize, resolve } from 'node:path';
+import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { acquireProcessLease, HermesRuntime } from './lib/hermes-runtime.js';
 import { WslRuntime } from './lib/wsl-runtime.js';
@@ -239,20 +239,31 @@ addRoute('POST', '/api/projects/discover', async (req, res) => {
   } catch (error) { json(res, { error: error.message }, 400); }
 });
 
-const staticFiles = new Map([
-  ['/', ['index.html', 'text/html; charset=utf-8']],
-  ['/css/owner-console.css', ['css/owner-console.css', 'text/css; charset=utf-8']],
-  ['/js/owner-console.js', ['js/owner-console.js', 'text/javascript; charset=utf-8']],
+const STATIC_ROOT = resolve(ROOT, 'dist');
+const staticTypes = new Map([
+  ['.css', 'text/css; charset=utf-8'],
+  ['.html', 'text/html; charset=utf-8'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.svg', 'image/svg+xml'],
+  ['.png', 'image/png'],
+  ['.ico', 'image/x-icon'],
+  ['.woff2', 'font/woff2'],
 ]);
 
 async function serveStatic(pathname, res, method) {
   if (pathname === '/favicon.ico') { res.writeHead(204); res.end(); return true; }
-  const target = staticFiles.get(pathname);
-  if (!target) return false;
-  const filePath = resolve(ROOT, normalize(target[0]));
-  if (!filePath.startsWith(`${ROOT}${process.platform === 'win32' ? '\\' : '/'}`)) return false;
-  const body = await readFile(filePath);
-  res.writeHead(200, { ...securityHeaders(target[1]), 'Content-Length': body.length });
+  if (pathname !== '/' && pathname !== '/index.html' && !pathname.startsWith('/assets/')) return false;
+  const filePath = pathname === '/' ? resolve(STATIC_ROOT, 'index.html') : resolve(STATIC_ROOT, `.${pathname}`);
+  if (filePath !== resolve(STATIC_ROOT, 'index.html') && !filePath.startsWith(`${STATIC_ROOT}${sep}`)) return false;
+  let body;
+  try { body = await readFile(filePath); }
+  catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+  const contentType = staticTypes.get(extname(filePath).toLowerCase()) || 'application/octet-stream';
+  res.writeHead(200, { ...securityHeaders(contentType), 'Content-Length': body.length });
   if (method === 'HEAD') res.end();
   else res.end(body);
   return true;

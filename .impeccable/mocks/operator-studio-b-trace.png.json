@@ -1,0 +1,6 @@
+{
+  "prompt": "High-fidelity desktop application UI composition mockup, 1440x900 landscape, for a local multi-agent developer operations console named Praetorium. Composition B, trace-first operator studio. Dark graphite neutral surfaces, one desaturated indigo accent, semantic green, amber, and red only for actual states, no gradients, glow, or glassmorphism. Slim global bar, resizable project rail, compact Director and Worker tabs, chronological nested execution trace with timing, resizable stdout and stderr log drawer, docked Director composer, and a resizable evidence Inspector. Owner decisions remain inline. Independent scrolling, visible resize handles, keyboard focus, loading and empty states. No oversized title, KPI cards, dashboard charts, decorative blobs, or cyberpunk terminal costume.",
+  "approved": true,
+  "approvedAt": "2026-08-26T10:28:00+09:00",
+  "approvalNote": "User approved composition B and requested a clearly visible Director answer destination plus all A/B/C exports."
+}

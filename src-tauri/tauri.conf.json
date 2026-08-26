@@ -4,6 +4,7 @@
   "version": "2.3.0",
   "identifier": "com.praetorium.local",
   "build": {
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "http://localhost:3848"
   },
   "app": {
@@ -56,10 +57,8 @@
     ],
     "resources": {
       "../server.js": "./",
-      "../index.html": "./",
       "../package.json": "./",
-      "../js/owner-console.js": "./js/owner-console.js",
-      "../css/owner-console.css": "./css/owner-console.css",
+      "../dist/": "./dist/",
       "../lib/director-service.js": "./lib/director-service.js",
       "../lib/director-actions.js": "./lib/director-actions.js",
       "../lib/candidate-snapshot.js": "./lib/candidate-snapshot.js",

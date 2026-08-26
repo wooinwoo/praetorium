@@ -999,6 +999,7 @@ pub fn run() {
         None => return,
     };
 
+    let context = tauri::generate_context!();
     let server_dir = if cfg!(debug_assertions) {
         std::env::current_dir()
             .expect("Failed to resolve current directory")
@@ -1006,12 +1007,11 @@ pub fn run() {
             .expect("Tauri development directory has no parent")
             .to_path_buf()
     } else {
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| {
-                std::env::current_dir().expect("Failed to resolve current directory")
-            })
+        tauri::utils::platform::resource_dir(
+            context.package_info(),
+            &tauri::utils::Env::default(),
+        )
+        .expect("Failed to resolve packaged resource directory")
     };
 
     let version = env!("CARGO_PKG_VERSION");
@@ -1101,7 +1101,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application");
 
     let _watchdog = start_watchdog(

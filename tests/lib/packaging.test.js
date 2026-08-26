@@ -24,4 +24,11 @@ describe('Tauri runtime packaging', () => {
 
     assert.deepEqual(missing, []);
   });
+
+  it('resolves bundled resources through the platform-aware Tauri resource directory', () => {
+    const source = readFileSync(resolve(root, 'src-tauri/src/lib.rs'), 'utf8');
+    assert.match(source, /tauri::utils::platform::resource_dir/);
+    assert.match(source, /context\.package_info\(\)/);
+    assert.doesNotMatch(source, /current_exe\(\)[\s\S]{0,160}path\.parent/);
+  });
 });
