@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canEscalateWorkflow,
-  extractDirectorAnalysis, extractDirectorControl, inferRequestMode,
+  extractDirectorAnalysis, extractDirectorControl, inferRequestMode, isOperationalStatusQuery,
   validateDirectorAnalysis, validateDirectorControl,
 } from '../../lib/director-actions.js';
 import {
@@ -29,13 +29,35 @@ describe('Director action control', () => {
     assert.equal(inferRequestMode('작업들 요약좀'), 'conversation');
     assert.equal(inferRequestMode('현황에는 왜 안 바뀌냐'), 'conversation');
     assert.equal(inferRequestMode('현재 뭐 하고 있어?'), 'conversation');
+    assert.equal(inferRequestMode('아직 안끝났나'), 'conversation');
+    assert.equal(inferRequestMode('이거 끝났나?'), 'conversation');
+    assert.equal(inferRequestMode('아직 이 작업 안 끝난 거야?'), 'conversation');
+    assert.equal(inferRequestMode('끝남?'), 'conversation');
+    assert.equal(inferRequestMode('안끝남?'), 'conversation');
+    assert.equal(inferRequestMode('끝났냐'), 'conversation');
+    assert.equal(inferRequestMode('완료?'), 'conversation');
+    assert.equal(inferRequestMode('구현 작업 어디까지 됐어?'), 'conversation');
+    assert.equal(inferRequestMode('기능 구현 끝났어?'), 'conversation');
+    assert.equal(inferRequestMode('최종 결과는 어디서 받아?'), 'conversation');
+    assert.equal(inferRequestMode('주황불은 왜 켜져 있어?'), 'conversation');
     assert.equal(inferRequestMode('Summarize the current worker status'), 'conversation');
     assert.equal(inferRequestMode('현황 화면 안 바뀌니까 고쳐줘'), 'delegate');
+    assert.equal(inferRequestMode('주황불 왜 켜졌는지 고쳐줘'), 'delegate');
+    assert.equal(inferRequestMode('결과 어디에 저장할지 정하고 구현해줘'), 'delegate');
+    assert.equal(inferRequestMode('주황불 문제 수정 부탁해'), 'delegate');
+    assert.equal(inferRequestMode('결과 어디에 저장할지 정하고 구현 부탁드립니다'), 'delegate');
+    assert.equal(inferRequestMode('Why is the status stale? Fix it please'), 'delegate');
     assert.equal(inferRequestMode('코드 수정해줘'), 'delegate');
     assert.equal(inferRequestMode('Implement the bounded fix'), 'delegate');
     assert.equal(inferRequestMode('Did you already fix the bounded bug?'), 'auto');
     assert.equal(inferRequestMode('anything', 'conversation'), 'conversation');
     assert.equal(inferRequestMode('anything', 'delegate'), 'delegate');
+    assert.equal(isOperationalStatusQuery('아직 안 끝났나?'), true);
+    assert.equal(isOperationalStatusQuery('현황 화면 안 바뀌니까 고쳐줘'), false);
+    assert.equal(isOperationalStatusQuery('주황불 왜 켜졌는지 고쳐줘'), false);
+    assert.equal(isOperationalStatusQuery('결과 어디에 저장할지 정하고 구현해줘'), false);
+    assert.equal(isOperationalStatusQuery('주황불 문제 수정 부탁해'), false);
+    assert.equal(isOperationalStatusQuery('Why is the status stale? Fix it please'), false);
   });
 
   it('extracts the tagged control envelope without exposing it to the Owner', () => {

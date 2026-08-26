@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildConversation, buildTrace, deriveSupervisionHealth, goalControlOptions, goalSupervisionHealth,
+  buildConversation, buildTrace, deriveSupervisionHealth, goalConclusionPresentation, goalControlOptions, goalSupervisionHealth,
   goalTasks, interventionReceiptText, orderQueuedGoals, ownerDecisionPayload, statusText, statusTone,
   taskDisplayStatus, taskIsTerminal, taskPausedByOwner, textValue,
 } from '../../src/domain/operator-model.js';
-import { connectionNotification, deriveGoalNotifications, deriveWorkerNotifications, mergeNotifications } from '../../src/domain/notification-model.js';
+import {
+  connectionNotification, deriveGoalNotifications, derivePersistentGoalNotifications, deriveWorkerNotifications,
+  mergeNotifications, reconcilePersistentGoalNotifications,
+} from '../../src/domain/notification-model.js';
 import { directorActivityMessage } from '../../src/hooks/useDirectorActivity.js';
 import { runNeedsFullOutput, taskEvidenceIsSettled, withFullRunOutputs } from '../../src/hooks/usePraetorium.js';
 import { timestampMs } from '../../src/lib/time.js';
@@ -144,6 +147,72 @@ test('operator notifications emit only state transitions and group worker comple
   ).length, 0);
   const connected = connectionNotification('offline', '2026-08-26T01:03:00Z');
   assert.equal(mergeNotifications(goals, [goals[0], connected]).length, 2);
+});
+
+test('unresolved Owner decisions become one persistent first-load attention until resolved', () => {
+  const waiting = {
+    directors: [{ id: 'd1', name: 'AgencyPro' }],
+    notificationGoals: [{
+      id: 'g-wait', directorId: 'd1', objective: 'Ship safely', status: 'awaiting_owner', updatedAt: '2026-08-26T01:00:00Z',
+      ownerDecision: { required: true, askedAt: '2026-08-26T00:59:00Z', question: '배포할까요?' },
+    }],
+  };
+  const initial = deriveGoalNotifications(null, waiting, '2026-08-26T01:01:00Z');
+  assert.equal(initial.length, 1);
+  assert.equal(initial[0].kind, 'owner_decision');
+  assert.equal(initial[0].persistent, true);
+  assert.equal(initial[0].createdAt, '2026-08-26T00:59:00Z');
+  assert.match(initial[0].body, /배포할까요/);
+  assert.deepEqual(derivePersistentGoalNotifications(waiting).map(item => item.id), [initial[0].id]);
+
+  const once = reconcilePersistentGoalNotifications([], waiting);
+  const twice = reconcilePersistentGoalNotifications(once, waiting);
+  assert.equal(twice.length, 1);
+  assert.equal(twice[0].id, initial[0].id);
+  const acknowledged = reconcilePersistentGoalNotifications([{ ...twice[0], read: true }], waiting);
+  assert.equal(acknowledged[0].read, true);
+
+  const resolved = { ...waiting, notificationGoals: [{ ...waiting.notificationGoals[0], status: 'executing', ownerDecision: null }] };
+  assert.deepEqual(reconcilePersistentGoalNotifications(acknowledged, resolved), []);
+
+  const legacyWaiting = {
+    directors: waiting.directors,
+    notificationGoals: [{ id: 'g-legacy', directorId: 'd1', objective: 'Legacy', status: 'awaiting_owner', ownerDecision: { required: true, question: '선택?' } }],
+  };
+  const legacyFirst = reconcilePersistentGoalNotifications([], legacyWaiting, '2026-08-26T02:00:00Z');
+  const legacyAgain = reconcilePersistentGoalNotifications(legacyFirst, legacyWaiting, '2026-08-26T03:00:00Z');
+  assert.equal(legacyAgain.length, 1);
+  assert.equal(legacyAgain[0].id, 'goal:g-legacy:decision:pending');
+  assert.equal(legacyAgain[0].createdAt, '2026-08-26T02:00:00Z');
+
+  const newerOrdinary = Array.from({ length: 100 }, (_, index) => ({
+    id: `ordinary-${index}`, kind: 'goal_completed', title: 'done', body: 'done', tone: 'done',
+    createdAt: new Date(Date.parse('2026-08-27T00:00:00Z') + index * 1000).toISOString(), read: false,
+  }));
+  const capped = reconcilePersistentGoalNotifications(newerOrdinary, waiting, '2026-08-27T01:00:00Z', 100);
+  assert.equal(capped.length, 100);
+  assert.equal(capped[0].id, initial[0].id);
+  assert.equal(capped.filter(item => item.persistent).length, 1);
+  assert.equal(capped.filter(item => !item.persistent).length, 99);
+});
+
+test('latest Goal conclusion distinguishes final results, Owner decisions, and active work', () => {
+  const completed = goalConclusionPresentation({ status: 'completed', finalReport: '최종 검증 통과' }, [{ output: '이전 응답' }]);
+  assert.equal(completed.state, 'completed');
+  assert.equal(completed.label, '완료 · Goal 최종 결과');
+  assert.equal(completed.content, '최종 검증 통과');
+
+  const waiting = goalConclusionPresentation({
+    status: 'awaiting_owner', ownerDecision: { required: true, question: '실제 배포할까요?' },
+  }, [{ output: '끝났습니다.' }]);
+  assert.equal(waiting.state, 'awaiting_owner');
+  assert.equal(waiting.label, '완료 아님 · 오너 결정 대기');
+  assert.equal(waiting.content, '실제 배포할까요?');
+  assert.equal(waiting.action, '결정 화면에서 지금 응답하기');
+
+  const active = goalConclusionPresentation({ status: 'executing' }, [{ output: '진행 공개 체크포인트' }]);
+  assert.equal(active.state, 'active');
+  assert.equal(active.label, '진행 중 · 실행 중');
 });
 
 test('Owner console replaces compact previews with complete Director answers', () => {

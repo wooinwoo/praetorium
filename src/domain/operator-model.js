@@ -132,6 +132,39 @@ export function textValue(value) {
     .join(' · ');
 }
 
+export function goalConclusionPresentation(goal, runs = []) {
+  const status = String(goal?.status || '');
+  const finalReport = String(textValue(goal?.finalReport) || '').trim();
+  const latestRun = [...(runs || [])].reverse().find(item => item?.output || item?.publicDecisions?.length);
+  const latestPublicUpdate = String(textValue(latestRun?.output || latestRun?.publicDecisions?.at(-1)) || '').trim();
+  if (status === 'completed' && finalReport) return {
+    state: 'completed', tone: 'done', label: '완료 · Goal 최종 결과',
+    content: finalReport, action: 'Goal 대화에서 전체 보기',
+  };
+  if (status === 'awaiting_owner') return {
+    state: 'awaiting_owner', tone: 'attention', label: '완료 아님 · 오너 결정 대기',
+    content: String(goal?.ownerDecision?.question || '오너의 결정을 받아야 다음 단계로 넘어갈 수 있습니다.').trim(),
+    action: '결정 화면에서 지금 응답하기',
+  };
+  if (activeGoalStates.has(status)) return {
+    state: 'active', tone: 'running', label: `진행 중 · ${statusText(status)}`,
+    content: latestPublicUpdate || '디렉터가 다음 행동을 판단하고 있습니다.',
+    action: '현재 Goal 대화 열기',
+  };
+  if (status === 'completed') return {
+    state: 'completed_without_report', tone: 'attention', label: '완료 상태 · 최종 보고서 확인 필요',
+    content: '완료 상태이지만 표시할 최종 보고서가 없습니다.', action: 'Goal 대화 열기',
+  };
+  if (['blocked', 'failed', 'cancelled'].includes(status)) return {
+    state: status, tone: status === 'blocked' ? 'attention' : 'failed', label: `종료 상태 · ${statusText(status)}`,
+    content: String(textValue(goal?.error) || '').trim() || latestPublicUpdate || '종료 상태의 상세 기록을 확인하세요.', action: 'Goal 대화 열기',
+  };
+  return {
+    state: 'idle', tone: 'idle', label: '디렉터 최근 판단',
+    content: latestPublicUpdate || '아직 디렉터 결론이 없습니다.', action: 'Goal 대화 열기',
+  };
+}
+
 export function ownerDecisionPayload(selectedOption, typedAnswer) {
   const selected = String(selectedOption || '').trim();
   const typed = String(typedAnswer || '').trim();

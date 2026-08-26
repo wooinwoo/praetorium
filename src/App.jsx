@@ -66,7 +66,10 @@ function AppShell() {
       if (pendingGoalRequest.current === requestKey) return;
       pendingGoalRequest.current = requestKey;
       void data.revealGoal(pendingNavigation.goalId).then(opened => {
-        if (!opened) setPendingNavigation(null);
+        if (!opened) {
+          pendingGoalRequest.current = '';
+          setPendingNavigation(null);
+        }
       });
       return;
     }

@@ -234,12 +234,12 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(workspace, /<Splitter label="세부 정보 너비"/);
   assert.match(workspace, /onClose=\{\(\) => setInspectorOpen\(false\)\}/);
   assert.match(workspace, /selectedEntry\.type === 'decision'/);
-  assert.match(workspace, /const preview = String\(conclusion/);
+  assert.match(workspace, /const preview = String\(presentation\.content/);
   assert.match(workspace, /setSelectedEntry\(trace\.find\(entry => entry\.type === 'task' && entry\.taskId === id\)/);
   assert.match(workspace, /inspectorCloseRef\.current\?\.focus/);
   assert.match(workspace, /event\.key === 'Escape'/);
   assert.match(workspace, /!document\.querySelector\('\[role="dialog"\]'\)/);
-  assert.match(sidebar, /aria-label=\{label\}/);
+  assert.match(sidebar, /aria-label=\{accessibleLabel\}/);
   assert.match(common, /className="rich-code"/);
   assert.match(common, /const ordered = line\.match/);
   assert.match(common, /<blockquote/);
@@ -448,19 +448,29 @@ test('Owner console uses conditional compact polling and avoids hidden or unneed
 });
 
 test('React console keeps durable history, scoped chat, completed Worker access, and operator alerts', async () => {
-  const [app, hook, sidebar, workspace, notifications, notificationModel, css] = await Promise.all([
+  const [app, hook, sidebar, workspace, notifications, notificationModel, notificationCenter, css] = await Promise.all([
     source('src/App.jsx'), source('src/hooks/usePraetorium.js'), source('src/components/Sidebar.jsx'),
     source('src/components/Workspace.jsx'), source('src/hooks/useOperatorNotifications.js'),
-    source('src/domain/notification-model.js'), source('src/styles.css'),
+    source('src/domain/notification-model.js'), source('src/components/NotificationCenter.jsx'), source('src/styles.css'),
   ]);
   assert.match(hook, /\/goals\?\$\{query\}/);
   assert.match(hook, /\/messages\?\$\{query\}/);
-  assert.match(sidebar, />History</);
+  assert.match(sidebar, />현재 목표</);
+  assert.match(sidebar, />대기열</);
+  assert.match(sidebar, />기록</);
+  assert.match(sidebar, /`\$\{statusText\(goal\.status\)\} · 활성 목표`/);
+  assert.match(sidebar, /aria-label=\{accessibleLabel\}/);
   assert.match(sidebar, /이전 기록 더 보기/);
   assert.match(workspace, /channel-scope/);
   assert.match(workspace, /const guideableGoalStates = new Set/);
   assert.doesNotMatch(workspace.match(/const guideableGoalStates[^;]+;/)?.[0] || '', /awaiting_owner/);
   assert.match(workspace, /key=\{`\$\{director\?\.id\}:\$\{chatScope\}:\$\{chatScope === 'goal' \? goal\?\.id \|\| 'none' : 'project'\}`\}/);
+  assert.match(workspace, /완료 아님 · 오너 결정 대기/);
+  assert.match(workspace, /결정 화면 열기/);
+  assert.match(workspace, /presentation\.state === 'awaiting_owner' \? onDecision : onOpen/);
+  assert.match(workspace, /decisionRef\.current\?\.scrollIntoView/);
+  assert.match(workspace, /aria-labelledby=\{decisionHeadingId\}/);
+  assert.match(workspace, /setChatScope\('goal'\); setActiveTab\('director'\)/);
   assert.match(workspace, /CompletedTasksMenu/);
   assert.match(workspace, /!taskIsTerminal\(task\) \|\| activeTab ===/);
   assert.match(notifications, /!document\.hidden && document\.hasFocus\(\)/);
@@ -469,8 +479,16 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   assert.match(notifications, /summary\?\.notificationTasks/);
   assert.match(notificationModel, /deriveWorkerNotifications/);
   assert.match(notificationModel, /notificationGoals \|\|/);
+  assert.match(notificationModel, /derivePersistentGoalNotifications/);
+  assert.match(notificationModel, /reconcilePersistentGoalNotifications/);
+  assert.match(notifications, /filter\(item => item\?\.persistent\)/);
+  assert.match(notificationCenter, /const hasClearable = notifications\.items\.some/);
+  assert.match(notificationCenter, /\{hasClearable && <button/);
   assert.match(app, /<NotificationCenter/);
+  assert.match(app, /pendingGoalRequest\.current = ''/);
   assert.match(css, /\.notification-panel/);
+  assert.match(css, /\.director-decision-banner/);
+  assert.match(css, /\.decision-gate:focus-visible/);
   assert.match(css, /\.topbar:has\(\.notification-panel\) \{ z-index: 80; \}/);
   assert.doesNotMatch(css, /@media \(max-width: 760px\) \{\n  \.operator-grid/);
   assert.match(hook, /preserve: true/);

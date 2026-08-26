@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import {
-  buildConversation, buildTrace, goalControlOptions, goalSupervisionHealth, goalTasks,
+  buildConversation, buildTrace, goalConclusionPresentation, goalControlOptions, goalSupervisionHealth, goalTasks,
   interventionReceiptText, taskDisplayStatus, taskIsTerminal, taskPausedByOwner, textValue,
 } from '../domain/operator-model.js';
 import { DecisionForm, DirectorComposer, WorkerIntervention } from './forms.jsx';
@@ -63,13 +63,12 @@ function GoalHeader({ directorId, goal, tasks, supervision, onDirector, refresh 
   </header>;
 }
 
-function LatestConclusion({ goal, runs, onOpen }) {
-  const run = [...(runs || [])].reverse().find(item => item.output || item.publicDecisions?.length);
-  const conclusion = textValue(goal?.finalReport) || run?.output || textValue(run?.publicDecisions?.at(-1));
-  const preview = String(conclusion || '').replace(/\[([^\]]+)\]\(https?:\/\/[^)\s]+\)/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/^\s*(?:```[^\n]*|\d+\.\s+|[-*#>]\s*)/gm, '').replace(/\s+/g, ' ').trim();
-  return <button type="button" className="conclusion-preview" onClick={onOpen}>
+function LatestConclusion({ goal, runs, onOpen, onDecision }) {
+  const presentation = goalConclusionPresentation(goal, runs);
+  const preview = String(presentation.content || '').replace(/\[([^\]]+)\]\(https?:\/\/[^)\s]+\)/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/^\s*(?:```[^\n]*|\d+\.\s+|[-*#>]\s*)/gm, '').replace(/\s+/g, ' ').trim();
+  return <button type="button" className={`conclusion-preview tone-${presentation.tone}`} onClick={presentation.state === 'awaiting_owner' ? onDecision : onOpen}>
     <span className="director-avatar large">D</span>
-    <span><small>디렉터 최근 결론</small><strong>{preview || (run?.status === 'running' ? '디렉터가 다음 행동을 판단하고 있습니다.' : '아직 디렉터 결론이 없습니다.')}</strong><em>대화에서 전체 보기 <Icon name="chevron" /></em></span>
+    <span><small>{presentation.label}</small><strong>{preview}</strong><em>{presentation.action} <Icon name="chevron" /></em></span>
   </button>;
 }
 
@@ -97,6 +96,7 @@ function DirectorActivityPanel({ activity, goalId = null, compact = false }) {
 
 function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onSelectTask, onDirector, directorId, refresh, errors, taskTrace, selectedTask, supervision, liveActivity }) {
   const scrollRef = useRef(null);
+  const decisionRef = useRef(null);
   const [follow, setFollow] = useState(true);
   const [traceLimit, setTraceLimit] = useState(160);
   const visibleTrace = trace.slice(-traceLimit);
@@ -107,14 +107,19 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
   useEffect(() => { setTraceLimit(160); }, [goal?.id]);
   if (!goal) return <div className="workspace-empty"><Empty icon="branch" title="표시할 Goal이 없습니다">디렉터 채팅에서 새 목표를 보내세요.</Empty><button type="button" className="primary-button" onClick={onDirector}>디렉터 열기</button></div>;
   const ownerDecision = goal.ownerDecision?.required;
+  const decisionHeadingId = `decision-${String(goal.id).replace(/[^a-zA-Z0-9_-]/g, '-')}-heading`;
+  const focusDecision = () => {
+    decisionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    decisionRef.current?.focus({ preventScroll: true });
+  };
   return <div className="trace-view">
     <GoalHeader directorId={directorId} goal={goal} tasks={tasks} supervision={supervision} onDirector={onDirector} refresh={refresh} />
-    <div className="conclusion-bar"><LatestConclusion goal={goal} runs={runs} onOpen={onDirector} /></div>
+    <div className="conclusion-bar"><LatestConclusion goal={goal} runs={runs} onOpen={onDirector} onDecision={focusDecision} /></div>
     <div className="trace-content" ref={scrollRef} onScroll={event => setFollow(event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight < 48)}>
       <DirectorActivityPanel activity={liveActivity} goalId={goal.id} compact />
-      {ownerDecision && <section className="decision-gate">
+      {ownerDecision && <section ref={decisionRef} className="decision-gate" tabIndex="-1" aria-labelledby={decisionHeadingId}>
         <header><span><Icon name="user" />오너 결정 필요</span><time>{formatClock(goal.ownerDecision.askedAt)}</time></header>
-        <h2>{goal.ownerDecision.question}</h2>
+        <h2 id={decisionHeadingId}>{goal.ownerDecision.question}</h2>
         {!!goal.ownerDecision.evidence?.length && <ul>{goal.ownerDecision.evidence.map(item => <li key={item}>{item}</li>)}</ul>}
         <DecisionForm key={goal.ownerDecision.askedAt || goal.ownerDecision.question} directorId={directorId} goal={goal} onAccepted={refresh} />
       </section>}
@@ -146,9 +151,16 @@ function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpen
   const conversationSummary = chatScope === 'project' ? { recentRuns: projectMessages?.items || [] } : summary;
   const messages = useMemo(() => buildConversation(goal, conversationSummary, director, chatScope), [goal, conversationSummary, director, chatScope]);
   const canGuideGoal = chatScope === 'goal' && guideableGoalStates.has(goal?.status);
+  const waitingForOwner = goal?.status === 'awaiting_owner' && goal?.ownerDecision?.required;
   return <section className="director-view">
-    <header className="channel-header"><span className="director-avatar large">D</span><span><strong>디렉터</strong><small>{chatScope === 'goal' && goal ? goal.objective : `${director?.name || '프로젝트'} 전체 대화`}</small></span><div className="channel-scope" role="group" aria-label="디렉터 대화 범위"><button type="button" className={chatScope === 'project' ? 'selected' : ''} onClick={() => setChatScope('project')}>프로젝트</button><button type="button" disabled={!goal} className={chatScope === 'goal' ? 'selected' : ''} onClick={() => setChatScope('goal')}>현재 Goal</button></div><span className="channel-actions"><Status value={director?.status} />{chatScope === 'goal' && goal?.ownerDecision?.required && <button type="button" className="attention-button" onClick={onOpenDecision}>결정 필요 <Icon name="chevron" /></button>}</span></header>
-    <DirectorActivityPanel activity={liveActivity} goalId={chatScope === 'goal' ? goal?.id : null} compact />
+    <header className="channel-header"><span className="director-avatar large">D</span><span><strong>디렉터</strong><small>{chatScope === 'goal' && goal ? goal.objective : `${director?.name || '프로젝트'} 전체 대화`}</small></span><div className="channel-scope" role="group" aria-label="디렉터 대화 범위"><button type="button" className={chatScope === 'project' ? 'selected' : ''} onClick={() => setChatScope('project')}>프로젝트</button><button type="button" disabled={!goal} className={chatScope === 'goal' ? 'selected' : ''} onClick={() => setChatScope('goal')}>현재 Goal</button></div><span className="channel-actions"><Status value={director?.status} /></span></header>
+    <div className="director-context">
+      {waitingForOwner && <section className="director-decision-banner" role="alert" aria-live="polite">
+        <span><small>완료 아님 · 오너 결정 대기</small><strong>{goal.ownerDecision.question}</strong></span>
+        <button type="button" className="attention-button" onClick={onOpenDecision}>결정 화면 열기 <Icon name="chevron" /></button>
+      </section>}
+      <DirectorActivityPanel activity={liveActivity} goalId={chatScope === 'goal' ? goal?.id : null} compact />
+    </div>
     <DirectorComposer
       key={`${director?.id}:${chatScope}:${chatScope === 'goal' ? goal?.id || 'none' : 'project'}`}
       directorId={director?.id}
@@ -329,7 +341,7 @@ export default function Workspace({ activeTab, setActiveTab, chatScope, setChatS
     <main id="workspace" className="workspace" role="tabpanel" aria-labelledby={tabId(activeTab)} tabIndex="-1">
       {activeTab === 'director' ? <DirectorView director={director} goal={goalDetail || goal} summary={summary} refresh={refresh} chatScope={chatScope} setChatScope={setChatScope} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} liveActivity={liveActivity} onOpenDecision={() => setActiveTab('trace')} onGoalAccepted={id => { if (id) { selectGoal(id); setChatScope('goal'); setActiveTab('trace'); } }} />
         : activeTab.startsWith('task:') ? <WorkerView task={selectedTask} detail={taskDetail} trace={taskTrace} error={errors.task} onRetry={refresh} />
-          : <TraceView goal={goalDetail || goal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={selectTask} onDirector={() => setActiveTab('director')} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} />}
+          : <TraceView goal={goalDetail || goal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={selectTask} onDirector={() => { setChatScope('goal'); setActiveTab('director'); }} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} />}
     </main>
     {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(336)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={goalDetail || goal} selectedEntry={selectedEntry} task={(selectedEntry?.type === 'task' || activeTab.startsWith('task:')) ? selectedTask : null} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} onClose={() => setInspectorOpen(false)} /></>}
   </>;

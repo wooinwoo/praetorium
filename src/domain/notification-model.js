@@ -4,8 +4,8 @@ function directorName(summary, directorId) {
   return summary?.directors?.find(item => item.id === directorId)?.name || 'Praetorium';
 }
 
-function notification({ id, kind, title, body, tone = 'neutral', directorId = null, goalId = null, taskId = null, createdAt }) {
-  return { id, kind, title, body, tone, directorId, goalId, taskId, createdAt, read: false };
+function notification({ id, kind, title, body, tone = 'neutral', directorId = null, goalId = null, taskId = null, createdAt, persistent = false }) {
+  return { id, kind, title, body, tone, directorId, goalId, taskId, createdAt, read: false, persistent };
 }
 
 function happenedAfter(value, observedAfter) {
@@ -14,21 +14,27 @@ function happenedAfter(value, observedAfter) {
   return Number.isFinite(eventAt) && Number.isFinite(baseline) && eventAt >= baseline;
 }
 
+function ownerDecisionKey(goal) {
+  return goal?.ownerDecision?.askedAt || goal?.updatedAt || goal?.createdAt || 'pending';
+}
+
 export function deriveGoalNotifications(previous, current, createdAt = new Date().toISOString(), observedAfter = null) {
-  if (!previous || !current) return [];
-  const before = new Map((previous.notificationGoals || previous.goals || []).map(goal => [goal.id, goal]));
+  if (!current) return [];
+  const before = new Map((previous?.notificationGoals || previous?.goals || []).map(goal => [goal.id, goal]));
   const events = [];
   for (const goal of current.notificationGoals || current.goals || []) {
     const prior = before.get(goal.id);
-    if (!prior && !observedAfter) continue;
     const project = directorName(current, goal.directorId);
-    const askedAt = goal.ownerDecision?.required ? goal.ownerDecision.askedAt || goal.updatedAt : null;
-    const priorAskedAt = prior?.ownerDecision?.required ? prior.ownerDecision.askedAt || prior.updatedAt : null;
-    if (askedAt && (prior ? askedAt !== priorAskedAt : happenedAfter(askedAt, observedAfter))) {
+    const unresolvedDecision = goal.status === 'awaiting_owner' && Boolean(goal.ownerDecision?.required);
+    const askedAt = unresolvedDecision ? ownerDecisionKey(goal) : null;
+    const priorAskedAt = prior?.status === 'awaiting_owner' && prior?.ownerDecision?.required ? ownerDecisionKey(prior) : null;
+    if (!prior && !observedAfter && !unresolvedDecision) continue;
+    if (unresolvedDecision && (prior ? askedAt !== priorAskedAt : !observedAfter || happenedAfter(askedAt, observedAfter))) {
       events.push(notification({
         id: `goal:${goal.id}:decision:${askedAt}`,
-        kind: 'owner_decision', title: '오너 결정 필요', body: `${project} · ${goal.objective}`,
-        tone: 'attention', directorId: goal.directorId, goalId: goal.id, createdAt,
+        kind: 'owner_decision', title: '오너 결정 필요', body: `${project} · ${goal.ownerDecision?.question || goal.objective}`,
+        tone: 'attention', directorId: goal.directorId, goalId: goal.id,
+        createdAt: askedAt === 'pending' ? createdAt : askedAt, persistent: true,
       }));
     }
     if (prior && goal.status === prior.status) continue;
@@ -49,6 +55,40 @@ export function deriveGoalNotifications(previous, current, createdAt = new Date(
     }
   }
   return events;
+}
+
+export function derivePersistentGoalNotifications(summary, createdAt = new Date().toISOString()) {
+  if (!summary) return [];
+  return (summary.notificationGoals || summary.goals || [])
+    .filter(goal => goal.status === 'awaiting_owner' && goal.ownerDecision?.required)
+    .map(goal => {
+      const decisionKey = ownerDecisionKey(goal);
+      return notification({
+        id: `goal:${goal.id}:decision:${decisionKey}`,
+        kind: 'owner_decision', title: '오너 결정 필요',
+        body: `${directorName(summary, goal.directorId)} · ${goal.ownerDecision.question || goal.objective}`,
+        tone: 'attention', directorId: goal.directorId, goalId: goal.id,
+        createdAt: decisionKey === 'pending' ? createdAt : decisionKey, persistent: true,
+      });
+    });
+}
+
+export function reconcilePersistentGoalNotifications(current, summary, createdAt = new Date().toISOString(), limit = 100) {
+  const active = new Map(derivePersistentGoalNotifications(summary, createdAt).map(item => [item.id, item]));
+  const next = [];
+  for (const item of current || []) {
+    const replacement = active.get(item?.id);
+    if (replacement) {
+      next.push({ ...replacement, createdAt: item.createdAt || replacement.createdAt, read: Boolean(item.read) });
+      active.delete(item.id);
+    } else if (!(item?.kind === 'owner_decision' && item?.persistent)) next.push(item);
+  }
+  next.push(...active.values());
+  const ordered = mergeNotifications([], next, Number.MAX_SAFE_INTEGER);
+  const persistent = ordered.filter(item => item?.persistent);
+  const ordinary = ordered.filter(item => !item?.persistent);
+  const ordinaryLimit = Math.max(0, Math.max(0, Number(limit) || 0) - persistent.length);
+  return [...persistent, ...ordinary.slice(0, ordinaryLimit)];
 }
 
 export function deriveWorkerNotifications(previousTasks, currentTasks, createdAt = new Date().toISOString(), observedAfter = null) {

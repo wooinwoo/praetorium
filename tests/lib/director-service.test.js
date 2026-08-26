@@ -1018,6 +1018,251 @@ describe('DirectorService', () => {
     assert.equal(svc.getDirector('project-director-1').lastSessionId, 'session-123');
   });
 
+  it('answers project operational questions from durable Goal state and a fresh board without LLM guesses', async () => {
+    let chatCalls = 0;
+    let boardReads = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => { chatCalls += 1; return { stdout: conversationOutput('잘못된 추측') }; },
+      listTasks: async () => {
+        boardReads += 1;
+        return [{ id: 't_status_worker', status: 'done' }];
+      },
+    }) });
+    const active = seedActiveGoal(svc, {
+      taskId: 't_status_worker',
+      status: 'awaiting_owner', phase: 'awaiting_owner', finalReport: null,
+      objective: '공고 가져와 C:\\Program Files\\private report.md',
+      ownerDecision: {
+        required: true,
+        question: '마젠타 공고 ID 수정 파동을 한 번 더 허용할까요? /workspace/private/evidence.txt',
+        options: ['허용 C:\\private\\approve.txt', '중단 /data/owner/stop.txt'],
+      },
+    });
+    svc.state.goals.push({
+      ...active,
+      id: 'goal-status-queued', objective: '다음 병역특례 IT 조사', status: 'queued', phase: 'waiting_for_previous_goal',
+      ownerDecision: null, taskIds: [], currentWaveTaskIds: [], taskRecords: [], waves: [],
+      queueOrder: 1, queuePosition: 1, createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z',
+    });
+
+    const submitted = svc.submitMessage('project-director-1', '아직 안끝났나', { mode: 'delegate' });
+    assert.equal(submitted.resolvedMode, 'conversation', 'an operational question must not create another Goal');
+    assert.equal(submitted.goalId, undefined);
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'deterministic status answer');
+
+    const completed = svc.getRun(submitted.id);
+    assert.equal(chatCalls, 0);
+    assert.equal(boardReads, 1);
+    assert.match(completed.output, /Owner 결정 대기 \(awaiting_owner\)/);
+    assert.match(completed.output, /실행 중 Worker: 0명/);
+    assert.match(completed.output, /Worker 0명.*Goal 완료 판정이 아닙니다/);
+    assert.match(completed.output, /마젠타 공고 ID 수정 파동/);
+    assert.match(completed.output, /선택지: 1\. 허용 \[local path\] \/ 2\. 중단 \[local path\]/);
+    assert.match(completed.output, /대기열: 1개.*다음 병역특례 IT 조사/);
+    assert.match(completed.output, /최종 보고서: 아직 없음/);
+    assert.match(completed.output, /아직 최종 결과 전달이 끝난 상태가 아닙니다/);
+    assert.match(completed.output, /FINAL REPORT/);
+    assert.doesNotMatch(completed.output, /[A-Za-z]:[\\/]|Program Files|\/workspace\/|\/data\/|PRAETORIUM_CONTROL|chain.of.thought/i);
+    assert.equal(svc.consoleSummary().notificationGoals.find(goal => goal.id === active.id).ownerDecision.question,
+      '마젠타 공고 ID 수정 파동을 한 번 더 허용할까요? /workspace/private/evidence.txt');
+  });
+
+  it('reports current project session counts and bounded task details without an LLM turn', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => { chatCalls += 1; return { stdout: conversationOutput('추측') }; },
+      listTasks: async () => [{ id: 't_summary_worker', status: 'running', title: 'API 구현' }],
+    }) });
+    seedActiveGoal(svc, { taskId: 't_summary_worker' });
+
+    const submitted = svc.submitMessage('project-director-1', '세션 몇 개 열었어? 작업들 요약좀');
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'session and task status answer');
+
+    const output = svc.getRun(submitted.id).output;
+    assert.equal(chatCalls, 0);
+    assert.match(output, /현재 프로젝트 세션: Director 0개 \+ Worker 1개 = 총 1개/);
+    assert.match(output, /현재 Goal 작업: 1개 · 실행 1 · 대기 0 · 종료 0/);
+    assert.match(output, /- Implement fix — 실행 중 · codex-implementer/);
+  });
+
+  it('keeps Worker count unknown when a fresh operational board read fails', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => { chatCalls += 1; return { stdout: conversationOutput('추측') }; },
+      listTasks: async () => { throw new Error('C:\\private\\board unavailable'); },
+    }) });
+    seedActiveGoal(svc, { taskId: 't_unknown_worker', status: 'evaluating', phase: 'assessing_evidence' });
+
+    const submitted = svc.submitMessage('project-director-1', '작업 현황 알려줘');
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'board-failure status answer');
+
+    const output = svc.getRun(submitted.id).output;
+    assert.equal(chatCalls, 0);
+    assert.match(output, /실행 중 Worker: 최신 보드 조회에 실패해 현재 수를 확정할 수 없습니다/);
+    assert.match(output, /현재 Goal 작업: 1개 · 실행 0 · 대기 0 · 종료 0 · 미확인 1/);
+    assert.doesNotMatch(output, /실행 중 Worker: 0명|끝났습니다|완료됐습니다|C:\\private/);
+    assert.match(output, /아직 최종 결과 전달이 끝난 상태가 아닙니다/);
+  });
+
+  it('marks a stale running task as currently unknown when the fresh board no longer observes it', async () => {
+    const svc = service({ runtime: runtime({ listTasks: async () => [] }) });
+    seedActiveGoal(svc, { taskId: 't_missing_live_worker' });
+
+    const submitted = svc.submitMessage('project-director-1', '작업들 요약좀');
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'missing live task status answer');
+
+    const output = svc.getRun(submitted.id).output;
+    assert.match(output, /실행 중 Worker: 0명/);
+    assert.match(output, /현재 Goal 작업: 1개 · 실행 0 · 대기 0 · 종료 0 · 미확인 1/);
+    assert.match(output, /Implement fix — 현재 미확인 \(마지막 기록: 실행 중\)/);
+  });
+
+  it('does not call a legacy completed Goal delivered when its final report is absent', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => { chatCalls += 1; return { stdout: conversationOutput('추측') }; },
+      listTasks: async () => [],
+    }) });
+    const legacy = seedActiveGoal(svc, {
+      taskId: 't_legacy_complete', status: 'completed', phase: 'completed', finalReport: null,
+      completedAt: '2026-08-25T01:00:00.000Z', updatedAt: '2026-08-25T01:00:00.000Z',
+    });
+    svc.getDirector('project-director-1').activeGoalId = null;
+
+    const submitted = svc.submitMessage('project-director-1', '최종 결과는 어디서 받아?');
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'legacy missing-report answer');
+
+    assert.equal(chatCalls, 0);
+    assert.match(svc.getRun(submitted.id).output, new RegExp(`최근 종료 Goal: “${legacy.objective}” — 완료 \\(completed\\), 최종 보고서 없음`));
+    assert.match(svc.getRun(submitted.id).output, /최종 보고서가 없어 결과 전달 완료로 볼 수 없습니다/);
+    assert.match(svc.getRun(submitted.id).output, /현재 FINAL REPORT가 없어 표시하거나 전달할 완료 결과가 없습니다/);
+    assert.doesNotMatch(svc.getRun(submitted.id).output, /결과 전달이 완료되었습니다|끝났습니다/);
+  });
+
+  it('returns the bounded final report content directly when the Owner asks to see it', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => { chatCalls += 1; return { stdout: conversationOutput('추측') }; },
+      listTasks: async () => [],
+    }) });
+    const completedGoal = seedActiveGoal(svc, {
+      taskId: 't_report_complete', status: 'completed', phase: 'completed',
+      finalReport: '검증된 최종 결과입니다. C:\\Program Files\\private report.md',
+      completedAt: '2026-08-25T01:00:00.000Z', updatedAt: '2026-08-25T01:00:00.000Z',
+    });
+    svc.getDirector('project-director-1').activeGoalId = null;
+
+    const submitted = svc.submitMessage('project-director-1', '최종 결과 보여줘');
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'final report content answer');
+
+    const output = svc.getRun(submitted.id).output;
+    assert.equal(chatCalls, 0);
+    assert.match(output, new RegExp(`최근 종료 Goal: “${completedGoal.objective}” — 완료`));
+    assert.match(output, /FINAL REPORT\n검증된 최종 결과입니다\. \[local path\]/);
+    assert.doesNotMatch(output, /Program Files|private report\.md/);
+  });
+
+  it('does not overwrite an active Director status or lastRunId with a concurrent status read', async () => {
+    let chatCalls = 0;
+    const svc = service({ runtime: runtime({
+      chat: async () => { chatCalls += 1; return { stdout: conversationOutput('추측') }; },
+      listTasks: async () => [],
+    }) });
+    const director = svc.getDirector('project-director-1');
+    director.status = 'running';
+    director.lastRunId = 'existing-director-turn';
+    director.lastSummary = 'active work summary';
+    svc.state.runs.push({
+      id: 'existing-director-turn', directorId: director.id, projectId: director.projectId, kind: 'supervision',
+      status: 'running', prompt: 'active work', output: '', createdAt: '2026-08-25T00:00:00.000Z',
+    });
+    svc.state.runs.push({
+      id: 'another-status-read', directorId: director.id, projectId: director.projectId, kind: 'chat',
+      status: 'running', operationalStatusQuery: true, prompt: '현황?', output: '',
+      createdAt: '2026-08-25T00:00:00.000Z',
+    });
+    seedActiveGoal(svc, { taskId: 't_concurrent_status', status: 'verifying', phase: 'quality_gate' });
+
+    const submitted = svc.submitMessage('project-director-1', '아직 안 끝났나?');
+    assert.equal(submitted.concurrentStatusQuery, true);
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'concurrent status read');
+
+    assert.equal(chatCalls, 0);
+    assert.equal(director.status, 'running');
+    assert.equal(director.lastRunId, 'existing-director-turn');
+    assert.equal(director.lastSummary, 'active work summary');
+    assert.match(svc.getRun(submitted.id).output, /최종 검증 중 \(verifying\)/);
+    assert.match(svc.getRun(submitted.id).output, /현재 프로젝트 세션: Director 1개/);
+  });
+
+  it('injects bounded authoritative project status into ordinary Director prompts', async () => {
+    const prompts = [];
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [{ id: 't_prompt_worker', status: 'running' }],
+      chat: async ({ prompt }) => {
+        prompts.push(prompt);
+        return { stdout: conversationOutput('권위 상태를 확인했습니다.') };
+      },
+    }) });
+    const active = seedActiveGoal(svc, { taskId: 't_prompt_worker' });
+    active.objective = 'Inspect C:\\projects\\alpha\\secret.txt and /home/owner/private.md';
+    svc.state.runs.push({
+      id: 'prior-operational-status', directorId: active.directorId, projectId: active.projectId, kind: 'chat',
+      status: 'completed', operationalStatusQuery: true, prompt: 'UNIQUE STATUS QUESTION',
+      output: 'UNIQUE STATUS OUTPUT', createdAt: '2026-08-25T00:00:00.000Z', completedAt: '2026-08-25T00:00:01.000Z',
+    });
+    svc.state.goals.push({
+      ...active,
+      id: 'goal-prompt-queued', objective: 'Queued C:\\projects\\alpha\\next.txt', status: 'queued', phase: 'waiting_for_previous_goal',
+      taskIds: [], currentWaveTaskIds: [], taskRecords: [], waves: [], queueOrder: 1, queuePosition: 1,
+    });
+
+    const submitted = svc.submitMessage('project-director-1', '현재 설계를 설명해줘', { mode: 'conversation' });
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'ordinary Director answer');
+
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /PRAETORIUM AUTHORITATIVE PROJECT STATUS/);
+    assert.match(prompts[0], /"status":"executing"/);
+    assert.match(prompts[0], /"runningWorkers":1/);
+    assert.match(prompts[0], /"sessions":\{"directors":1,"workers":1,"total":2\}/);
+    assert.match(prompts[0], /"tasks":\{"scope":"active_goal","count":1/);
+    assert.match(prompts[0], /"finalReportPresent":false/);
+    assert.match(prompts[0], /"queue":\{"count":1/);
+    assert.match(prompts[0], /Never infer Goal completion from runningWorkers=0/);
+    assert.match(prompts[0], /\[local path\]/);
+    assert.doesNotMatch(prompts[0], /C:\\projects\\alpha|\/home\/owner|UNIQUE STATUS QUESTION|UNIQUE STATUS OUTPUT/);
+  });
+
+  it('keeps image inspection but rejects a model completion claim that contradicts durable status', async () => {
+    let chatCalls = 0;
+    const prompts = [];
+    const svc = service({ runtime: runtime({
+      chat: async ({ prompt }) => {
+        chatCalls += 1;
+        prompts.push(prompt);
+        return { stdout: conversationOutput('끝났습니다.') };
+      },
+    }) });
+    seedActiveGoal(svc, {
+      taskId: 't_image_status', status: 'awaiting_owner', phase: 'awaiting_owner', finalReport: null,
+      ownerDecision: { required: true, question: '수정 파동을 추가할까요?', options: ['추가', '중단'] },
+    });
+
+    const submitted = svc.submitMessage('project-director-1', '아직 안끝났나', {
+      mode: 'conversation',
+      attachments: [{ name: 'status.png', mimeType: 'image/png', dataBase64: ONE_PIXEL_PNG_BASE64 }],
+    });
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'image-bearing status answer');
+
+    assert.equal(chatCalls, 1);
+    assert.match(svc.getRun(submitted.id).output, /첨부 이미지 해석에 영속 상태와 모순되는 완료 표현/);
+    assert.match(svc.getRun(submitted.id).output, /Owner 결정 대기 \(awaiting_owner\)/);
+    assert.match(svc.getRun(submitted.id).output, /영속 상태 기준/);
+    assert.doesNotMatch(svc.getRun(submitted.id).output, /^끝났습니다\.$/m);
+    assert.match(prompts[0], /OWNER IMAGE ATTACHMENTS/);
+    assert.match(prompts[0], /PRAETORIUM AUTHORITATIVE PROJECT STATUS/);
+  });
+
   it('stores bounded local images, persists metadata only, and injects readable paths into fresh Director turns', async () => {
     const prompts = [];
     const svc = service({ runtime: runtime({

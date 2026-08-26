@@ -4,9 +4,11 @@ import { Icon, initials, relativeTime, Status, statusTone, statusText } from './
 
 function GoalRow({ goal, selected, active, onSelect }) {
   const label = goal.objective || `Goal ${goal.id.slice(-6)}`;
-  return <button type="button" className={`goal-row ${selected ? 'selected' : ''}`} onClick={() => onSelect(goal.id)} title={label} aria-label={label}>
+  const stateLabel = active ? `${statusText(goal.status)} · 활성 목표` : statusText(goal.status);
+  const accessibleLabel = `${label} · ${stateLabel}${goal.queuePosition ? ` · 대기열 #${goal.queuePosition}` : ''}`;
+  return <button type="button" className={`goal-row ${selected ? 'selected' : ''}`} onClick={() => onSelect(goal.id)} title={label} aria-label={accessibleLabel}>
     <span className={`goal-state ${statusTone(goal.status)}`}><i /></span>
-    <span className="goal-copy"><strong>{label}</strong><small>{active ? '활성 목표' : statusText(goal.status)}{goal.queuePosition ? ` · 대기열 #${goal.queuePosition}` : ''}{goal.updatedAt ? ` · ${relativeTime(goal.updatedAt)}` : ''}</small></span>
+    <span className="goal-copy"><strong>{label}</strong><small>{stateLabel}{goal.queuePosition ? ` · 대기열 #${goal.queuePosition}` : ''}{goal.updatedAt ? ` · ${relativeTime(goal.updatedAt)}` : ''}</small></span>
   </button>;
 }
 
@@ -27,7 +29,7 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
 
     <div className="sidebar-scroll">
       <section className="nav-section director-section">
-        <header><span>Directors</span><small>{summary?.directors?.length || 0}</small></header>
+        <header><span>디렉터</span><small>{summary?.directors?.length || 0}</small></header>
         <div className="director-switcher">
           {(summary?.directors || []).map(director => <button type="button" key={director.id} className={director.id === selectedDirector?.id ? 'selected' : ''} onClick={() => onDirector(director.id)} title={director.name}>
             <span className="director-avatar">{initials(director.name)}</span>
@@ -37,18 +39,18 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
       </section>
 
       {!!active.length && <section className="nav-section">
-        <header><span>Now</span><small>{active.length}</small></header>
+        <header><span>현재 목표</span><small>{active.length}</small></header>
         {active.map(goal => <GoalRow key={goal.id} goal={goal} active selected={goal.id === selectedGoal?.id} onSelect={onGoal} />)}
       </section>}
 
       {!!queued.length && <section className="nav-section">
-        <header><span>Queue</span><small>{queued.length}</small></header>
+        <header><span>대기열</span><small>{queued.length}</small></header>
         {queued.map(goal => <GoalRow key={goal.id} goal={goal} selected={goal.id === selectedGoal?.id} onSelect={onGoal} />)}
       </section>}
 
       <section className="nav-section recent-section">
-        <header><span>History</span><small>{history?.total ?? recent.length}</small></header>
-        <div className="history-filters" role="group" aria-label="History 상태 필터">
+        <header><span>기록</span><small>{history?.total ?? recent.length}</small></header>
+        <div className="history-filters" role="group" aria-label="기록 상태 필터">
           {[['all', '전체'], ['completed', '완료'], ['problems', '문제']].map(([value, label]) => <button type="button" key={value} className={historyFilter === value ? 'selected' : ''} onClick={() => onHistoryFilter(value)}>{label}</button>)}
         </div>
         {recent.map(goal => <GoalRow key={goal.id} goal={goal} selected={goal.id === selectedGoal?.id} onSelect={onGoal} />)}

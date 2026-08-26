@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
-import { connectionNotification, deriveGoalNotifications, deriveWorkerNotifications, mergeNotifications } from '../domain/notification-model.js';
+import {
+  connectionNotification, deriveGoalNotifications, deriveWorkerNotifications, mergeNotifications,
+  reconcilePersistentGoalNotifications,
+} from '../domain/notification-model.js';
 import { useStoredState } from './usePraetorium.js';
 
 const isTauri = () => Boolean(window.__TAURI_INTERNALS__);
@@ -42,9 +45,13 @@ export function useOperatorNotifications({ summary, summaryError, runtimeError, 
   useEffect(() => {
     if (!summary) return;
     const observedAt = new Date().toISOString();
-    publish(deriveGoalNotifications(previousSummary.current, summary, observedAt, previousSummary.current?.observedAt));
+    const previous = previousSummary.current;
+    const incoming = deriveGoalNotifications(previous, summary, observedAt, previous?.observedAt);
+    if (previous) publish(incoming);
+    else if (incoming.length) setItems(current => mergeNotifications(Array.isArray(current) ? current : [], incoming));
+    setItems(current => reconcilePersistentGoalNotifications(Array.isArray(current) ? current : [], summary, observedAt));
     previousSummary.current = summary;
-  }, [publish, summary]);
+  }, [publish, setItems, summary]);
 
   useEffect(() => {
     const tasks = summary?.notificationTasks;
@@ -87,7 +94,7 @@ export function useOperatorNotifications({ summary, summaryError, runtimeError, 
   }, []);
   const markRead = useCallback(id => setItems(current => (current || []).map(item => item.id === id ? { ...item, read: true } : item)), [setItems]);
   const markAllRead = useCallback(() => setItems(current => (current || []).map(item => ({ ...item, read: true }))), [setItems]);
-  const clearAll = useCallback(() => setItems([]), [setItems]);
+  const clearAll = useCallback(() => setItems(current => (current || []).filter(item => item?.persistent)), [setItems]);
   const notifications = Array.isArray(items) ? items : [];
 
   return {
