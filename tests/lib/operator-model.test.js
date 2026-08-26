@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildConversation, buildTrace, goalControlOptions, goalTasks, interventionReceiptText, ownerDecisionPayload, statusText, statusTone, textValue } from '../../src/domain/operator-model.js';
+import { runNeedsFullOutput, withFullRunOutputs } from '../../src/hooks/usePraetorium.js';
 
 test('operator model merges durable task records with fresher board state', () => {
   const tasks = goalTasks([
@@ -65,6 +66,24 @@ test('operator model keeps direct Director replies beside a selected Goal conver
     recentRuns: [{ id: 'chat-run', projectId: 'p1', prompt: 'status?', output: 'healthy', status: 'completed' }],
   }, { kind: 'project', projectId: 'p1' });
   assert.deepEqual(conversation.map(item => item.text), ['build', 'delegated', 'status?', 'healthy']);
+});
+
+test('Owner console replaces compact previews with complete Director answers', () => {
+  const summary = {
+    recentRuns: [
+      { id: 'run-clipped', output: 'GitHub 기준 활동 계정 3개…' },
+      { id: 'run-complete', output: '짧은 답변' },
+    ],
+  };
+  const hydrated = withFullRunOutputs(summary, new Map([
+    ['run-clipped', 'GitHub 기준 활동 계정 3개, 미병합 작업 단위 8개입니다.\n\n- 전체 결과'],
+  ]));
+
+  assert.equal(hydrated.recentRuns[0].output, 'GitHub 기준 활동 계정 3개, 미병합 작업 단위 8개입니다.\n\n- 전체 결과');
+  assert.equal(hydrated.recentRuns[0].outputTruncated, false);
+  assert.equal(hydrated.recentRuns[1], summary.recentRuns[1]);
+  assert.equal(runNeedsFullOutput({ id: 'run-clipped', outputTruncated: true }, new Map()), true);
+  assert.equal(runNeedsFullOutput({ id: 'run-complete', output: '조금 더 확인해 볼게요…', outputTruncated: false }, new Map()), false);
 });
 
 test('typed Owner decisions cannot inherit a preselected authority option', () => {

@@ -2161,6 +2161,7 @@ describe('DirectorService', () => {
     assert.equal(compact.goals.find(item => item.id === goal.id).events, undefined);
     assert.ok(compact.recentRuns.length <= 8);
     assert.ok(compact.recentRuns.every(run => run.output.length <= 1000));
+    assert.ok(compact.recentRuns.every(run => run.outputTruncated));
     assert.match(compact.revision, /^sha256:/);
 
     const stableRevision = compact.revision;

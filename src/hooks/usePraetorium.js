@@ -27,6 +27,20 @@ function directorGoals(summary, director) {
     .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
 }
 
+export function withFullRunOutputs(summary, outputs) {
+  if (!summary?.recentRuns?.length || !outputs?.size) return summary;
+  return {
+    ...summary,
+    recentRuns: summary.recentRuns.map(run => outputs.has(run.id)
+      ? { ...run, output: outputs.get(run.id), outputTruncated: false }
+      : run),
+  };
+}
+
+export function runNeedsFullOutput(run, outputs) {
+  return Boolean(run?.outputTruncated && !outputs?.has(run.id));
+}
+
 function usePoll(load, dependencies, intervalMs = POLL_MS, enabled = true) {
   useEffect(() => {
     if (!enabled) return undefined;
@@ -60,6 +74,7 @@ export function usePraetorium({ taskPollingEnabled = true } = {}) {
   const [refreshToken, setRefreshToken] = useState(0);
   const summaryRequest = useRef(0);
   const taskRequest = useRef(0);
+  const fullRunOutputs = useRef(new Map());
 
   const selectedDirector = useMemo(
     () => summary?.directors?.find(item => item.id === selectedDirectorId) || summary?.directors?.[0] || null,
@@ -84,12 +99,25 @@ export function usePraetorium({ taskPollingEnabled = true } = {}) {
       if (selectedDirectorId) query.set('directorId', selectedDirectorId);
       const next = await api(`/api/directors?${query}`, { signal });
       if (requestId !== summaryRequest.current) return;
-      setSummary(next);
+      setSummary(withFullRunOutputs(next, fullRunOutputs.current));
       setLastSyncedAt(new Date());
       setErrors(current => ({ ...current, summary: null }));
       if (!selectedDirectorId || !next.directors?.some(item => item.id === selectedDirectorId)) {
         setSelectedDirectorId(next.selectedDirectorId || next.directors?.[0]?.id || '');
       }
+
+      const clippedRuns = (next.recentRuns || []).filter(run => runNeedsFullOutput(run, fullRunOutputs.current));
+      if (!clippedRuns.length) return;
+      const details = await Promise.allSettled(clippedRuns.map(run => api(`/api/directors/runs/${encodeURIComponent(run.id)}`, { signal })));
+      if (signal.aborted || requestId !== summaryRequest.current) return;
+      const resolved = new Map();
+      details.forEach((result, index) => {
+        if (result.status !== 'fulfilled' || typeof result.value?.output !== 'string') return;
+        const run = result.value;
+        resolved.set(clippedRuns[index].id, run.output);
+        if (!['queued', 'running'].includes(run.status)) fullRunOutputs.current.set(clippedRuns[index].id, run.output);
+      });
+      setSummary(current => withFullRunOutputs(current, resolved));
     } catch (error) {
       if (error.name !== 'AbortError') setErrors(current => ({ ...current, summary: error.message }));
       throw error;
