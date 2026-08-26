@@ -29,8 +29,8 @@ function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useStoredState('praetorium.theme', 'dark');
   const [scale, setScale] = useStoredState('praetorium.scale', 1);
-  const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 268);
-  const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 336);
+  const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 248);
+  const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 312);
   const [inspectorOpen, setInspectorOpen] = useStoredState('praetorium.inspectorOpen', false);
   const [pendingNavigation, setPendingNavigation] = useState(null);
   const pendingGoalRequest = useRef('');
@@ -106,7 +106,7 @@ function AppShell() {
 
     <div className="operator-grid">
       <Sidebar summary={data.summary} selectedDirector={data.selectedDirector} selectedGoal={data.selectedGoal} goals={data.goals} query={data.goalSearch} onQuery={data.setGoalSearch} historyFilter={data.historyFilter} onHistoryFilter={data.setHistoryFilter} history={data.goalHistory} onLoadMore={data.loadMoreGoals} onDirector={data.selectDirector} onGoal={data.selectGoal} onSettings={() => setSettingsOpen(true)} />
-      <Splitter label="왼쪽 사이드바 너비" side="left" value={railWidth} min={220} max={420} onChange={setRailWidth} onReset={() => setRailWidth(268)} />
+      <Splitter label="왼쪽 사이드바 너비" side="left" value={railWidth} min={220} max={420} onChange={setRailWidth} onReset={() => setRailWidth(248)} />
       <section className={`workspace-shell ${inspectorOpen ? '' : 'inspector-closed'}`}>
         <Workspace
           activeTab={activeTab}

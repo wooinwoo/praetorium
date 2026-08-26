@@ -74,10 +74,11 @@ function LatestConclusion({ goal, runs, onOpen, onDecision }) {
 
 function DirectorActivityPanel({ activity, goalId = null, compact = false }) {
   const scopedEvents = (activity?.events || []).filter(event => !goalId || event.goalId === goalId || ['ready', 'resync'].includes(event.type));
-  const events = scopedEvents.slice(compact ? -10 : -18).reverse();
-  return <details className={`director-activity-panel ${compact ? 'compact' : ''}`} open>
+  const events = scopedEvents.slice(compact ? -5 : -18).reverse();
+  const summary = compact ? events[0]?.message || '첫 실행 이벤트를 기다리는 중…' : '운영 단계 · 체크포인트';
+  return <details className={`director-activity-panel ${compact ? 'compact' : ''}`} open={!compact}>
     <summary>
-      <span><Icon name="activity" /><strong>디렉터 공개 활동</strong><small>운영 단계 · 체크포인트</small></span>
+      <span><Icon name="activity" /><strong>디렉터 공개 활동</strong><small aria-live="polite">{summary}</small></span>
       <span role="status" className={`activity-connection ${activity?.connected ? 'online' : 'reconnecting'}`}><i />{activity?.connected ? '실시간' : '재연결 중'}</span>
     </summary>
     <div className="director-activity-body">
@@ -99,12 +100,17 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
   const decisionRef = useRef(null);
   const [follow, setFollow] = useState(true);
   const [traceLimit, setTraceLimit] = useState(160);
+  const [logExpanded, setLogExpanded] = useState(false);
   const visibleTrace = trace.slice(-traceLimit);
   const omittedTrace = trace.length - visibleTrace.length;
   useEffect(() => {
     if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
   }, [trace.length, follow]);
   useEffect(() => { setTraceLimit(160); }, [goal?.id]);
+  useEffect(() => {
+    if (!selectedTask || taskIsTerminal(selectedTask)) setLogExpanded(false);
+    else if (['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(selectedTask))) setLogExpanded(true);
+  }, [selectedTask?.id, selectedTask?.status]);
   if (!goal) return <div className="workspace-empty"><Empty icon="branch" title="표시할 Goal이 없습니다">디렉터 채팅에서 새 목표를 보내세요.</Empty><button type="button" className="primary-button" onClick={onDirector}>디렉터 열기</button></div>;
   const ownerDecision = goal.ownerDecision?.required;
   const decisionHeadingId = `decision-${String(goal.id).replace(/[^a-zA-Z0-9_-]/g, '-')}-heading`;
@@ -112,7 +118,7 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
     decisionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     decisionRef.current?.focus({ preventScroll: true });
   };
-  return <div className="trace-view">
+  return <div className={`trace-view ${logExpanded ? 'log-expanded' : 'log-collapsed'}`}>
     <GoalHeader directorId={directorId} goal={goal} tasks={tasks} supervision={supervision} onDirector={onDirector} refresh={refresh} />
     <div className="conclusion-bar"><LatestConclusion goal={goal} runs={runs} onOpen={onDirector} onDecision={focusDecision} /></div>
     <div className="trace-content" ref={scrollRef} onScroll={event => setFollow(event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight < 48)}>
@@ -136,12 +142,12 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
         </div>
       </section>
     </div>
-    <section className="live-log-pane">
+    <section className={`live-log-pane ${logExpanded ? 'expanded' : 'collapsed'}`}>
       <div className="live-log">
-        <header className="section-title"><span><Icon name="terminal" />Worker 원문 로그</span><span className="log-actions"><small>{selectedTask ? selectedTask.title : 'Worker를 선택하세요'}</small>{selectedTask && <Status value={taskDisplayStatus(selectedTask)} />}</span></header>
-        {errors.trace ? <ErrorNotice title="실행 로그 동기화 실패" onRetry={refresh}>{errors.trace}</ErrorNotice>
+        <button type="button" className="section-title live-log-toggle" aria-expanded={logExpanded} onClick={() => setLogExpanded(current => !current)}><span><Icon name="terminal" />Worker 원문 로그</span><span className="log-actions"><small>{selectedTask ? selectedTask.title : 'Worker를 선택하세요'}</small>{selectedTask && <Status value={taskDisplayStatus(selectedTask)} />}<Icon name="chevron" /></span></button>
+        {logExpanded && (errors.trace ? <ErrorNotice title="실행 로그 동기화 실패" onRetry={refresh}>{errors.trace}</ErrorNotice>
           : taskTrace?.availability === 'not_started' ? <Empty icon="terminal" title="아직 실행 전입니다">Worker가 시작되면 원문 로그가 여기에 표시됩니다.</Empty>
-            : <pre>{taskTrace?.log || 'Trace에서 Worker를 선택하면 원문 로그를 표시합니다.'}</pre>}
+            : <pre>{taskTrace?.log || 'Trace에서 Worker를 선택하면 원문 로그를 표시합니다.'}</pre>)}
       </div>
     </section>
   </div>;
@@ -343,6 +349,6 @@ export default function Workspace({ activeTab, setActiveTab, chatScope, setChatS
         : activeTab.startsWith('task:') ? <WorkerView task={selectedTask} detail={taskDetail} trace={taskTrace} error={errors.task} onRetry={refresh} />
           : <TraceView goal={goalDetail || goal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={selectTask} onDirector={() => { setChatScope('goal'); setActiveTab('director'); }} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} />}
     </main>
-    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(336)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={goalDetail || goal} selectedEntry={selectedEntry} task={(selectedEntry?.type === 'task' || activeTab.startsWith('task:')) ? selectedTask : null} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} onClose={() => setInspectorOpen(false)} /></>}
+    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={goalDetail || goal} selectedEntry={selectedEntry} task={(selectedEntry?.type === 'task' || activeTab.startsWith('task:')) ? selectedTask : null} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} onClose={() => setInspectorOpen(false)} /></>}
   </>;
 }

@@ -247,7 +247,9 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(common, /event\.preventDefault\(\)/);
   assert.doesNotMatch(common, /location\.assign/);
   assert.match(css, /\.splitter[\s\S]*cursor: ew-resize/);
-  assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: 48px minmax\(0, 1fr\)/);
+  assert.match(css, /--workspace-tab-height: 40px/);
+  assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: var\(--workspace-tab-height\) minmax\(0, 1fr\)/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*--workspace-tab-height: 44px/);
   assert.match(css, /\.workspace-shell > \.splitter-right \{ grid-column: 2; grid-row: 2; \}/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.inspector \{ position: fixed;/);
   assert.match(css, /\.operator-grid \{[^}]*grid-template-columns: clamp\(220px, var\(--rail-width\), 34vw\)/);
@@ -267,6 +269,11 @@ test('Director channel uses durable Goal-scoped chat and explicit decision or co
   assert.match(forms, /latestMessage\?\.text/);
   assert.match(forms, /mode: 'auto'|defaultMode = 'auto'/);
   assert.match(forms, /!event\.nativeEvent\.isComposing/);
+  assert.match(forms, /<textarea id="director-prompt" name="prompt" rows="2"/);
+  assert.match(workspace, /const events = scopedEvents\.slice\(compact \? -5 : -18\)\.reverse\(\)/);
+  assert.match(workspace, /const summary = compact \? events\[0\]\?\.message \|\| '첫 실행 이벤트를 기다리는 중…' : '운영 단계 · 체크포인트'/);
+  assert.match(workspace, /open=\{!compact\}/);
+  assert.match(workspace, /<small aria-live="polite">\{summary\}<\/small>/);
   assert.match(model, /goal\?\.ownerAnswers/);
   assert.match(model, /goal\?\.finalReport/);
   assert.match(model, /디렉터 최종 결론/);
@@ -352,8 +359,9 @@ test('Owner console clamps repeated objectives and uses a neutral graphite palet
   assert.match(sidebar, /-webkit-line-clamp|goal\.objective/);
   assert.match(css, /--bg: #0d0f13/);
   assert.match(css, /--accent: #7c86f8/);
-  assert.match(css, /\.goal-copy strong[\s\S]*-webkit-line-clamp: 2/);
-  assert.match(css, /\.conclusion-preview strong[\s\S]*-webkit-line-clamp: 2/);
+  assert.match(css, /\.goal-copy strong \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  assert.match(css, /\.conclusion-preview strong \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  assert.match(css, /@container \(max-width: 620px\)[\s\S]*\.conclusion-preview > span:last-child \{ grid-template-columns: minmax\(0, 1fr\) auto; \}[\s\S]*\.conclusion-preview small \{ grid-column: 1 \/ -1; \}/);
   assert.doesNotMatch(css, /linear-gradient|radial-gradient/);
 });
 

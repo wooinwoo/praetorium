@@ -34,7 +34,7 @@ export default function NotificationCenter({ notifications, onOpen }) {
       {['prompt', 'denied'].includes(notifications.permission) && <div className="notification-permission"><span><strong>Windows 알림</strong><small>앱이 뒤에 있을 때 중요한 변경을 알려줍니다.</small></span><button type="button" onClick={notifications.enableNative}>켜기</button></div>}
       <div className="notification-list">
         {!notifications.items.length && <div className="notification-empty"><Icon name="bell" /><strong>새 알림이 없습니다.</strong><span>결정 요청, 완료, 실패, 연결 문제를 여기에 모읍니다.</span></div>}
-        {notifications.items.map(item => <button type="button" key={item.id} className={`notification-item tone-${item.tone || 'neutral'} ${item.read ? '' : 'unread'}`} onClick={() => openItem(item)}>
+        {notifications.items.map(item => <button type="button" key={item.id} className={`notification-item tone-${item.tone || 'neutral'} ${item.read ? '' : 'unread'} ${item.persistent ? 'persistent' : ''}`} onClick={() => openItem(item)}>
           <span className="notification-dot" /><span><small>{kindLabel[item.kind] || 'Praetorium'} · {relativeTime(item.createdAt)}</small><strong>{item.title}</strong><p>{item.body}</p></span><Icon name="chevron" />
         </button>)}
       </div>
