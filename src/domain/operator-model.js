@@ -8,6 +8,7 @@ const SCHEDULER_GRACE_MS = 30000;
 
 export const statusText = status => ({
   idle: '대기', running: '실행 중', queued: '대기열', ready: '실행 대기', todo: '선행 대기',
+  waiting_for_director: '디렉터 대기',
   review: '리뷰 중', blocked: '판단 필요', paused: '오너 일시정지', scheduled: '일시정지', done: '완료', completed: '완료',
   archived: '완료', succeeded: '완료', success: '완료', failed: '실패', error: '오류', clarifying: '명세 확인', planning: '계획',
   executing: '실행 중', evaluating: '평가', remediating: '재작업', verifying: '검증',
@@ -321,7 +322,7 @@ export function buildConversation(goal, summary, director, scope = goal ? 'goal'
   for (const run of runs) {
     if (run.prompt) messages.push({ id: `${run.id}:owner`, role: 'owner', text: run.prompt, attachments: previewAttachments(run.attachments, director?.id), at: run.createdAt, kind: run.requestedMode === 'delegate' ? '실행 요청' : '요청' });
     const answer = run.output || run.error || (!terminalStates.has(run.status) ? `판단 진행 중 · ${statusText(run.phase || run.status)}` : '');
-    if (answer) messages.push({ id: `${run.id}:director`, role: 'director', text: answer, at: run.completedAt || run.startedAt || run.createdAt, kind: run.error ? '실패' : run.status === 'running' ? '판단 중' : '답변' });
+    if (answer) messages.push({ id: `${run.id}:director`, role: 'director', text: answer, at: run.completedAt || run.startedAt || run.createdAt, kind: run.error ? '실패' : run.status === 'running' ? '판단 중' : run.status === 'queued' ? '접수됨' : '답변' });
   }
   for (const answer of scope === 'goal' ? (goal?.ownerAnswers || []) : []) {
     const attachmentIds = new Set(answer.attachmentIds || []);

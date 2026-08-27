@@ -58,6 +58,20 @@ describe('Director action control', () => {
     assert.equal(isOperationalStatusQuery('결과 어디에 저장할지 정하고 구현해줘'), false);
     assert.equal(isOperationalStatusQuery('주황불 문제 수정 부탁해'), false);
     assert.equal(isOperationalStatusQuery('Why is the status stale? Fix it please'), false);
+    assert.equal(isOperationalStatusQuery('검색 결과 보여줘'), false);
+    assert.equal(isOperationalStatusQuery('테스트 결과 보여줘'), false);
+    assert.equal(isOperationalStatusQuery('git diff 결과 보여줘'), false);
+    assert.equal(isOperationalStatusQuery('어디서 검색 결과를 봐?'), false);
+    assert.equal(isOperationalStatusQuery('결과 어디서 봐?'), true);
+    assert.equal(isOperationalStatusQuery('현재 작업 결과 어디서 확인해?'), true);
+    assert.equal(isOperationalStatusQuery('Where is the git diff result?'), false);
+    assert.equal(isOperationalStatusQuery('Where is the test result?'), false);
+    assert.equal(isOperationalStatusQuery('Show current test status'), false);
+    assert.equal(isOperationalStatusQuery('Where is the result?'), true);
+    assert.equal(isOperationalStatusQuery('Where can I see the final report?'), true);
+    assert.equal(isOperationalStatusQuery('Is the current goal done?'), true);
+    assert.equal(isOperationalStatusQuery('Is current Goal done?'), true);
+    assert.equal(isOperationalStatusQuery('Has the current goal completed?'), true);
   });
 
   it('extracts the tagged control envelope without exposing it to the Owner', () => {
@@ -162,10 +176,16 @@ describe('Director action control', () => {
   it('accepts terminal and Owner-waiting delegate checkpoints without actions', () => {
     const awaiting = validateDirectorControl(control({
       state: 'awaiting_owner', actions: [],
-      owner_decision: { required: true, question: 'Which contract should win?', options: ['A', 'B'], evidence: ['conflict'] },
+      owner_decision: {
+        required: true, question: 'Which contract should win?', context: 'Two public contracts conflict.',
+        recommendation: 'Keep A because active clients depend on it.', options: ['A', 'B'],
+        option_impacts: [{ option: 'A', impact: 'Preserves clients but defers cleanup.' }, { option: 'B', impact: 'Simplifies the API but breaks clients.' }],
+        evidence: ['Existing clients call contract A.'],
+      },
     }), { requiredMode: 'delegate' });
     assert.equal(awaiting.state, 'awaiting_owner');
     assert.equal(awaiting.ownerDecision.question, 'Which contract should win?');
+    assert.equal(awaiting.ownerDecision.optionImpacts[1].impact, 'Simplifies the API but breaks clients.');
     assert.equal(validateDirectorControl(control({ state: 'complete', actions: [] }), { requiredMode: 'delegate' }).state, 'complete');
     assert.equal(validateDirectorControl(control({
       state: 'blocked', actions: [], decisions: ['A terminal Worker report proves the blocker.'],
@@ -175,6 +195,12 @@ describe('Director action control', () => {
   it('rejects inconsistent delegated states and Owner decisions', () => {
     assert.throws(() => validateDirectorControl(control({ state: 'planning', actions: [] })), /Invalid delegated Director state/);
     assert.throws(() => validateDirectorControl(control({ state: 'awaiting_owner', actions: [] })), /requires owner_decision/);
+    assert.throws(() => validateDirectorControl(control({
+      state: 'awaiting_owner', actions: [], owner_decision: {
+        required: true, question: 'Proceed?', context: 'A choice is needed.', recommendation: 'Proceed.',
+        options: ['Proceed', 'Stop'], option_impacts: [{ option: 'Proceed', impact: 'Continues.' }], evidence: ['Current work is paused.'],
+      },
+    })), /one option impact for every option/);
     assert.throws(() => validateDirectorControl(control({ state: 'complete' })), /cannot create worker tasks/);
     assert.throws(() => validateDirectorControl(control({
       state: 'blocked', actions: [],

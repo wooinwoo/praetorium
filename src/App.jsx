@@ -31,6 +31,7 @@ function AppShell() {
   const [scale, setScale] = useStoredState('praetorium.scale', 1);
   const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 248);
   const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 312);
+  const [activityHeight, setActivityHeight] = useStoredState('praetorium.activityHeight', 112);
   const [inspectorOpen, setInspectorOpen] = useStoredState('praetorium.inspectorOpen', false);
   const [pendingNavigation, setPendingNavigation] = useState(null);
   const pendingGoalRequest = useRef('');
@@ -94,7 +95,7 @@ function AppShell() {
       <div className="brand"><span className="brand-mark"><Icon name="layers" size={18} /></span><strong>PRAETORIUM</strong><span className="brand-divider" /><span className="breadcrumb"><b>{projectName}</b><small>{data.selectedDirector?.runtime === 'wsl' ? `WSL · ${data.selectedDirector.distro || 'Ubuntu'}` : 'Local'}</small></span></div>
       <div className="topbar-actions">
         <span className={`connection ${connected ? 'online' : 'offline'}`}><i />{connected ? '로컬 연결' : '연결 끊김'}</span>
-        <span className="session-state"><Icon name="activity" /><b>{sessionCount}</b> running</span>
+        {sessionCount > 0 && <span className="session-state" title="현재 실행 프로세스 세션"><Icon name="activity" /><b>{sessionCount}</b> 세션</span>}
         <div className="scale-control" aria-label="화면 글자 크기"><button type="button" onClick={() => setScale(value => Math.max(.9, +(value - .05).toFixed(2)))} aria-label="글자 축소">−</button><button type="button" onClick={() => setScale(1)} title="100%로 초기화">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale(value => Math.min(1.25, +(value + .05).toFixed(2)))} aria-label="글자 확대">+</button></div>
         <NotificationCenter notifications={notifications} onOpen={openNotification} />
         <button type="button" className="icon-button" onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '라이트 모드' : '다크 모드'}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
@@ -133,6 +134,8 @@ function AppShell() {
           setInspectorOpen={setInspectorOpen}
           inspectorWidth={inspectorWidth}
           setInspectorWidth={setInspectorWidth}
+          activityHeight={activityHeight}
+          setActivityHeight={setActivityHeight}
         />
       </section>
     </div>

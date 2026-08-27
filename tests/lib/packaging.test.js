@@ -1,10 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, extname, normalize, resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, extname, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const sourceExtensions = new Set(['.js', '.mjs', '.jsx', '.json', '.rs']);
+
+function sourceFiles(path) {
+  return readdirSync(path, { withFileTypes: true }).flatMap(entry => {
+    const child = join(path, entry.name);
+    return entry.isDirectory() ? sourceFiles(child) : sourceExtensions.has(extname(child)) ? [child] : [];
+  });
+}
 
 describe('Tauri runtime packaging', () => {
   it('packages every relative module imported by a packaged runtime file', () => {
@@ -49,5 +57,19 @@ describe('Tauri runtime packaging', () => {
     assert.match(rust, /on_activated/);
     assert.match(rust, /emit\("operator-notification-open"/);
     assert.match(rust, /show_main_window\(&activation_app\)/);
+  });
+
+  it('keeps the Praetorium runtime independent from Cockpit', () => {
+    const files = [
+      ...sourceFiles(resolve(root, 'src')),
+      ...sourceFiles(resolve(root, 'lib')),
+      ...sourceFiles(resolve(root, 'routes')),
+      ...sourceFiles(resolve(root, 'src-tauri/src')),
+      resolve(root, 'server.js'),
+      resolve(root, 'package.json'),
+      resolve(root, 'src-tauri/tauri.conf.json'),
+    ];
+    const source = files.map(file => `${relative(root, file)}\n${readFileSync(file, 'utf8')}`).join('\n');
+    assert.doesNotMatch(source, /cockpit|COCKPIT_|claude-code-cockpit|(?:localhost|127\.0\.0\.1):3847/i);
   });
 });

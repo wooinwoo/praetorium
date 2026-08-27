@@ -31,7 +31,9 @@ function ownerDecisionOutput() {
     schema: 'director-action.v1', mode: 'delegate', workflow_id: 'quick-fix', state: 'awaiting_owner',
     requirements: ['compatibility decision'], decisions: ['compatibility changes the implementation boundary'], actions: [],
     owner_decision: {
-      required: true, question: '기존 호환성을 유지할까요?', options: ['keep', 'change'],
+      required: true, question: '기존 호환성을 유지할까요?', context: '현재 응답 계약과 새 구현이 충돌합니다.',
+      recommendation: '활성 클라이언트 보호를 위해 keep을 권고합니다.', options: ['keep', 'change'],
+      option_impacts: [{ option: 'keep', impact: '클라이언트를 보존하고 정리를 연기합니다.' }, { option: 'change', impact: 'API는 단순해지지만 기존 클라이언트가 깨집니다.' }],
       evidence: ['existing clients use the current response shape'],
     },
   })}</PRAETORIUM_CONTROL>`;
@@ -84,6 +86,7 @@ function service(opts = {}) {
     stateFile: join(dir, 'directors.json'),
     projectsRoot: 'C:\\projects',
     getProjects: opts.getProjects || (() => [{ id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha' }]),
+    operationalBoardWaitMs: opts.operationalBoardWaitMs,
   });
 }
 
@@ -1104,6 +1107,38 @@ describe('DirectorService', () => {
     assert.match(output, /아직 최종 결과 전달이 끝난 상태가 아닙니다/);
   });
 
+  it('returns operational status within its UI budget while a slow board refresh continues safely', async () => {
+    const svc = service({
+      operationalBoardWaitMs: 5,
+      runtime: runtime({ listTasks: async () => new Promise(() => {}) }),
+    });
+    seedActiveGoal(svc, { taskId: 't_slow_status' });
+    const startedAt = Date.now();
+
+    const submitted = svc.submitMessage('project-director-1', '작업 현황 알려줘');
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'bounded status answer');
+
+    assert.ok(Date.now() - startedAt < 200, 'status response must not wait for the full board command timeout');
+    assert.match(svc.getRun(submitted.id).output, /현재 수를 확정할 수 없습니다/);
+  });
+
+  it('forces a live operational board read instead of labeling a warm cache fresh', async () => {
+    let boardReads = 0;
+    const svc = service({ runtime: runtime({
+      listTasks: async () => { boardReads += 1; return []; },
+    }) });
+    const director = svc.getDirector('project-director-1');
+    const entry = svc._boardEntry(director);
+    entry.tasks = [{ id: 't_cached_worker', status: 'running' }];
+    entry.refreshedAt = new Date().toISOString();
+
+    const snapshot = await svc._captureProjectOperationalStatus(director);
+
+    assert.equal(boardReads, 1);
+    assert.equal(snapshot.board.fresh, true);
+    assert.equal(snapshot.board.runningWorkers, 0);
+  });
+
   it('marks a stale running task as currently unknown when the fresh board no longer observes it', async () => {
     const svc = service({ runtime: runtime({ listTasks: async () => [] }) });
     seedActiveGoal(svc, { taskId: 't_missing_live_worker' });
@@ -1413,6 +1448,60 @@ describe('DirectorService', () => {
       && event.details?.guidanceId === goal.ownerAnswers.at(-1).id));
   });
 
+  it('queues guidance during a Director checkpoint and applies it before stale control', async () => {
+    const comments = [];
+    let createdTasks = 0;
+    const svc = service({ runtime: runtime({
+      createTask: async () => { createdTasks += 1; return { json: { id: `t_stale_${createdTasks}` } }; },
+      taskDetails: async ({ taskId }) => ({ task: { id: taskId, status: 'running' }, comments: [] }),
+      commentTask: async ({ message }) => { comments.push(message); },
+    }) });
+    const goal = seedActiveGoal(svc, { taskId: 't_busy_guidance' });
+    const director = svc.getDirector('project-director-1');
+    const checkpoint = {
+      id: 'run-busy-guidance', directorId: director.id, projectId: director.projectId,
+      goalId: goal.id, kind: 'supervision', status: 'running', phase: 'assessing_evidence',
+      prompt: goal.objective, output: '', createdAt: '2026-08-27T13:50:28.000Z',
+    };
+    svc.state.runs.push(checkpoint);
+    svc.goalLocks.add(goal.id);
+    director.status = 'running';
+
+    const accepted = await svc.guideGoal(director.id, goal.id, {
+      message: '읽기 전용 확인이므로 현재 근거만 설명해줘.',
+    });
+
+    assert.equal(accepted.queued, true);
+    assert.equal(goal.ownerAnswers.at(-1).deliveryState, 'queued');
+    assert.equal(comments.length, 0);
+    assert.match(readFileSync(svc.stateFile, 'utf8'), /읽기 전용 확인이므로 현재 근거만 설명해줘/);
+
+    svc.goalLocks.delete(goal.id);
+    director.status = 'idle';
+    checkpoint.status = 'completed';
+    const staleOutcome = await svc._applyGoalControl({
+      director,
+      goal,
+      run: { output: '' },
+      plan: {
+        mode: 'delegate', state: 'executing', workflowId: 'quick-fix', requirements: [], decisions: [],
+        actions: [{
+          id: 'stale', title: 'Stale action', target: 'codex-implementer', effect: 'workspace_write',
+          task: 'Do stale work.', skills: [], dependencies: [], writeScope: ['src/'],
+          acceptance: ['done'], wakeOn: ['completion'],
+        }],
+      },
+    });
+    assert.equal(staleOutcome.state, 'guidance_pending');
+    assert.equal(createdTasks, 0);
+
+    const applied = await svc._maybeSuperviseGoal(director, [{ id: 't_busy_guidance', status: 'running' }]);
+    assert.equal(applied.applied, true);
+    assert.equal(goal.ownerAnswers.at(-1).deliveryState, 'applied');
+    assert.equal(goal.guidanceReanalysisPending.guidanceId, goal.ownerAnswers.at(-1).id);
+    assert.equal(comments.length, 1);
+  });
+
   it('delivers an exact 8000-character Goal instruction with image context and rejects any overflow', async () => {
     const comments = [];
     const svc = service({ runtime: runtime({
@@ -1673,6 +1762,52 @@ describe('DirectorService', () => {
     assert.match(seen[1].prompt, /OWNER:\nfirst/);
     assert.match(seen[1].prompt, /DIRECTOR:\nok/);
     assert.match(seen[1].prompt, /CURRENT OWNER MESSAGE\]\n\nsecond/);
+  });
+
+  it('persists ordinary messages received during a Director turn and runs them in order', async () => {
+    let releaseFirst;
+    let chatCalls = 0;
+    const firstTurn = new Promise(resolve => { releaseFirst = resolve; });
+    const svc = service({ runtime: runtime({
+      chat: async () => {
+        chatCalls += 1;
+        if (chatCalls === 1) await firstTurn;
+        return { stdout: conversationOutput(`answer ${chatCalls}`) };
+      },
+    }) });
+
+    const first = svc.submitMessage('project-director-1', 'first', { mode: 'conversation' });
+    await waitFor(() => chatCalls === 1, 'first Director turn to start');
+    const second = svc.submitMessage('project-director-1', 'second', { mode: 'conversation' });
+
+    assert.equal(second.status, 'queued');
+    assert.equal(second.phase, 'waiting_for_director');
+    const persisted = JSON.parse(readFileSync(svc.stateFile, 'utf8'));
+    assert.equal(persisted.runs.find(run => run.id === second.id)?.phase, 'waiting_for_director');
+    assert.equal(chatCalls, 1);
+
+    releaseFirst();
+    await waitFor(() => svc.getRun(second.id).status === 'completed', 'queued message to complete');
+    assert.equal(svc.getRun(first.id).status, 'completed');
+    assert.equal(svc.getRun(second.id).output, 'answer 2');
+    assert.equal(chatCalls, 2);
+  });
+
+  it('keeps a queued ordinary message recoverable across restart', async () => {
+    const neverCompletes = new Promise(() => {});
+    const first = service({ runtime: runtime({ chat: async () => neverCompletes }) });
+    first.submitMessage('project-director-1', 'busy turn', { mode: 'conversation' });
+    await waitFor(() => first.getDirector('project-director-1').status === 'running', 'busy Director turn');
+    const queued = first.submitMessage('project-director-1', 'do not lose this', { mode: 'conversation' });
+
+    const restarted = new DirectorService({
+      runtime: runtime(), stateFile: first.stateFile, projectsRoot: 'C:\\projects',
+      getProjects: () => [{ id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha' }],
+    });
+    assert.equal(restarted.getRun(queued.id).status, 'queued');
+    assert.equal(restarted.getRun(queued.id).phase, 'waiting_for_director');
+    assert.equal(restarted._promoteNextProjectMessage('project-director-1').promoted, true);
+    await waitFor(() => restarted.getRun(queued.id).status === 'completed', 'recovered message to complete');
   });
 
   it('lets an automatic Director inspect and answer without creating a Goal', async () => {
@@ -2008,10 +2143,14 @@ describe('DirectorService', () => {
     assert.ok(restarted.getGoal(firstGoal.id).events.some(event => event.phase === 'cancelled'));
   });
 
-  it('fails closed on active Goal control while a Worker runs and retries a stopped blocked Goal', async () => {
+  it('quiesces a running Worker before cancelling an active Goal and retries a stopped blocked Goal', async () => {
     let boardStatus = 'running';
+    const calls = [];
     const svc = service({ runtime: runtime({
       listTasks: async () => [{ id: 't_goal_control', status: boardStatus }],
+      reclaimTask: async ({ taskId }) => { calls.push(`reclaim:${taskId}`); boardStatus = 'ready'; },
+      taskDetails: async ({ taskId }) => ({ task: { id: taskId, status: boardStatus } }),
+      blockTask: async ({ taskId }) => { calls.push(`block:${taskId}`); boardStatus = 'blocked'; },
     }) });
     const goal = seedActiveGoal(svc, {
       taskId: 't_goal_control',
@@ -2019,15 +2158,10 @@ describe('DirectorService', () => {
       phase: 'awaiting_owner',
       ownerDecision: { required: true, kind: 'material_decision', question: 'Continue?', options: [] },
     });
-    await assert.rejects(
-      svc.controlGoal('project-director-1', goal.id, 'cancel'),
-      /while 1 Worker is running/,
-    );
-    assert.equal(goal.status, 'awaiting_owner');
-
-    boardStatus = 'done';
     const cancelled = await svc.controlGoal('project-director-1', goal.id, 'cancel');
     assert.equal(cancelled.phase, 'cancelled');
+    assert.deepEqual(calls, ['reclaim:t_goal_control', 'block:t_goal_control']);
+    assert.equal(goal.taskRecords[0].cancelQuiescedAt !== undefined, true);
 
     const retrySvc = service({ runtime: runtime({
       listTasks: async () => [{ id: 't_retry_blocked', status: 'done' }],
@@ -2042,6 +2176,21 @@ describe('DirectorService', () => {
     assert.equal(retrySvc.getDirector('project-director-1').activeGoalId, blocked.id);
     assert.equal(blocked.completedAt, null);
     assert.ok(blocked.events.some(event => event.phase === 'owner_retry_requested'));
+  });
+
+  it('keeps an active Goal non-terminal when a running Worker cannot be reclaimed for cancellation', async () => {
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [{ id: 't_cancel_reclaim_failure', status: 'running' }],
+      reclaimTask: async () => { throw new Error('reclaim unavailable'); },
+    }) });
+    const goal = seedActiveGoal(svc, {
+      taskId: 't_cancel_reclaim_failure', status: 'awaiting_owner', phase: 'awaiting_owner',
+      ownerDecision: { required: true, kind: 'material_decision', question: 'Cancel?', options: [] },
+    });
+
+    await assert.rejects(svc.controlGoal('project-director-1', goal.id, 'cancel'), /reclaim unavailable/);
+    assert.equal(goal.status, 'awaiting_owner');
+    assert.notEqual(goal.terminalReason, 'owner_cancelled');
   });
 
   it('rejects cancellation when a blocked ready card disappears from the board but is still live-running', async () => {
@@ -2340,6 +2489,12 @@ describe('DirectorService', () => {
     const goal = svc.getGoal(completedTurn.goalId);
     assert.equal(completedTurn.status, 'completed');
     assert.equal(goal.status, 'awaiting_owner');
+    assert.equal(goal.ownerDecision.context, '현재 응답 계약과 새 구현이 충돌합니다.');
+    assert.equal(goal.ownerDecision.recommendation, '활성 클라이언트 보호를 위해 keep을 권고합니다.');
+    assert.equal(goal.ownerDecision.optionImpacts[1].option, 'change');
+    const consoleDecision = svc.consoleSummary({ directorId: 'project-director-1' }).goals
+      .find(item => item.id === goal.id).ownerDecision;
+    assert.equal(consoleDecision.optionImpacts[1].impact, 'API는 단순해지지만 기존 클라이언트가 깨집니다.');
 
     const acceptedPromise = svc.answerGoalDecision('project-director-1', goal.id, {
       answer: '기존 호환성을 유지해.', selectedOption: 'keep',

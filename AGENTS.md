@@ -27,6 +27,7 @@ Do not regress the UI into a generic dashboard, a Kanban card wall, or a chat-on
 - Reject non-loopback peers and unrecognized Host headers before routing.
 - Never add remote control, LAN listening, Tailscale, tunnels, proxies, webhooks, messaging adapters, gateway mode, or daemon mode.
 - Hermes and Codex integration stays on local child-process stdio. Never start `hermes gateway`, `dashboard`, `serve`, or `kanban daemon`.
+- Never import, launch, proxy, call, or read state from Cockpit. Similar interaction patterns must be implemented inside Praetorium with its own runtime and UI code.
 - Never weaken Codex to a full-access sandbox. Worker writes are limited to the selected project and exact active board directory.
 - Strip inherited remote gateway, relay, webhook, and messaging environment variables.
 - Existing user project files, Git state, and Praetorium/Hermes durable state must be preserved. Never reset, clean, or discard them automatically.

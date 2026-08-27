@@ -82,6 +82,15 @@ test('operator model separates project chat from the selected Goal record', () =
   assert.deepEqual(buildConversation(goal, summary, director, 'project').map(item => item.text), ['status?', 'healthy']);
 });
 
+test('operator model shows a persisted queued message as accepted', () => {
+  const messages = buildConversation(null, {
+    recentRuns: [{ id: 'queued-chat', projectId: 'p1', prompt: 'keep this', status: 'queued', phase: 'waiting_for_director', createdAt: '2026-08-27T01:00:00Z' }],
+  }, { kind: 'project', projectId: 'p1' }, 'project');
+  assert.deepEqual(messages.map(item => [item.kind, item.text]), [
+    ['요청', 'keep this'], ['접수됨', '판단 진행 중 · 디렉터 대기'],
+  ]);
+});
+
 test('operator model restores persisted attachment thumbnails through the selected Director route', () => {
   const attachment = {
     id: 'attachment_11111111-1111-4111-8111-111111111111', name: 'screen.png', mimeType: 'image/png',
@@ -361,6 +370,7 @@ test('Director image selection applies the same bounded client limits as the loc
 test('operator model formats evidence without dumping raw object braces', () => {
   assert.equal(textValue({ taskId: 't1', attempts: 2 }), 'taskId · t1 · attempts · 2');
   assert.equal(statusText('awaiting_owner'), '오너 판단');
+  assert.equal(statusText('waiting_for_director'), '디렉터 대기');
   assert.equal(statusText('succeeded'), '완료');
   assert.equal(statusTone('blocked'), 'attention');
   assert.equal(statusTone('success'), 'done');

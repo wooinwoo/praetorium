@@ -11,6 +11,17 @@ const successStates = new Set(['done', 'completed', 'succeeded', 'success', 'arc
 const activeGoalStates = new Set(['clarifying', 'planning', 'executing', 'evaluating', 'remediating', 'verifying', 'awaiting_owner']);
 const guideableGoalStates = new Set(['clarifying', 'planning', 'executing', 'evaluating', 'remediating', 'verifying']);
 const EVIDENCE_PAGE_SIZE = 20;
+const decisionActionImpacts = {
+  approve: '검증된 계획을 표시된 승인 범위 안에서 실행합니다.',
+  reevaluate: '추가 검증을 수행한 뒤 Director가 현재 후보를 다시 평가합니다.',
+  extend: '자동 감독 한도를 4개 Wave와 수정 루프 1회만큼 늘리고 계속합니다.',
+  retry_evaluation: '현재 증거를 다시 수집하고 Director 평가를 재실행합니다.',
+  retry_initial_planning: '현재 정책과 요구사항으로 계획부터 다시 수립합니다.',
+  retry_infrastructure: '런타임과 보드 연결을 다시 확인한 뒤 현재 Goal을 재개합니다.',
+  retry_materialization: '중단된 현재 Wave 생성을 같은 Goal 안에서 다시 시도합니다.',
+  retry_authority: '이미 승인된 정확한 계획과 범위를 다시 검증한 뒤 실행을 재시도합니다.',
+  stop: '실행 중인 Worker가 멈췄는지 확인한 뒤 현재 Goal을 차단 상태로 종료합니다.',
+};
 
 const workerRoleNames = {
   'codex-implementer': '구현', remediator: '수정',
@@ -72,11 +83,43 @@ function LatestConclusion({ goal, runs, onOpen, onDecision }) {
   </button>;
 }
 
-function DirectorActivityPanel({ activity, goalId = null, compact = false }) {
+function WorkerNow({ goal, tasks, error, onOpen }) {
+  const priorities = { running: 0, executing: 0, planning: 0, materializing: 0, review: 1, blocked: 1, failed: 1, paused: 1, ready: 2, queued: 2, todo: 2, scheduled: 2 };
+  const current = tasks.map(task => ({ task, status: taskDisplayStatus(task) }))
+    .filter(item => Object.hasOwn(priorities, item.status))
+    .sort((left, right) => priorities[left.status] - priorities[right.status]);
+  const running = current.filter(item => priorities[item.status] === 0);
+  const attention = current.filter(item => priorities[item.status] === 1);
+  const waiting = current.filter(item => priorities[item.status] === 2);
+  const headline = error ? 'Worker 상태를 확인할 수 없음'
+    : running.length ? `Worker ${running.length}개 실행 중`
+    : attention.length ? `Worker ${attention.length}개 확인 필요`
+      : waiting.length ? `Worker ${waiting.length}개 실행 대기`
+        : activeGoalStates.has(goal?.status) ? `Worker 없음 · Director ${statusText(goal.status)}`
+          : '현재 실행 중인 Worker 없음';
+  const tone = error || attention.length ? 'attention' : running.length ? 'running' : waiting.length ? 'waiting' : 'idle';
+  return <section className={`worker-now tone-${tone}`} aria-labelledby="worker-now-title">
+    <header>
+      <span className="worker-now-signal"><i /></span>
+      <span><h2 id="worker-now-title">{headline}</h2><small>{error ? '마지막으로 확인된 상태만 표시합니다. Worker 목록을 다시 동기화하세요.' : current.length ? `실행 ${running.length} · 대기 ${waiting.length} · 확인 ${attention.length}` : 'Worker가 시작되면 여기에 가장 먼저 표시됩니다.'}</small></span>
+    </header>
+    {!!current.length && <ul className={`worker-now-list ${error ? 'stale' : ''}`} aria-label="현재 Worker">
+      {current.map(({ task, status }) => <li key={task.id}><button type="button" onClick={() => onOpen(task.id)}>
+          <span className={`task-tab-dot ${status}`} />
+          <span><strong>{workerTabName(tasks, task)}</strong><small>{task.title}</small></span>
+          <span className="worker-now-status">{error && <small>마지막 확인</small>}<Status value={status} /></span>
+          <Icon name="chevron" />
+        </button></li>)}
+    </ul>}
+  </section>;
+}
+
+function DirectorActivityPanel({ activity, goalId = null, compact = false, activityHeight = 112, setActivityHeight = () => {} }) {
+  const [open, setOpen] = useState(!compact);
   const scopedEvents = (activity?.events || []).filter(event => !goalId || event.goalId === goalId || ['ready', 'resync'].includes(event.type));
   const events = scopedEvents.slice(compact ? -5 : -18).reverse();
-  const summary = compact ? events[0]?.message || '첫 실행 이벤트를 기다리는 중…' : '운영 단계 · 체크포인트';
-  return <details className={`director-activity-panel ${compact ? 'compact' : ''}`} open={!compact}>
+  const summary = compact ? '세부 활동 펼치기' : '운영 단계 · 체크포인트';
+  return <details className={`director-activity-panel ${compact ? 'compact' : ''}`} open={open} onToggle={event => setOpen(event.currentTarget.open)} style={{ '--activity-height': `${activityHeight}px` }}>
     <summary>
       <span><Icon name="activity" /><strong>디렉터 공개 활동</strong><small aria-live="polite">{summary}</small></span>
       <span role="status" className={`activity-connection ${activity?.connected ? 'online' : 'reconnecting'}`}><i />{activity?.connected ? '실시간' : '재연결 중'}</span>
@@ -92,12 +135,12 @@ function DirectorActivityPanel({ activity, goalId = null, compact = false }) {
         </li>)}
       </ol> : <div className="activity-empty"><span className="activity-pulse" />첫 실행 이벤트를 기다리는 중…</div>}
     </div>
+    {compact && <Splitter label="디렉터 활동 영역 높이" side="bottom" orientation="horizontal" value={activityHeight} min={72} max={260} onChange={setActivityHeight} onReset={() => setActivityHeight(112)} />}
   </details>;
 }
 
-function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onSelectTask, onDirector, directorId, refresh, errors, taskTrace, selectedTask, supervision, liveActivity }) {
+function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onSelectTask, onOpenTask, onDirector, onDecision, directorId, refresh, errors, taskTrace, selectedTask, supervision, liveActivity, activityHeight, setActivityHeight }) {
   const scrollRef = useRef(null);
-  const decisionRef = useRef(null);
   const [follow, setFollow] = useState(true);
   const [traceLimit, setTraceLimit] = useState(160);
   const [logExpanded, setLogExpanded] = useState(false);
@@ -114,20 +157,20 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
   if (!goal) return <div className="workspace-empty"><Empty icon="branch" title="표시할 Goal이 없습니다">디렉터 채팅에서 새 목표를 보내세요.</Empty><button type="button" className="primary-button" onClick={onDirector}>디렉터 열기</button></div>;
   const ownerDecision = goal.ownerDecision?.required;
   const decisionHeadingId = `decision-${String(goal.id).replace(/[^a-zA-Z0-9_-]/g, '-')}-heading`;
-  const focusDecision = () => {
-    decisionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    decisionRef.current?.focus({ preventScroll: true });
+  const openDecision = () => {
+    const scrollTop = scrollRef.current?.scrollTop;
+    onDecision();
+    requestAnimationFrame(() => { if (scrollRef.current && scrollTop != null) scrollRef.current.scrollTop = scrollTop; });
   };
   return <div className={`trace-view ${logExpanded ? 'log-expanded' : 'log-collapsed'}`}>
     <GoalHeader directorId={directorId} goal={goal} tasks={tasks} supervision={supervision} onDirector={onDirector} refresh={refresh} />
-    <div className="conclusion-bar"><LatestConclusion goal={goal} runs={runs} onOpen={onDirector} onDecision={focusDecision} /></div>
+    <div className="worker-now-bar"><WorkerNow goal={goal} tasks={tasks} error={errors.board} onOpen={onOpenTask} /></div>
+    <div className="conclusion-bar"><LatestConclusion goal={goal} runs={runs} onOpen={onDirector} onDecision={openDecision} /></div>
     <div className="trace-content" ref={scrollRef} onScroll={event => setFollow(event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight < 48)}>
-      <DirectorActivityPanel activity={liveActivity} goalId={goal.id} compact />
-      {ownerDecision && <section ref={decisionRef} className="decision-gate" tabIndex="-1" aria-labelledby={decisionHeadingId}>
+      {ownerDecision && <section className="decision-gate" aria-labelledby={decisionHeadingId}>
         <header><span><Icon name="user" />오너 결정 필요</span><time>{formatClock(goal.ownerDecision.askedAt)}</time></header>
         <h2 id={decisionHeadingId}>{goal.ownerDecision.question}</h2>
-        {!!goal.ownerDecision.evidence?.length && <ul>{goal.ownerDecision.evidence.map(item => <li key={item}>{item}</li>)}</ul>}
-        <DecisionForm key={goal.ownerDecision.askedAt || goal.ownerDecision.question} directorId={directorId} goal={goal} onAccepted={refresh} />
+        <footer><span>배경·선택별 영향·근거·Worker 결과를 확인한 뒤 결정하세요.</span><button type="button" className="attention-button compact" onClick={openDecision}>판단 정보 열기 <Icon name="chevron" /></button></footer>
       </section>}
       {errors.goal && <ErrorNotice title="목표 상세 동기화 실패" onRetry={refresh}>{errors.goal} · 기존 기록을 보존합니다.</ErrorNotice>}
       {errors.board && <ErrorNotice title="Worker 목록 동기화 실패" onRetry={refresh}>{errors.board} · 마지막 Worker 목록을 보존합니다.</ErrorNotice>}
@@ -141,6 +184,7 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
           </button>)}
         </div>
       </section>
+      <DirectorActivityPanel activity={liveActivity} goalId={goal.id} compact activityHeight={activityHeight} setActivityHeight={setActivityHeight} />
     </div>
     <section className={`live-log-pane ${logExpanded ? 'expanded' : 'collapsed'}`}>
       <div className="live-log">
@@ -153,7 +197,7 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
   </div>;
 }
 
-function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, chatScope, setChatScope, projectMessages, onLoadOlderMessages, liveActivity }) {
+function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, chatScope, setChatScope, projectMessages, onLoadOlderMessages, liveActivity, activityHeight, setActivityHeight }) {
   const conversationSummary = chatScope === 'project' ? { recentRuns: projectMessages?.items || [] } : summary;
   const messages = useMemo(() => buildConversation(goal, conversationSummary, director, chatScope), [goal, conversationSummary, director, chatScope]);
   const canGuideGoal = chatScope === 'goal' && guideableGoalStates.has(goal?.status);
@@ -165,7 +209,7 @@ function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpen
         <span><small>완료 아님 · 오너 결정 대기</small><strong>{goal.ownerDecision.question}</strong></span>
         <button type="button" className="attention-button" onClick={onOpenDecision}>결정 화면 열기 <Icon name="chevron" /></button>
       </section>}
-      <DirectorActivityPanel activity={liveActivity} goalId={chatScope === 'goal' ? goal?.id : null} compact />
+      <DirectorActivityPanel activity={liveActivity} goalId={chatScope === 'goal' ? goal?.id : null} compact activityHeight={activityHeight} setActivityHeight={setActivityHeight} />
     </div>
     <DirectorComposer
       key={`${director?.id}:${chatScope}:${chatScope === 'goal' ? goal?.id || 'none' : 'project'}`}
@@ -195,15 +239,65 @@ function CompletedTasksMenu({ tasks, onOpen }) {
   </details>;
 }
 
-function WorkerView({ task, detail, trace, error, onRetry }) {
+function DecisionBrief({ goal, tasks }) {
+  const decision = goal.ownerDecision;
+  const analysis = goal.analysis || {};
+  const risks = analysis.risks || [];
+  const unknowns = analysis.unknowns || [];
+  const completed = tasks.filter(task => successStates.has(taskDisplayStatus(task))).length;
+  const problems = tasks.filter(task => ['blocked', 'failed'].includes(taskDisplayStatus(task))).length;
+  const currentWave = (goal.waves || []).findLast(wave => !successStates.has(wave.status)) || (goal.waves || []).at(-1);
+  const recentWorkerEvidence = tasks.map(task => {
+    const result = textValue(task.result || task.report || task.summary);
+    const checkpoint = textValue(task.checkpoint);
+    if (!result && !checkpoint) return null;
+    return {
+      task,
+      content: result || checkpoint,
+      kind: result && taskIsTerminal(task) ? '최종 결과' : '공개 체크포인트',
+    };
+  }).filter(Boolean).slice(-3).reverse();
+  const impactByOption = new Map((Array.isArray(decision.optionImpacts) ? decision.optionImpacts : []).map(item => [item.option, item.impact]));
+  const optionImpacts = (decision.options || []).map(option => ({
+    option,
+    impact: impactByOption.get(option) || decisionActionImpacts[decision.optionActions?.[option]]
+      || '선택 내용을 기록하고 Director가 현재 증거와 다음 단계를 다시 평가합니다.',
+  }));
+  return <>
+    <section className="inspector-block decision-brief">
+      <h3>결정 전 확인</h3>
+      <dl className="decision-state">
+        <div><dt>현재 Goal</dt><dd>{goal.objective}</dd></div>
+        <div><dt>진행 상태</dt><dd>{tasks.length ? `성공 ${completed} / 전체 ${tasks.length}${problems ? ` · 문제 ${problems}` : ''}` : 'Worker 없음'}{currentWave ? ` · Wave ${currentWave.index || (goal.waves || []).indexOf(currentWave) + 1}` : ''}</dd></div>
+      </dl>
+      {decision.context && <p className="decision-context">{decision.context}</p>}
+      <div className={`decision-recommendation ${decision.recommendation ? '' : 'missing'}`}><span>Director 권고</span><strong>{decision.recommendation || '권고가 기록되지 않았습니다. 확인된 근거와 선택 후 동작을 기준으로 결정하세요.'}</strong></div>
+    </section>
+    {!!optionImpacts.length && <section className="inspector-block decision-impact-section"><h3>선택 후 동작</h3><ol className="decision-impact-list">{optionImpacts.map(item => <li key={item.option}><strong>{item.option}</strong><p>{item.impact}</p></li>)}</ol></section>}
+    {!!decision.evidence?.length && <section className="inspector-block decision-facts"><h3>확인된 근거</h3><ul>{decision.evidence.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}</ul></section>}
+    {!!recentWorkerEvidence.length && <section className="inspector-block decision-worker-evidence"><h3>관련 Worker 근거</h3><ul>{recentWorkerEvidence.map(item => <li key={item.task.id}><span><strong>{item.task.title}</strong><span><small>{item.kind}</small><Status value={taskDisplayStatus(item.task)} /></span></span><p>{item.content}</p></li>)}</ul></section>}
+    {!!(risks.length || unknowns.length) && <section className="inspector-block decision-risks"><details><summary>위험·미확인 사항 {risks.length + unknowns.length}개</summary>{!!risks.length && <div><strong>위험</strong><ul>{risks.map((item, index) => <li key={`risk:${index}`}>{item}</li>)}</ul></div>}{!!unknowns.length && <div><strong>미확인</strong><ul>{unknowns.map((item, index) => <li key={`unknown:${index}`}>{item}</li>)}</ul></div>}</details></section>}
+  </>;
+}
+
+function WorkerView({ directorId, task, detail, trace, detailError, traceError, onRetry }) {
   const [commentLimit, setCommentLimit] = useState(EVIDENCE_PAGE_SIZE);
   const [eventLimit, setEventLimit] = useState(EVIDENCE_PAGE_SIZE);
+  const [followLog, setFollowLog] = useState(true);
+  const [controlError, setControlError] = useState('');
+  const logRef = useRef(null);
   useEffect(() => {
     setCommentLimit(EVIDENCE_PAGE_SIZE);
     setEventLimit(EVIDENCE_PAGE_SIZE);
+    setFollowLog(true);
+    setControlError('');
   }, [task?.id]);
+  useEffect(() => {
+    if (followLog && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [followLog, trace?.log]);
   if (!task) return <div className="workspace-empty"><Empty icon="terminal" title="Worker를 선택하세요">Trace나 상단 Worker 탭에서 작업을 여세요.</Empty></div>;
   const raw = detail?.task || task;
+  const record = detail?.praetoriumRecord;
   const allComments = Array.isArray(detail?.comments) ? detail.comments : [];
   const allEvents = Array.isArray(detail?.events) ? detail.events : [];
   const comments = allComments.slice(-commentLimit);
@@ -215,20 +309,44 @@ function WorkerView({ task, detail, trace, error, onRetry }) {
   const validation = detail?.validation || raw.validation || runs.at(-1)?.validation || null;
   const validationSummary = textValue(validation?.summary || validation?.report || validation?.result || validation);
   const finalEvidence = detail?.report || raw.report || raw.result || runs.at(-1)?.report || runs.at(-1)?.output || runs.at(-1)?.result || latestSummary || validationSummary;
-  const displayStatus = taskDisplayStatus(task, detail?.praetoriumRecord);
-  return <section className="worker-view">
-    <header className="worker-header"><span className="worker-glyph"><Icon name="command" /></span><span><small>{task.assignee || task.profile || 'WORKER'}</small><h1>{task.title}</h1></span><Status value={displayStatus} /></header>
-    {error && <ErrorNotice title="Worker 상세 동기화 실패" onRetry={onRetry}>{error}</ErrorNotice>}
-    <div className="worker-summary-grid">
-      <dl><div><dt>Task ID</dt><dd><code>{task.id}</code></dd></div><div><dt>상태</dt><dd>{statusText(displayStatus)}</dd></div><div><dt>시작</dt><dd>{task.started_at ? `${formatClock(task.started_at)} · ${relativeTime(task.started_at)}` : '아직 시작하지 않음'}</dd></div><div><dt>담당</dt><dd>{task.assignee || task.profile || '미배정'}</dd></div></dl>
-      <article><h2>공개 체크포인트</h2><p>{textValue(latestSummary || raw.checkpoint || raw.description) || '아직 Worker가 외부화한 체크포인트가 없습니다.'}</p></article>
+  const displayStatus = taskDisplayStatus(task, record);
+  const pausedByOwner = taskPausedByOwner(task, record);
+  const workerTerminal = taskIsTerminal(task, record);
+  const controlAction = task?.status === 'running' ? 'pause' : pausedByOwner ? 'resume' : null;
+  const logText = trace?.log || (trace?.availability === 'not_started' ? 'Worker 실행 전 · 로그 없음' : '로그를 불러오는 중…');
+  const syncText = traceError ? '로그 동기화 실패' : trace?.observedAt ? `${formatClock(trace.observedAt)} 동기화` : '동기화 중';
+  return <section className="worker-view worker-terminal-view">
+    <header className="worker-header worker-terminal-header">
+      <span className="worker-glyph"><Icon name="command" /></span>
+      <span><small>{task.assignee || task.profile || 'WORKER'}</small><h1>{task.title}</h1></span>
+      <span className="worker-terminal-state"><Status value={displayStatus} /><code>{task.id}</code></span>
+      <span className="worker-terminal-actions">
+        <small>{syncText}</small>
+        {!followLog && <button type="button" className="text-button compact" onClick={() => setFollowLog(true)}>최신 로그로</button>}
+        {controlAction && <button type="button" className="secondary-button compact" onClick={() => taskControl(directorId, task.id, controlAction, onRetry).catch(nextError => setControlError(nextError.message))}>{controlAction === 'pause' ? '일시정지' : '재개'}</button>}
+      </span>
+    </header>
+    {detailError && <ErrorNotice title="Worker 상세 동기화 실패" onRetry={onRetry}>{detailError}</ErrorNotice>}
+    {controlError && <p className="worker-control-error form-error" role="alert">{controlError}</p>}
+    <div className="worker-terminal-grid">
+      <section className="worker-terminal-log" aria-label="Worker 실행 터미널">
+        <header className="section-title"><span><Icon name="terminal" />명령·결과 원문</span><span className="worker-log-status">{traceError ? <><small role="alert">{traceError}</small><button type="button" onClick={onRetry}>다시 시도</button></> : <small>{followLog ? '최신 로그 따라가는 중' : '과거 로그 보는 중'}</small>}</span></header>
+        <pre ref={logRef} tabIndex="0" onScroll={event => setFollowLog(event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight < 48)}>{logText}</pre>
+        <footer className="worker-terminal-composer">
+          <WorkerIntervention key={task.id} directorId={directorId} taskId={task.id} disabled={workerTerminal} onAccepted={onRetry} />
+        </footer>
+      </section>
+      <aside className="worker-terminal-context" aria-label="Worker 공개 근거">
+        <section className="worker-terminal-summary">
+          <header><strong>현재 체크포인트</strong><Status value={displayStatus} /></header>
+          <p>{textValue(latestSummary || raw.checkpoint || raw.description) || '아직 Worker가 외부화한 체크포인트가 없습니다.'}</p>
+          <dl><div><dt>시작</dt><dd>{task.started_at ? `${formatClock(task.started_at)} · ${relativeTime(task.started_at)}` : '아직 시작하지 않음'}</dd></div><div><dt>담당</dt><dd>{task.assignee || task.profile || '미배정'}</dd></div></dl>
+        </section>
+        <section><header className="section-title"><span><Icon name="message" />공개 체크포인트</span><small>{comments.length} / {allComments.length}</small></header><div className="evidence-list">{omittedComments > 0 && <button type="button" className="evidence-more" onClick={() => setCommentLimit(limit => limit + EVIDENCE_PAGE_SIZE)}>이전 {Math.min(EVIDENCE_PAGE_SIZE, omittedComments)}개 보기</button>}{comments.map((comment, index) => { const at = comment.createdAt || comment.created_at || comment.at; return <article key={comment.id || `${at}:${index}`}><header><strong>{comment.author || 'Worker'}</strong><time dateTime={at || undefined}>{formatClock(at)}</time></header><p>{textValue(comment.body || comment.message || comment)}</p></article>; })}{!comments.length && <p className="evidence-empty">공개 체크포인트가 아직 없습니다.</p>}</div></section>
+        <section><header className="section-title"><span><Icon name="activity" />수명주기 증거</span><small>{events.length} / {allEvents.length}</small></header><div className="evidence-list">{omittedEvents > 0 && <button type="button" className="evidence-more" onClick={() => setEventLimit(limit => limit + EVIDENCE_PAGE_SIZE)}>이전 {Math.min(EVIDENCE_PAGE_SIZE, omittedEvents)}개 보기</button>}{events.map((event, index) => { const at = event.createdAt || event.created_at || event.at; return <article key={event.id || `${at}:${index}`}><header><strong>{statusText(event.status || event.phase || event.type || event.kind)}</strong><time dateTime={at || undefined}>{formatClock(at)}</time></header><p>{textValue(event.message || event.details || event.payload || event)}</p></article>; })}{!events.length && <p className="evidence-empty">수명주기 이벤트가 아직 없습니다.</p>}</div></section>
+        <section className="final-evidence"><header className="section-title"><span><Icon name="check" />최종 결과·검증</span><small>{runs.length ? `${runs.length} runs` : ''}</small></header><p>{textValue(finalEvidence) || '최종 결과나 구조화 검증이 아직 없습니다.'}</p>{validation && <div className="validation-evidence"><strong>구조화 검증</strong>{validationSummary && <p>{validationSummary}</p>}<details><summary>검증 원문 보기</summary><pre>{typeof validation === 'string' ? validation : JSON.stringify(validation, null, 2)}</pre></details></div>}</section>
+      </aside>
     </div>
-    <div className="worker-evidence-grid">
-      <section><header className="section-title"><span><Icon name="message" />공개 체크포인트</span><small>{comments.length} / {allComments.length}</small></header><div className="evidence-list">{omittedComments > 0 && <button type="button" className="evidence-more" onClick={() => setCommentLimit(limit => limit + EVIDENCE_PAGE_SIZE)}>이전 {Math.min(EVIDENCE_PAGE_SIZE, omittedComments)}개 보기</button>}{comments.map((comment, index) => { const at = comment.createdAt || comment.created_at || comment.at; return <article key={comment.id || `${at}:${index}`}><header><strong>{comment.author || 'Worker'}</strong><time dateTime={at || undefined}>{formatClock(at)}</time></header><p>{textValue(comment.body || comment.message || comment)}</p></article>; })}{!comments.length && <p className="evidence-empty">공개 체크포인트가 아직 없습니다.</p>}</div></section>
-      <section><header className="section-title"><span><Icon name="activity" />수명주기 증거</span><small>{events.length} / {allEvents.length}</small></header><div className="evidence-list">{omittedEvents > 0 && <button type="button" className="evidence-more" onClick={() => setEventLimit(limit => limit + EVIDENCE_PAGE_SIZE)}>이전 {Math.min(EVIDENCE_PAGE_SIZE, omittedEvents)}개 보기</button>}{events.map((event, index) => { const at = event.createdAt || event.created_at || event.at; return <article key={event.id || `${at}:${index}`}><header><strong>{statusText(event.status || event.phase || event.type || event.kind)}</strong><time dateTime={at || undefined}>{formatClock(at)}</time></header><p>{textValue(event.message || event.details || event.payload || event)}</p></article>; })}{!events.length && <p className="evidence-empty">수명주기 이벤트가 아직 없습니다.</p>}</div></section>
-      <section className="final-evidence"><header className="section-title"><span><Icon name="check" />최종 결과·검증</span><small>{runs.length ? `${runs.length} runs` : ''}</small></header><p>{textValue(finalEvidence) || '최종 결과나 구조화 검증이 아직 없습니다.'}</p>{validation && <div className="validation-evidence"><strong>구조화 검증</strong>{validationSummary && <p>{validationSummary}</p>}<details><summary>검증 원문 보기</summary><pre>{typeof validation === 'string' ? validation : JSON.stringify(validation, null, 2)}</pre></details></div>}</section>
-    </div>
-    <div className="worker-log-full"><header className="section-title"><span><Icon name="terminal" />명령·결과 원문</span><small>{trace?.observedAt ? `동기화 ${formatClock(trace.observedAt)}` : ''}</small></header><pre>{trace?.log || (trace?.availability === 'not_started' ? 'Worker 실행 전 · 로그 없음' : '로그를 불러오는 중…')}</pre></div>
   </section>;
 }
 
@@ -239,13 +357,14 @@ async function taskControl(directorId, taskId, action, refresh) {
   refresh();
 }
 
-export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task, taskDetail, taskTrace, errors, refresh, onClose }) {
+export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task, tasks = [], taskDetail, taskTrace, errors, refresh, decisionReady = true, workerControls = true, onClose }) {
   const [controlError, setControlError] = useState('');
   const record = taskDetail?.praetoriumRecord;
   const pausedByOwner = taskPausedByOwner(task, record);
   const workerTerminal = taskIsTerminal(task, record);
   const displayStatus = taskDisplayStatus(task, record);
   const controlAction = task?.status === 'running' ? 'pause' : pausedByOwner ? 'resume' : null;
+  const selectedDecision = selectedEntry?.type === 'decision' && goal?.ownerDecision?.required;
   useEffect(() => { setControlError(''); }, [task?.id]);
   return <aside id={id} className="inspector" aria-label="Inspector">
     <header><span><strong>세부 정보</strong><small>{task ? 'Worker' : selectedEntry?.eyebrow || '선택한 기록'}</small></span>{onClose && <button ref={closeRef} className="icon-button inspector-close" type="button" onClick={onClose} aria-label="세부 정보 닫기"><Icon name="x" /></button>}</header>
@@ -254,12 +373,16 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
         <section className="inspector-hero"><span className="worker-glyph"><Icon name="command" /></span><small>{task.assignee || task.profile || 'WORKER'}</small><h2>{task.title}</h2><Status value={displayStatus} /></section>
         <section className="inspector-block"><h3>실행 정보</h3><dl className="detail-list"><div><dt>Task ID</dt><dd><code>{task.id}</code></dd></div><div><dt>상태</dt><dd>{statusText(displayStatus)}</dd></div>{pausedByOwner && <div><dt>오너 제어</dt><dd className="attention-copy">일시정지됨 · 재개 가능</dd></div>}<div><dt>시작</dt><dd>{formatClock(task.started_at || task.startedAt)}</dd></div><div><dt>로그</dt><dd>{taskTrace?.availability === 'not_started' ? '실행 전' : taskTrace?.observedAt ? '동기화됨' : '확인 중'}</dd></div></dl></section>
         {!!record?.interventions?.length && <section className="inspector-block"><h3>오너 지시 기록</h3><div className="receipt-list">{record.interventions.map(item => <article key={item.id}><strong>{item.message}</strong><small>{interventionReceiptText(item)}</small>{item.deliveryError && <em>{item.deliveryError}</em>}</article>)}</div></section>}
-        <section className="inspector-block"><WorkerIntervention key={task.id} directorId={directorId} taskId={task.id} disabled={workerTerminal} onAccepted={refresh} /></section>
-        {controlAction && <section className="inspector-block control-row"><button type="button" className="secondary-button" onClick={() => taskControl(directorId, task.id, controlAction, refresh).catch(error => setControlError(error.message))}>{controlAction === 'pause' ? 'Worker 일시정지' : 'Worker 재개'}</button>{controlError && <p className="form-error">{controlError}</p>}</section>}
+        {workerControls ? <>
+          <section className="inspector-block"><WorkerIntervention key={task.id} directorId={directorId} taskId={task.id} disabled={workerTerminal} onAccepted={refresh} /></section>
+          {controlAction && <section className="inspector-block control-row"><button type="button" className="secondary-button" onClick={() => taskControl(directorId, task.id, controlAction, refresh).catch(error => setControlError(error.message))}>{controlAction === 'pause' ? 'Worker 일시정지' : 'Worker 재개'}</button>{controlError && <p className="form-error">{controlError}</p>}</section>}
+        </> : <section className="inspector-block"><p className="inspector-copy">Worker 탭 아래 입력에서 지시하거나 실행을 제어할 수 있습니다.</p></section>}
       </> : selectedEntry ? <>
         <section className="inspector-hero"><small>{selectedEntry.eyebrow}</small><h2>{selectedEntry.title}</h2><Status value={selectedEntry.status} /></section>
-        <section className="inspector-block"><h3>상세</h3><p className="inspector-copy">{selectedEntry.detail || '추가 상세 정보가 없습니다.'}</p></section>
-        {selectedEntry.type === 'decision' && goal?.ownerDecision?.required && <section className="inspector-block inspector-decision"><h3>결정 전달</h3><DecisionForm key={goal.ownerDecision.askedAt || goal.ownerDecision.question} directorId={directorId} goal={goal} onAccepted={refresh} /></section>}
+        {selectedDecision ? <DecisionBrief goal={goal} tasks={tasks} /> : <section className="inspector-block"><h3>상세</h3><p className="inspector-copy">{selectedEntry.detail || '추가 상세 정보가 없습니다.'}</p></section>}
+        {selectedDecision && <section className="inspector-block inspector-decision"><h3>결정 전달</h3>{decisionReady
+          ? <DecisionForm key={goal.ownerDecision.askedAt || goal.ownerDecision.question} directorId={directorId} goal={goal} onAccepted={refresh} />
+          : <p className="decision-unavailable" role="status">{errors.goal ? '전체 결정 범위를 불러오지 못했습니다. 다시 동기화한 뒤 결정하세요.' : '전체 결정 범위를 불러오는 중입니다. 확인 전에는 결정할 수 없습니다.'}</p>}</section>}
         {selectedEntry.raw && <section className="inspector-block"><details><summary>증거 원문</summary><pre className="evidence-json">{JSON.stringify(selectedEntry.raw, null, 2)}</pre></details></section>}
       </> : <Empty icon="activity" title="Trace 항목을 선택하세요">판단 근거, Worker 상태, 실행 원문을 여기서 확인합니다.</Empty>}
       {errors.task && <ErrorNotice title="Worker 상세 실패" onRetry={refresh}>{errors.task}</ErrorNotice>}
@@ -268,12 +391,14 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
   </aside>;
 }
 
-export default function Workspace({ activeTab, setActiveTab, chatScope, setChatScope, director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, lastSyncedAt = null, liveActivity }) {
-  const tasks = useMemo(() => goalTasks(board, goalDetail || goal).map(task => task.id === taskDetail?.task?.id
+export default function Workspace({ activeTab, setActiveTab, chatScope, setChatScope, director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, lastSyncedAt = null, liveActivity }) {
+  const detailedGoal = goalDetail?.id === goal?.id ? goalDetail : null;
+  const currentGoal = detailedGoal || goal;
+  const tasks = useMemo(() => goalTasks(board, currentGoal).map(task => task.id === taskDetail?.task?.id
     ? { ...task, comments: taskDetail.comments || [], events: taskDetail.events || [] }
-    : task), [board, goalDetail, goal, taskDetail]);
-  const runs = goalDetail?.runs || (summary?.recentRuns || []).filter(run => run.goalId === goal?.id);
-  const trace = useMemo(() => buildTrace(goalDetail || goal, runs, tasks), [goalDetail, goal, runs, tasks]);
+    : task), [board, currentGoal, taskDetail]);
+  const runs = detailedGoal?.runs || (summary?.recentRuns || []).filter(run => run.goalId === goal?.id);
+  const trace = useMemo(() => buildTrace(currentGoal, runs, tasks), [currentGoal, runs, tasks]);
   const [selectedEntry, setSelectedEntry] = useState(null);
   const inspectorToggleRef = useRef(null);
   const inspectorCloseRef = useRef(null);
@@ -282,11 +407,11 @@ export default function Workspace({ activeTab, setActiveTab, chatScope, setChatS
   const taskTabs = tasks.filter(task => !taskIsTerminal(task) || activeTab === `task:${task.id}`);
   const supervision = useMemo(() => goalSupervisionHealth({
     director,
-    goal: goalDetail || goal,
+    goal: currentGoal,
     runs,
     scheduler: summary?.scheduler,
     lastSyncedAt,
-  }), [director, goalDetail, goal, runs, summary?.scheduler, lastSyncedAt]);
+  }), [director, currentGoal, runs, summary?.scheduler, lastSyncedAt]);
 
   useEffect(() => {
     if (!selectedTaskId) {
@@ -318,6 +443,12 @@ export default function Workspace({ activeTab, setActiveTab, chatScope, setChatS
     selectTask(id);
     setSelectedEntry(trace.find(entry => entry.type === 'task' && entry.taskId === id) || trace.find(entry => entry.taskId === id) || null);
     setActiveTab(`task:${id}`);
+    setInspectorOpen(false);
+  };
+  const openOwnerDecision = () => {
+    setSelectedEntry(trace.findLast(entry => entry.type === 'decision') || null);
+    setActiveTab('trace');
+    setInspectorOpen(true);
   };
   const tabId = value => `workspace-tab-${value.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const handleTabKey = event => {
@@ -338,17 +469,17 @@ export default function Workspace({ activeTab, setActiveTab, chatScope, setChatS
         <button id={tabId('director')} type="button" role="tab" aria-controls="workspace" aria-selected={activeTab === 'director'} tabIndex={activeTab === 'director' ? 0 : -1} className={activeTab === 'director' ? 'selected' : ''} onClick={() => setActiveTab('director')}><span className="tab-avatar">D</span>디렉터{director?.status === 'running' && <i className="tab-live" />}</button>
         <span className="tab-divider" />
         <div className="worker-tabs">
-          {taskTabs.map(task => <button id={tabId(`task:${task.id}`)} type="button" key={task.id} role="tab" aria-controls="workspace" aria-selected={activeTab === `task:${task.id}`} tabIndex={activeTab === `task:${task.id}` ? 0 : -1} className={activeTab === `task:${task.id}` ? 'selected' : ''} onClick={() => openTask(task.id)} title={`${workerTabName(tasks, task)} · ${task.title}`}><span className={`task-tab-dot ${taskDisplayStatus(task)}`} /><span>{workerTabName(tasks, task)}</span><small>{taskPausedByOwner(task) ? '일시정지 · 재개 가능' : task.title}</small></button>)}
+          {taskTabs.map(task => <button id={tabId(`task:${task.id}`)} type="button" key={task.id} role="tab" aria-controls="workspace" aria-selected={activeTab === `task:${task.id}`} tabIndex={activeTab === `task:${task.id}` ? 0 : -1} className={`${activeTab === `task:${task.id}` ? 'selected ' : ''}worker-tab-${taskDisplayStatus(task)}`} onClick={() => openTask(task.id)} title={`${workerTabName(tasks, task)} · ${task.title}`}><span className={`task-tab-dot ${taskDisplayStatus(task)}`} /><span>{workerTabName(tasks, task)}</span><small>{taskPausedByOwner(task) ? '일시정지 · 재개 가능' : task.title}</small></button>)}
         </div>
         <CompletedTasksMenu tasks={completedTasks} onOpen={openTask} />
       </nav>
       <button ref={inspectorToggleRef} type="button" className={`inspector-toggle ${inspectorOpen ? 'selected' : ''}`} aria-controls="inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><Icon name="panel" /><span>세부</span></button>
     </div>
     <main id="workspace" className="workspace" role="tabpanel" aria-labelledby={tabId(activeTab)} tabIndex="-1">
-      {activeTab === 'director' ? <DirectorView director={director} goal={goalDetail || goal} summary={summary} refresh={refresh} chatScope={chatScope} setChatScope={setChatScope} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} liveActivity={liveActivity} onOpenDecision={() => setActiveTab('trace')} onGoalAccepted={id => { if (id) { selectGoal(id); setChatScope('goal'); setActiveTab('trace'); } }} />
-        : activeTab.startsWith('task:') ? <WorkerView task={selectedTask} detail={taskDetail} trace={taskTrace} error={errors.task} onRetry={refresh} />
-          : <TraceView goal={goalDetail || goal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={selectTask} onDirector={() => { setChatScope('goal'); setActiveTab('director'); }} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} />}
+      {activeTab === 'director' ? <DirectorView director={director} goal={currentGoal} summary={summary} refresh={refresh} chatScope={chatScope} setChatScope={setChatScope} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} onOpenDecision={openOwnerDecision} onGoalAccepted={id => { if (id) { selectGoal(id); setChatScope('goal'); setActiveTab('trace'); } }} />
+        : activeTab.startsWith('task:') ? <WorkerView directorId={director?.id} task={selectedTask} detail={taskDetail} trace={taskTrace} detailError={errors.task} traceError={errors.trace} onRetry={refresh} />
+          : <TraceView goal={currentGoal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={selectTask} onOpenTask={openTask} onDirector={() => { setChatScope('goal'); setActiveTab('director'); }} onDecision={openOwnerDecision} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} />}
     </main>
-    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={goalDetail || goal} selectedEntry={selectedEntry} task={(selectedEntry?.type === 'task' || activeTab.startsWith('task:')) ? selectedTask : null} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} onClose={() => setInspectorOpen(false)} /></>}
+    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={(selectedEntry?.type === 'task' || activeTab.startsWith('task:')) ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={!activeTab.startsWith('task:')} onClose={() => setInspectorOpen(false)} /></>}
   </>;
 }

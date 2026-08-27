@@ -133,28 +133,30 @@ export function initials(value = '') {
   return clean.split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase();
 }
 
-export function Splitter({ label, side, value, min, max, onChange, onReset, ref }) {
+export function Splitter({ label, side, value, min, max, onChange, onReset, orientation = 'vertical', ref }) {
   const drag = useRef(null);
+  const horizontal = orientation === 'horizontal';
   const paneWidth = splitter => {
+    if (horizontal) return value;
     const pane = side === 'left' ? splitter.previousElementSibling : splitter.nextElementSibling;
     return pane?.getBoundingClientRect().width || value;
   };
   const begin = event => {
-    drag.current = { x: event.clientX, value: paneWidth(event.currentTarget) };
+    drag.current = { position: horizontal ? event.clientY : event.clientX, value: paneWidth(event.currentTarget) };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const move = event => {
     if (!drag.current) return;
-    const delta = event.clientX - drag.current.x;
-    onChange(Math.max(min, Math.min(max, drag.current.value + (side === 'left' ? delta : -delta))));
+    const delta = (horizontal ? event.clientY : event.clientX) - drag.current.position;
+    onChange(Math.max(min, Math.min(max, drag.current.value + (side === 'right' ? -delta : delta))));
   };
   return <button
     ref={ref}
     type="button"
-    className={`splitter splitter-${side}`}
+    className={`splitter splitter-${side} ${horizontal ? 'splitter-horizontal' : ''}`}
     role="separator"
     aria-label={label}
-    aria-orientation="vertical"
+    aria-orientation={orientation}
     aria-valuemin={min}
     aria-valuemax={max}
     aria-valuenow={Math.round(value)}
@@ -164,11 +166,12 @@ export function Splitter({ label, side, value, min, max, onChange, onReset, ref 
     onPointerCancel={() => { drag.current = null; }}
     onDoubleClick={onReset}
     onKeyDown={event => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+      const keys = horizontal ? ['ArrowUp', 'ArrowDown', 'Home'] : ['ArrowLeft', 'ArrowRight', 'Home'];
+      if (!keys.includes(event.key)) return;
       event.preventDefault();
       if (event.key === 'Home') return onReset();
-      const direction = event.key === 'ArrowRight' ? 1 : -1;
-      onChange(Math.max(min, Math.min(max, paneWidth(event.currentTarget) + (side === 'left' ? direction : -direction) * 16)));
+      const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1;
+      onChange(Math.max(min, Math.min(max, paneWidth(event.currentTarget) + (side === 'right' ? -direction : direction) * 16)));
     }}
   />;
 }

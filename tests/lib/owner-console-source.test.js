@@ -161,7 +161,7 @@ test('Owner console provides readable evidence text and removes hidden offscreen
   assert.match(app, /Math\.max\(\.9/);
   assert.match(app, /Math\.min\(1\.25/);
   assert.match(css, /font-size: calc\(16px \* var\(--ui-scale\)\)/);
-  assert.match(css, /\.live-log pre, \.worker-log-full pre[\s\S]*overflow: auto/);
+  assert.match(css, /\.live-log pre, \.worker-terminal-log pre[\s\S]*overflow: auto/);
   assert.match(css, /\.live-log-pane[\s\S]*min-height: 0/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.primary-button, \.secondary-button, \.load-older, \.text-button \{ min-height: 44px; \}/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.director-composer select \{ height: 44px; \}/);
@@ -216,7 +216,7 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   ]);
   assert.match(html, /class="skip-link" href="#workspace"/);
   assert.match(common, /role="separator"/);
-  assert.match(common, /aria-orientation="vertical"/);
+  assert.match(common, /aria-orientation=\{orientation\}/);
   assert.match(common, /setPointerCapture/);
   assert.match(common, /releasePointerCapture/);
   assert.match(common, /onDoubleClick=\{onReset\}/);
@@ -233,7 +233,7 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(workspace, /Worker 원문 로그/);
   assert.match(workspace, /<Splitter label="세부 정보 너비"/);
   assert.match(workspace, /onClose=\{\(\) => setInspectorOpen\(false\)\}/);
-  assert.match(workspace, /selectedEntry\.type === 'decision'/);
+  assert.match(workspace, /selectedEntry\?\.type === 'decision'/);
   assert.match(workspace, /const preview = String\(presentation\.content/);
   assert.match(workspace, /setSelectedEntry\(trace\.find\(entry => entry\.type === 'task' && entry\.taskId === id\)/);
   assert.match(workspace, /inspectorCloseRef\.current\?\.focus/);
@@ -258,6 +258,26 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.equal(_test.workspaceViewKind('unknown'), 'overview');
 });
 
+test('Worker tabs expose a live log console with direct bounded intervention', async () => {
+  const [workspace, forms, css] = await Promise.all([
+    source('src/components/Workspace.jsx'), source('src/components/forms.jsx'), source('src/styles.css'),
+  ]);
+  assert.match(workspace, /className="worker-view worker-terminal-view"/);
+  assert.match(workspace, /className="worker-terminal-log" aria-label="Worker 실행 터미널"/);
+  assert.match(workspace, /setFollowLog\(event\.currentTarget\.scrollHeight/);
+  assert.match(workspace, /<WorkerIntervention key=\{task\.id\} directorId=\{directorId\}/);
+  assert.match(workspace, /setInspectorOpen\(false\)/);
+  assert.match(workspace, /workerControls=\{!activeTab\.startsWith\('task:'\)\}/);
+  assert.match(workspace, /detailError=\{errors\.task\} traceError=\{errors\.trace\}/);
+  assert.match(forms, /event\.currentTarget\.form\?\.requestSubmit\(\)/);
+  assert.match(forms, /const fieldId = useId\(\)/);
+  assert.match(forms, /const submittingRef = useRef\(false\)/);
+  assert.match(forms, /disabled=\{disabled \|\| pending\}/);
+  assert.match(css, /\.worker-terminal-grid[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(260px, 34%\)/);
+  assert.match(css, /\.worker-terminal-log[\s\S]*grid-template-rows: 36px minmax\(0, 1fr\) auto/);
+  assert.match(css, /@container \(max-width: 620px\)[\s\S]*\.worker-terminal-log pre \{ overscroll-behavior-y: auto; \}/);
+});
+
 test('Director channel uses durable Goal-scoped chat and explicit decision or conclusion bubbles', async () => {
   const [forms, model, workspace, css] = await Promise.all([
     source('src/components/forms.jsx'), source('src/domain/operator-model.js'), source('src/components/Workspace.jsx'), source('src/styles.css'),
@@ -271,8 +291,9 @@ test('Director channel uses durable Goal-scoped chat and explicit decision or co
   assert.match(forms, /!event\.nativeEvent\.isComposing/);
   assert.match(forms, /<textarea id="director-prompt" name="prompt" rows="2"/);
   assert.match(workspace, /const events = scopedEvents\.slice\(compact \? -5 : -18\)\.reverse\(\)/);
-  assert.match(workspace, /const summary = compact \? events\[0\]\?\.message \|\| '첫 실행 이벤트를 기다리는 중…' : '운영 단계 · 체크포인트'/);
-  assert.match(workspace, /open=\{!compact\}/);
+  assert.match(workspace, /const summary = compact \? '세부 활동 펼치기' : '운영 단계 · 체크포인트'/);
+  assert.match(workspace, /const \[open, setOpen\] = useState\(!compact\)/);
+  assert.match(workspace, /open=\{open\} onToggle=/);
   assert.match(workspace, /<small aria-live="polite">\{summary\}<\/small>/);
   assert.match(model, /goal\?\.ownerAnswers/);
   assert.match(model, /goal\?\.finalReport/);
@@ -476,11 +497,48 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   assert.match(workspace, /완료 아님 · 오너 결정 대기/);
   assert.match(workspace, /결정 화면 열기/);
   assert.match(workspace, /presentation\.state === 'awaiting_owner' \? onDecision : onOpen/);
-  assert.match(workspace, /decisionRef\.current\?\.scrollIntoView/);
+  assert.match(workspace, /const openOwnerDecision = \(\) =>/);
+  assert.match(workspace, /trace\.findLast\(entry => entry\.type === 'decision'\)/);
+  assert.match(workspace, /setActiveTab\('trace'\);\s*setInspectorOpen\(true\);/);
+  assert.equal(workspace.match(/onClick=\{onOpenDecision\}/g)?.length, 2);
+  assert.match(workspace, /onOpenDecision=\{openOwnerDecision\}/);
+  assert.match(workspace, /const scrollTop = scrollRef\.current\?\.scrollTop/);
+  assert.match(workspace, /onDecision\(\);\s*requestAnimationFrame/);
+  assert.match(workspace, /scrollRef\.current\.scrollTop = scrollTop/);
+  assert.match(workspace, /onDecision=\{openDecision\}/);
+  assert.doesNotMatch(workspace, /scrollIntoView/);
   assert.match(workspace, /aria-labelledby=\{decisionHeadingId\}/);
+  assert.match(workspace, /판단 정보 열기/);
+  assert.doesNotMatch(workspace, /className="decision-evidence"/);
+  assert.match(workspace, /function DecisionBrief/);
+  assert.match(workspace, /Director 권고/);
+  assert.match(workspace, /선택 후 동작/);
+  assert.match(workspace, /확인된 근거/);
+  assert.match(workspace, /관련 Worker 근거/);
+  assert.match(workspace, /공개 체크포인트/);
+  assert.doesNotMatch(workspace, /task\.summary \|\| task\.checkpoint \|\| task\.description/);
+  assert.match(workspace, /const detailedGoal = goalDetail\?\.id === goal\?\.id \? goalDetail : null/);
+  assert.match(workspace, /decisionReady=\{Boolean\(detailedGoal\) && !errors\.goal\}/);
+  assert.match(workspace, /전체 결정 범위를 불러오는 중입니다/);
+  assert.match(workspace, /tasks=\{tasks\}/);
+  assert.match(css, /\.decision-impact-list/);
+  assert.match(workspace, /orientation="horizontal"/);
+  assert.match(app, /praetorium\.activityHeight/);
   assert.match(workspace, /setChatScope\('goal'\); setActiveTab\('director'\)/);
   assert.match(workspace, /CompletedTasksMenu/);
   assert.match(workspace, /!taskIsTerminal\(task\) \|\| activeTab ===/);
+  assert.match(workspace, /function WorkerNow/);
+  assert.match(workspace, /Worker \$\{running\.length\}개 실행 중/);
+  assert.match(workspace, /실행 \$\{running\.length\} · 대기 \$\{waiting\.length\} · 확인 \$\{attention\.length\}/);
+  assert.match(workspace, /<WorkerNow goal=\{goal\} tasks=\{tasks\} error=\{errors\.board\} onOpen=\{onOpenTask\}/);
+  assert.match(workspace, /onOpenTask=\{openTask\}/);
+  assert.match(workspace, /Worker 상태를 확인할 수 없음/);
+  assert.match(workspace, /마지막으로 확인된 상태만 표시합니다/);
+  assert.match(workspace, /<ul className=\{`worker-now-list/);
+  assert.doesNotMatch(workspace, /role="listitem"/);
+  assert.match(workspace, /세부 활동 펼치기/);
+  assert.match(css, /\.worker-now-list button/);
+  assert.match(css, /\.worker-tabs > button\.worker-tab-running/);
   assert.match(notifications, /!document\.hidden && document\.hasFocus\(\)/);
   assert.match(notifications, /show_operator_notification/);
   assert.match(notifications, /operator-notification-open/);
@@ -493,6 +551,9 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   assert.match(notificationCenter, /const hasClearable = notifications\.items\.some/);
   assert.match(notificationCenter, /\{hasClearable && <button/);
   assert.match(app, /<NotificationCenter/);
+  assert.match(app, /sessionCount > 0/);
+  assert.match(app, /현재 실행 프로세스 세션/);
+  assert.doesNotMatch(app, /<b>\{sessionCount\}<\/b> running/);
   assert.match(app, /pendingGoalRequest\.current = ''/);
   assert.match(css, /\.notification-panel/);
   assert.match(css, /\.director-decision-banner/);
@@ -538,8 +599,15 @@ test('Director image composer keeps previews visible, expandable, and submission
   assert.match(forms, /previewUrl: `data:\$\{file\.type\};base64,\$\{encoded\[index\]\}`/);
   assert.match(forms, /\[result, action, actionPending\] = useActionState/);
   assert.match(forms, /submittingRef\.current/);
-  assert.match(forms, /className="image-lightbox" role="dialog" aria-modal="true"/);
-  assert.match(forms, /Goal 기록은 유지됩니다\. Worker 상세에서 수신 상태를 확인한 뒤 필요한 작업에 직접 지시하세요/);
+  assert.match(forms, /<dialog ref=\{lightboxRef\} className="image-lightbox"/);
+  assert.match(forms, /deliveryScheduled === true/);
+  assert.match(forms, /자동 재시도됩니다\. 같은 지시를 다시 보내지 마세요/);
+  assert.match(forms, /해당 Worker 전달은 자동 재시도되지 않습니다/);
+  assert.match(forms, /error\?\.data\?\.code === 'GOAL_GUIDANCE_BUSY'/);
+  assert.match(forms, /error\?\.message === 'Director is already running'/);
+  assert.match(forms, /현재 판단 종료 대기 · 요청 자동 재전송 중/);
+  assert.match(forms, /const opener = lightboxTriggerRef\.current/);
+  assert.match(forms, /opener\?\.focus/);
   assert.match(server, /img-src 'self' data: blob:/);
   assert.match(server, /return \{ malformed: true \}/);
   assert.match(server, /route\?\.malformed[^\n]+Malformed URL parameter/);
