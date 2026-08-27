@@ -34,6 +34,10 @@ describe('Worker Console v2 contract', () => {
     assert.match(workerConsole, /MAX_TERMINAL_WRITE_CHUNK = 64_000/);
     assert.match(workerConsole, /terminalWritePendingRef\.current/);
     assert.match(workerConsole, /terminal\.write\(chunk, \(\) =>/);
+    assert.match(workerConsole, /terminal\.options\.theme = \{ \.\.\.WORKER_TERMINAL_THEME \}/);
+    assert.match(workerConsole, /attributeFilter: \['style', 'data-theme'\]/);
+    assert.match(source('src/styles.css'), /\.worker-output \{[^}]*color-scheme: dark/);
+    assert.match(source('src/styles.css'), /\.worker-xterm \.xterm-screen, \.worker-xterm \.xterm-rows \{ color: #b8c0cc; \}/);
   });
 
   it('removes terminal control strings that can mutate browser or terminal state', () => {
@@ -73,12 +77,18 @@ describe('Worker Console v2 contract', () => {
     assert.match(forms, /\/goals\/\$\{encodeURIComponent\(goalId\)\}\/guidance/);
     assert.match(forms, /body: \{ message, deliveryMode: 'director' \}/);
     assert.match(workerConsole, /<details\b[^>]*className="worker-evidence-drawer"[^>]*>/);
+    assert.match(workerConsole, /allComments\.at\(-1\)\?\.body/);
+    assert.match(workerConsole, /PUBLIC OPERATIONAL TRACE · raw process output 대기/);
+    assert.match(workerConsole, /rawStreamHasOutputRef\.current/);
+    assert.match(workerConsole, /publicOperationalTrace\(detail\)/);
     assert.doesNotMatch(workerConsole, /<details[^>]*worker-evidence-drawer[^>]*\sopen(?:=|\s|>)/);
   });
 
   it('distinguishes an in-flight pause from a confirmed Owner pause', () => {
     const workerConsole = source('src/components/WorkerConsole.jsx');
 
+    assert.match(workerConsole, /const pausePending = !pausedByOwner && Boolean/);
+    assert.match(workerConsole, /const resumePending = pausedByOwner && Boolean/);
     assert.match(workerConsole, /pausePending[\s\S]{0,240}정지 요청 중/);
     assert.match(workerConsole, /pausedByOwner[\s\S]{0,240}Owner가 일시정지/);
     assert.match(workerConsole, /Director 관리/);

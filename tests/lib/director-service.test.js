@@ -2368,6 +2368,41 @@ describe('DirectorService', () => {
     assert.notEqual(goal.terminalReason, 'owner_cancelled');
   });
 
+  it('allows the Owner to cancel an executing Goal after confirming its triage Worker is stopped', async () => {
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [{ id: 't_triage_cancel', status: 'triage' }],
+      taskDetails: async () => ({ task: { id: 't_triage_cancel', status: 'triage' } }),
+    }) });
+    const goal = seedActiveGoal(svc, { taskId: 't_triage_cancel', status: 'executing', phase: 'executing' });
+
+    const cancelled = await svc.controlGoal('project-director-1', goal.id, 'cancel', { reason: 'Owner stopped E2E work' });
+
+    assert.equal(cancelled.status, 'failed');
+    assert.equal(cancelled.phase, 'cancelled');
+    assert.equal(cancelled.terminalReason, 'owner_cancelled');
+    assert.equal(svc.getDirector('project-director-1').activeGoalId, null);
+  });
+
+  it('parks a dependency-waiting Worker before cancelling an active Goal', async () => {
+    let boardStatus = 'todo';
+    const calls = [];
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [{ id: 't_todo_cancel', status: boardStatus }],
+      taskDetails: async ({ taskId }) => ({ task: { id: taskId, status: boardStatus } }),
+      scheduleTask: async ({ taskId }) => { calls.push(`schedule:${taskId}`); boardStatus = 'scheduled'; },
+      blockTask: async ({ taskId }) => { calls.push(`block:${taskId}`); },
+    }) });
+    const goal = seedActiveGoal(svc, { taskId: 't_todo_cancel', status: 'verifying', phase: 'verifying' });
+    goal.taskRecords[0].status = 'todo';
+
+    const cancelled = await svc.controlGoal('project-director-1', goal.id, 'cancel');
+
+    assert.equal(cancelled.phase, 'cancelled');
+    assert.deepEqual(calls, ['schedule:t_todo_cancel']);
+    assert.equal(goal.taskRecords[0].status, 'scheduled');
+    assert.equal(goal.taskRecords[0].cancelQuiescedAt !== undefined, true);
+  });
+
   it('quiesces a running Worker when an exact Owner decision stops the Goal', async () => {
     let boardStatus = 'running';
     const calls = [];
@@ -2724,13 +2759,43 @@ describe('DirectorService', () => {
     const svc = service({ runtime: runtime({
       taskDetails: async () => ({ task: { id: 't_live', status: 'running' } }),
       reclaimTask: async () => { calls.push('reclaim'); },
-      blockTask: async () => { calls.push('block'); },
+      scheduleTask: async () => { calls.push('schedule'); },
       listTasks: async () => [],
     }) });
     const result = await svc.controlTask('project-director-1', 't_live', 'pause', 'Owner changed direction');
-    assert.deepEqual(calls, ['reclaim', 'block']);
+    assert.deepEqual(calls, ['reclaim', 'schedule']);
     assert.equal(result.accepted, true);
     assert.equal(result.previousStatus, 'running');
+  });
+
+  it('parks repeated Owner pauses as scheduled work so Hermes block-loop triage cannot trap resume', async () => {
+    let status = 'running';
+    const calls = [];
+    const svc = service({ runtime: runtime({
+      taskDetails: async () => ({ task: { id: 't_repeat_pause', status } }),
+      reclaimTask: async () => { calls.push('reclaim'); status = 'ready'; },
+      scheduleTask: async () => { calls.push('schedule'); status = 'scheduled'; },
+      unblockTask: async () => { calls.push('unblock'); status = 'ready'; },
+      listTasks: async () => [{ id: 't_repeat_pause', status }],
+    }) });
+    svc.tickDirector = async () => ({ monitored: true });
+    const goal = seedActiveGoal(svc, { taskId: 't_repeat_pause' });
+
+    await svc.controlTask('project-director-1', 't_repeat_pause', 'pause');
+    assert.equal(goal.taskRecords[0].pausedByOwner, true);
+    assert.equal(status, 'scheduled');
+    await svc.controlTask('project-director-1', 't_repeat_pause', 'resume');
+    assert.equal(goal.taskRecords[0].pausedByOwner, false);
+    assert.equal(status, 'ready');
+
+    status = 'running';
+    goal.taskRecords[0].status = 'running';
+    await svc.controlTask('project-director-1', 't_repeat_pause', 'pause');
+    await svc.controlTask('project-director-1', 't_repeat_pause', 'resume');
+
+    assert.deepEqual(calls, ['reclaim', 'schedule', 'unblock', 'reclaim', 'schedule', 'unblock']);
+    assert.equal(status, 'ready');
+    assert.equal(goal.taskRecords[0].pausedByOwner, false);
   });
 
   it('rejects pausing a terminal task without changing its durable Goal state', async () => {
@@ -2766,7 +2831,7 @@ describe('DirectorService', () => {
       },
       taskDetails: async () => ({ task: { id: 't_pause_pending', status: boardStatus } }),
       reclaimTask: async () => { calls.push('reclaim'); },
-      blockTask: async () => { calls.push('block'); boardStatus = 'blocked'; },
+      scheduleTask: async () => { calls.push('schedule'); boardStatus = 'scheduled'; },
       dispatch: async ({ max }) => {
         calls.push(`dispatch:${max}`);
         return { json: { spawned: max } };
@@ -2791,8 +2856,8 @@ describe('DirectorService', () => {
     const recovered = restarted.getGoal(goal.id);
     const record = recovered.taskRecords[0];
 
-    assert.ok(calls.indexOf('block') >= 0);
-    assert.ok(calls.indexOf('block') < calls.indexOf('dispatch:0'), `unexpected recovery order: ${calls.join(', ')}`);
+    assert.ok(calls.indexOf('schedule') >= 0);
+    assert.ok(calls.indexOf('schedule') < calls.indexOf('dispatch:0'), `unexpected recovery order: ${calls.join(', ')}`);
     assert.equal(result.allocated, 0);
     assert.equal(record.pausePending, false);
     assert.equal(record.pausedByOwner, true);
@@ -3223,7 +3288,15 @@ describe('DirectorService', () => {
     const mislabeledExternal = {
       ...external, id: 'mislabeled-publish', effect: 'workspace_write',
     };
+    const localCheckpoint = {
+      id: 'local-checkpoint', title: 'Publish Worker checkpoints', target: 'codex-implementer',
+      task: 'Publish PLAN and OBSERVED as local Hermes task comments.', effect: 'read_only',
+      skills: [], dependencies: [], writeScope: [], acceptance: ['checkpoint is visible'], wakeOn: ['completion'],
+    };
 
+    assert.doesNotThrow(
+      () => svc._assertAuthorityActionPrerequisites(goal, [localCheckpoint], null),
+    );
     assert.throws(
       () => svc._assertAuthorityActionPrerequisites(goal, [mislabeledExternal], null),
       /must declare effect as external_mutation/,

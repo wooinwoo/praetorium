@@ -250,10 +250,13 @@ test('typed Owner decisions cannot inherit a preselected authority option', () =
 });
 
 test('React Goal controls and intervention receipts preserve operational truth', () => {
+  assert.equal(statusText('triage'), '수동 확인');
+  assert.equal(statusTone('triage'), 'attention');
   assert.deepEqual(goalControlOptions({ status: 'queued' }).map(item => [item.action, item.position]), [
     ['reorder', 'front'], ['reorder', 'back'], ['defer', undefined], ['cancel', undefined],
   ]);
   assert.deepEqual(goalControlOptions({ status: 'blocked' }).map(item => item.action), ['retry', 'cancel']);
+  assert.deepEqual(goalControlOptions({ status: 'executing' }).map(item => item.action), ['cancel']);
   assert.deepEqual(goalControlOptions({ status: 'failed', phase: 'cancelled' }), []);
   assert.match(interventionReceiptText({ status: 'delivery_failed' }), /자동 재시도.*다시 보내지 마세요/);
   assert.equal(interventionReceiptText({ workerObserved: true }), 'Worker 확인됨');

@@ -242,6 +242,26 @@ describe('Director action control', () => {
       }],
     }));
     assert.equal(approvedShape.actions[0].effect, 'external_mutation');
+
+    const localCheckpoint = validateDirectorControl(control({
+      workflow_id: 'research-planning',
+      actions: [{
+        ...control().actions[0],
+        title: 'Publish local checkpoints',
+        task: 'Publish PLAN, OBSERVED, DECISION, and VERIFY checkpoints as local Hermes task comments.',
+        effect: 'read_only',
+        write_scope: ['Local Hermes task comments only'],
+      }],
+    }));
+    assert.equal(localCheckpoint.actions[0].effect, 'read_only');
+    assert.throws(() => validateDirectorControl(control({
+      actions: [{
+        ...control().actions[0],
+        title: 'Publish release package',
+        task: 'Publish the release package to the registry.',
+        effect: 'read_only',
+      }],
+    })), /must declare effect as external_mutation/i);
   });
 
   it('requires every write authority to declare literal repository-relative candidate paths', () => {

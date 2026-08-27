@@ -85,7 +85,7 @@ function LatestConclusion({ goal, runs, onOpen, onDecision }) {
 }
 
 function WorkerNow({ goal, tasks, error, onOpen }) {
-  const priorities = { running: 0, executing: 0, planning: 0, materializing: 0, review: 1, paused: 1, ready: 2, queued: 2, todo: 2, scheduled: 2 };
+  const priorities = { running: 0, executing: 0, planning: 0, materializing: 0, review: 1, paused: 1, triage: 1, ready: 2, queued: 2, todo: 2, scheduled: 2 };
   const current = tasks.map(task => ({ task, status: taskDisplayStatus(task) }))
     .filter(item => (!taskIsTerminal(item.task) || taskPausedByOwner(item.task)) && Object.hasOwn(priorities, item.status)
       && (item.status !== 'paused' || taskPausedByOwner(item.task)))

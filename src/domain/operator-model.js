@@ -6,7 +6,7 @@ const resumableTaskStates = new Set(['blocked', 'paused', 'scheduled']);
 const DIRECTOR_INFERENCE_STALE_MS = 600000;
 const SCHEDULER_GRACE_MS = 30000;
 
-export const statusText = status => ({
+export const statusText = status => status === 'triage' ? '수동 확인' : ({
   idle: '대기', running: '실행 중', queued: '대기열', ready: '실행 대기', todo: '선행 대기',
   waiting_for_director: '디렉터 대기',
   review: '리뷰 중', blocked: '판단 필요', paused: '오너 일시정지', scheduled: '일시정지', done: '완료', completed: '완료',
@@ -19,7 +19,7 @@ export const statusTone = status => {
   if (['running', 'executing', 'materializing', 'planning', 'clarifying', 'evaluating', 'remediating', 'verifying'].includes(status)) return 'running';
   if (['done', 'completed', 'succeeded', 'success', 'archived'].includes(status)) return 'done';
   if (['failed', 'error', 'cancelled'].includes(status)) return 'failed';
-  if (['blocked', 'paused', 'awaiting_owner'].includes(status)) return 'attention';
+  if (['blocked', 'triage', 'paused', 'awaiting_owner'].includes(status)) return 'attention';
   return 'idle';
 };
 
@@ -183,6 +183,9 @@ export function goalControlOptions(goal) {
   ];
   if (goal.status === 'awaiting_owner') return [
     { action: 'cancel', label: '목표 취소', description: '현재 판단 계약을 포기하고 종료합니다.', danger: true },
+  ];
+  if (activeGoalStates.has(goal.status)) return [
+    { action: 'cancel', label: '목표 취소', description: '실행 중인 Worker 정지를 확인한 뒤 자동 실행과 재시도를 종료합니다.', danger: true },
   ];
   if (['blocked', 'failed'].includes(goal.status)) return [
     { action: 'retry', label: '안전 재시도', description: 'Worker 정지를 확인한 뒤 다시 시작합니다.' },

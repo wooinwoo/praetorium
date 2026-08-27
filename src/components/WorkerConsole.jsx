@@ -12,6 +12,11 @@ import { ErrorNotice, formatClock, Icon, relativeTime, Status, statusText } from
 const EVIDENCE_PAGE_SIZE = 20;
 const MAX_STREAM_BUFFER = 2_000_000;
 const MAX_TERMINAL_WRITE_CHUNK = 64_000;
+const WORKER_TERMINAL_THEME = {
+  background: '#0b0d11', foreground: '#b8c0cc', cursor: '#0b0d11', selectionBackground: '#4957a755',
+  black: '#151922', red: '#ef7d7d', green: '#73d29d', yellow: '#e3bf75', blue: '#7f91f3',
+  magenta: '#c999e9', cyan: '#71c5d7', white: '#d7dce5', brightBlack: '#657080', brightWhite: '#f4f6fa',
+};
 
 // xterm is a read-only renderer here, not a PTY. Preserve visual SGR colour/style
 // while removing terminal capabilities that can mutate title, clipboard or device state.
@@ -51,6 +56,24 @@ function payloadText(payload, append = false) {
   return '';
 }
 
+export function publicOperationalTrace(detail) {
+  const comments = Array.isArray(detail?.comments) ? detail.comments.slice(-20) : [];
+  const events = Array.isArray(detail?.events) ? detail.events.slice(-20) : [];
+  if (!comments.length && !events.length) return '';
+  const lifecycle = events.map(event => {
+    const at = event.createdAt || event.created_at || event.at;
+    const state = statusText(event.status || event.phase || event.type || event.kind || 'event');
+    const message = textValue(event.message || event.details || event.payload || event);
+    return `[${formatClock(at)}] LIFECYCLE · ${state}${message ? `\n${message}` : ''}`;
+  });
+  const checkpoints = comments.map(comment => {
+    const at = comment.createdAt || comment.created_at || comment.at;
+    const author = comment.author || 'Worker';
+    return `[${formatClock(at)}] CHECKPOINT · ${author}\n${textValue(comment.body || comment.message || comment)}`;
+  });
+  return ['[PUBLIC OPERATIONAL TRACE · raw process output 대기]', ...lifecycle, ...checkpoints].join('\n\n');
+}
+
 function streamAge(observedAt) {
   return observedAt ? `출력 ${relativeTime(observedAt)}` : '출력 대기';
 }
@@ -84,6 +107,8 @@ function EvidenceDrawer({ task, detail, displayStatus, onToggle }) {
   const omittedEvents = Math.max(0, allEvents.length - events.length);
   const runs = detail?.runs || [];
   const latestSummary = detail?.latest_summary || detail?.latestSummary || raw?.summary;
+  const latestCheckpoint = latestSummary || raw?.checkpoint
+    || (allComments.length && (allComments.at(-1)?.body || allComments.at(-1)?.message || allComments.at(-1)));
   const validation = detail?.validation || raw?.validation || runs.at(-1)?.validation || null;
   const validationSummary = textValue(validation?.summary || validation?.report || validation?.result || validation);
   const finalEvidence = detail?.report || raw?.report || raw?.result || runs.at(-1)?.report
@@ -96,7 +121,7 @@ function EvidenceDrawer({ task, detail, displayStatus, onToggle }) {
       <header><span><strong>공개 근거</strong><small>Worker가 외부화한 기록</small></span><Status value={displayStatus} /></header>
       <section className="worker-terminal-summary">
         <strong>현재 체크포인트</strong>
-        <p>{textValue(latestSummary || raw?.checkpoint || raw?.description) || '아직 Worker가 외부화한 체크포인트가 없습니다.'}</p>
+        <p>{textValue(latestCheckpoint || raw?.description) || '아직 Worker가 외부화한 체크포인트가 없습니다.'}</p>
         <dl><div><dt>시작</dt><dd>{task?.started_at || task?.startedAt ? `${formatClock(task.started_at || task.startedAt)} · ${relativeTime(task.started_at || task.startedAt)}` : '아직 시작하지 않음'}</dd></div><div><dt>담당</dt><dd>{task?.assignee || task?.profile || '미배정'}</dd></div></dl>
       </section>
       <section><header className="section-title"><span><Icon name="message" />공개 체크포인트</span><small>{comments.length} / {allComments.length}</small></header><div className="evidence-list">{omittedComments > 0 && <button type="button" className="evidence-more" onClick={() => setCommentLimit(limit => limit + EVIDENCE_PAGE_SIZE)}>이전 {Math.min(EVIDENCE_PAGE_SIZE, omittedComments)}개 보기</button>}{comments.map((comment, index) => { const at = comment.createdAt || comment.created_at || comment.at; return <article key={comment.id || `${at}:${index}`}><header><strong>{comment.author || 'Worker'}</strong><time dateTime={at || undefined}>{formatClock(at)}</time></header><p>{textValue(comment.body || comment.message || comment)}</p></article>; })}{!comments.length && <p className="evidence-empty">공개 체크포인트가 아직 없습니다.</p>}</div></section>
@@ -118,6 +143,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
   const followLogRef = useRef(true);
   const fallbackLogRef = useRef('');
   const sseInitializedRef = useRef(false);
+  const rawStreamHasOutputRef = useRef(false);
   const [terminalReady, setTerminalReady] = useState(false);
   const [followLog, setFollowLog] = useState(true);
   const [streamState, setStreamState] = useState('fallback');
@@ -138,11 +164,12 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
   const displayStatus = taskDisplayStatus(observedTask, record);
   const pausedByOwner = taskPausedByOwner(observedTask, record);
   const workerTerminal = taskIsTerminal(observedTask, record);
-  const pausePending = Boolean(observedTask.pausePending || controlRequest === 'pause');
-  const resumePending = Boolean(observedTask.resumePending || controlRequest === 'resume');
+  const pausePending = !pausedByOwner && Boolean(observedTask.pausePending || controlRequest === 'pause');
+  const resumePending = pausedByOwner && Boolean(observedTask.resumePending || controlRequest === 'resume');
   const controlAction = observedTask.status === 'running' && !pausePending ? 'pause' : pausedByOwner && !resumePending ? 'resume' : null;
   const controlLabel = pausePending ? '정지 요청 중' : resumePending ? '재개 요청 중' : pausedByOwner ? 'Owner가 일시정지' : workerTerminal ? '실행 종료' : 'Director 관리';
-  const fallbackLog = trace?.log || (trace?.availability === 'not_started' ? 'Worker 실행 전 · 출력 없음' : '실행 출력을 불러오는 중…');
+  const fallbackLog = trace?.log || publicOperationalTrace(detail)
+    || (trace?.availability === 'not_started' ? 'Worker 실행 전 · 출력 없음' : '실행 출력을 불러오는 중…');
   fallbackLogRef.current = fallbackLog;
   const effectiveObservedAt = streamObservedAt || trace?.observedAt;
 
@@ -199,11 +226,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
       lineHeight: 1.35,
       scrollback: 5000,
       screenReaderMode: true,
-      theme: {
-        background: '#0b0d11', foreground: '#b8c0cc', cursor: '#0b0d11', selectionBackground: '#4957a755',
-        black: '#151922', red: '#ef7d7d', green: '#73d29d', yellow: '#e3bf75', blue: '#7f91f3',
-        magenta: '#c999e9', cyan: '#71c5d7', white: '#d7dce5', brightBlack: '#657080', brightWhite: '#f4f6fa',
-      },
+      theme: { ...WORKER_TERMINAL_THEME },
     });
     terminal.loadAddon(fit);
     terminal.open(terminalHostRef.current);
@@ -218,9 +241,18 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     resizeObserver.observe(terminalHostRef.current);
     const scaleObserver = new MutationObserver(() => {
       terminal.options.fontSize = terminalFontSize();
-      requestAnimationFrame(() => { try { fit.fit(); } catch { /* scale can change during layout */ } });
+      // Changing color-scheme can make xterm's default canvas colors inherit
+      // the light document palette. Reapply the deliberately dark console
+      // palette and repaint so logs remain readable in both app themes.
+      terminal.options.theme = { ...WORKER_TERMINAL_THEME };
+      requestAnimationFrame(() => {
+        try {
+          fit.fit();
+          terminal.refresh(0, Math.max(0, terminal.rows - 1));
+        } catch { /* scale or theme can change during layout */ }
+      });
     });
-    scaleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+    scaleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-theme'] });
     requestAnimationFrame(() => { try { fit.fit(); } catch { /* first layout may not be ready */ } });
     setTerminalReady(true);
     return () => {
@@ -242,6 +274,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     setStreamStatus(null);
     setStreamObservedAt(null);
     sseInitializedRef.current = false;
+    rawStreamHasOutputRef.current = false;
     followLogRef.current = true;
     setFollowLog(true);
     rawLogRef.current = '';
@@ -256,7 +289,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
   }, [controlRequest, pausedByOwner, record?.pausePending, record?.resumePending, task?.pausePending, task?.resumePending]);
 
   useEffect(() => {
-    if (!terminalReady || streamState === 'live') return;
+    if (!terminalReady || (streamState === 'live' && rawStreamHasOutputRef.current)) return;
     renderLog(fallbackLog);
   }, [fallbackLog, renderLog, streamState, terminalReady]);
 
@@ -270,29 +303,42 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     sseInitializedRef.current = false;
     const snapshot = event => {
       const payload = decodeEvent(event);
+      const output = payloadText(payload);
       sseInitializedRef.current = true;
+      rawStreamHasOutputRef.current = Boolean(output);
       setStreamState('live');
       setStreamObservedAt(payload.observedAt || payload.at || new Date().toISOString());
-      renderLog(payloadText(payload), true);
+      renderLog(output || fallbackLogRef.current, true);
     };
     const append = event => {
       const payload = decodeEvent(event);
+      const output = payloadText(payload, true);
+      if (!output) return;
       if (!sseInitializedRef.current) {
         sseInitializedRef.current = true;
         rawLogRef.current = '';
         renderedLogRef.current = '';
         terminalRef.current?.reset();
       }
+      if (!rawStreamHasOutputRef.current) {
+        rawStreamHasOutputRef.current = true;
+        setStreamState('live');
+        setStreamObservedAt(payload.observedAt || payload.at || new Date().toISOString());
+        renderLog(output, true);
+        return;
+      }
       setStreamState('live');
       setStreamObservedAt(payload.observedAt || payload.at || new Date().toISOString());
-      appendLog(payloadText(payload, true));
+      appendLog(output);
     };
     const reset = event => {
       const payload = decodeEvent(event);
+      const output = payloadText(payload);
       sseInitializedRef.current = true;
+      rawStreamHasOutputRef.current = Boolean(output);
       setStreamState('live');
       setStreamObservedAt(payload.observedAt || payload.at || new Date().toISOString());
-      renderLog(payloadText(payload), true);
+      renderLog(output || fallbackLogRef.current, true);
     };
     const status = event => {
       const payload = decodeEvent(event);
@@ -301,7 +347,10 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
       setStreamState(unavailable ? 'fallback' : 'live');
       setStreamStatus(availability);
       setStreamObservedAt(payload.observedAt || payload.at || new Date().toISOString());
-      if (unavailable) renderLog(fallbackLogRef.current, true);
+      if (unavailable) {
+        rawStreamHasOutputRef.current = false;
+        renderLog(fallbackLogRef.current, true);
+      }
     };
     source.addEventListener('snapshot', snapshot);
     source.addEventListener('append', append);

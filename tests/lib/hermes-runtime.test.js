@@ -462,8 +462,9 @@ describe('HermesRuntime helpers', () => {
     await runtime.commentTask({ ...base, message: 'check the parser', author: 'Owner' });
     await runtime.reclaimTask({ ...base, reason: 'pause' });
     await runtime.blockTask({ ...base, reason: 'pause' });
+    await runtime.scheduleTask({ ...base, reason: 'owner pause' });
     await runtime.unblockTask(base);
-    assert.deepEqual(calls.map(args => args[0]), ['log', 'comment', 'reclaim', 'block', 'unblock']);
+    assert.deepEqual(calls.map(args => args[0]), ['log', 'comment', 'reclaim', 'block', 'schedule', 'unblock']);
     assert.ok(calls[1].includes('Owner'));
   });
 });
