@@ -6,10 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { acquireProcessLease, HermesRuntime } from './lib/hermes-runtime.js';
 import { WslRuntime } from './lib/wsl-runtime.js';
 import { DirectorService } from './lib/director-service.js';
+import { WorkerTraceStream } from './lib/worker-trace-stream.js';
 import { DATA_DIR, MAX_PROJECTS, PORT, PROJECTS_ROOT, addProject, deleteProject, getProjects, projectKey } from './lib/praetorium-config.js';
 import { PROFILE_CATALOG } from './lib/workflow-catalog.js';
 import { LOCAL_BIND_ADDRESS, isIgnoredBindRequest, isLoopbackAddress, isLoopbackHost } from './lib/local-only.js';
-import { DirectorActivityStream, register as registerDirectors } from './routes/directors.js';
+import { DirectorActivityStream, isLocalDirectorRequest, register as registerDirectors } from './routes/directors.js';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
@@ -105,9 +106,23 @@ const directorService = new DirectorService({
 });
 directorService.on('error', error => console.error('[Praetorium:Director]', error.message));
 const directorActivityStream = new DirectorActivityStream({ source: directorService });
+const workerTraceStream = new WorkerTraceStream({ service: directorService, runtime: hermesRuntime });
 directorService.startScheduler(10000);
 
 registerDirectors({ addRoute, json, readBody, directorService, activityStream: directorActivityStream });
+
+addRoute('GET', '/api/directors/:id/tasks/:taskId/trace-stream', async (req, res) => {
+  if (!isLocalDirectorRequest(req)) {
+    return json(res, { error: 'Worker trace stream accepts same-origin loopback requests only.' }, 403);
+  }
+  try {
+    await workerTraceStream.open(req, res, { directorId: req.params.id, taskId: req.params.taskId });
+  } catch (error) {
+    if (req.aborted || req.destroyed || res.destroyed || res.writableEnded) return;
+    if (!res.headersSent) json(res, { error: error.message }, Number(error.statusCode) || 500);
+    else res.end();
+  }
+});
 
 addRoute('GET', '/api/health', (_req, res) => json(res, {
   status: 'ok',
@@ -159,6 +174,7 @@ addRoute('POST', '/api/system/shutdown', async (_req, res) => {
   json(res, readiness, 202);
   setImmediate(() => {
     directorActivityStream.close();
+    workerTraceStream.close();
     directorService.stopScheduler();
     server.close(() => {
       releaseServerLease();
@@ -312,6 +328,7 @@ server.listen(PORT, LOCAL_BIND_ADDRESS, () => {
 server.once('error', error => {
   console.error('[Praetorium] Local server failed:', error.message);
   directorActivityStream.close();
+  workerTraceStream.close();
   releaseServerLease();
   process.exitCode = 1;
   setImmediate(() => process.exit(1));
@@ -319,6 +336,7 @@ server.once('error', error => {
 
 function shutdown() {
   directorActivityStream.close();
+  workerTraceStream.close();
   directorService.stopScheduler();
   server.close(() => {
     releaseServerLease();

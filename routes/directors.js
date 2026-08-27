@@ -140,6 +140,7 @@ export function register(ctx) {
       json(res, await directorService.guideGoal(req.params.id, req.params.goalId, {
         message: body.message,
         attachments: body.attachments,
+        deliveryMode: body.deliveryMode,
       }), 202);
     } catch (err) {
       const status = Number(err.statusCode) || (/not found/i.test(err.message) ? 404 : 400);
@@ -361,7 +362,7 @@ export function isLocalDirectorRequest(req) {
   if (source) {
     try {
       const sourceUrl = new URL(source);
-      return ['http:', 'https:'].includes(sourceUrl.protocol)
+      return sourceUrl.protocol === 'http:'
         && sourceUrl.host.toLowerCase() === String(headers.host).trim().toLowerCase();
     } catch {
       return false;

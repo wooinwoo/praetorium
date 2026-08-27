@@ -311,3 +311,42 @@ export function WorkerIntervention({ directorId, taskId, disabled, onAccepted })
     {result?.error && <p className="form-error" role="alert">{result.error}</p>}
   </form>;
 }
+
+export function DirectorGuidance({ directorId, goalId, taskId, taskTitle, disabled, onAccepted }) {
+  const fieldId = useId();
+  const submittingRef = useRef(false);
+  const [draft, setDraft] = useState('');
+  const [result, action, pending] = useActionState(async (_previous, formData) => {
+    const guidance = String(formData.get('message') || '').trim();
+    if (!guidance) {
+      submittingRef.current = false;
+      return { error: 'Director가 검토할 변경 방향을 입력하세요.' };
+    }
+    const message = [
+      `Owner가 Worker ${taskId}${taskTitle ? ` (${taskTitle})` : ''}의 현재 방향을 재검토해 달라고 요청했습니다.`,
+      guidance,
+      '현재 Goal의 계획·완료조건과 충돌하는지 판단하고, 필요하면 안전한 체크포인트에서 작업을 조정하거나 재계획한 뒤 Worker를 계속 감독하세요.',
+    ].join('\n\n');
+    try {
+      const accepted = await api(`/api/directors/${encodeURIComponent(directorId)}/goals/${encodeURIComponent(goalId)}/guidance`, {
+        method: 'POST', body: { message, deliveryMode: 'director' },
+      });
+      setDraft('');
+      await onAccepted?.(accepted);
+      return { ok: true, accepted };
+    } catch (error) {
+      return { error: error.message };
+    } finally {
+      submittingRef.current = false;
+    }
+  }, null);
+  const queued = Boolean(result?.accepted?.queued);
+  const deliveryErrors = Array.isArray(result?.accepted?.errors) ? result.accepted.errors.length : 0;
+  return <form action={action} className="director-guidance-form" aria-busy={pending} onSubmit={event => { if (submittingRef.current) event.preventDefault(); else submittingRef.current = true; }}>
+    <label htmlFor={fieldId}>Director에게 재계획 요청</label>
+    <textarea id={fieldId} name="message" rows="2" value={draft} disabled={disabled || pending} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (!disabled && !pending && !submittingRef.current && (event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="명세·우선순위·완료조건 중 무엇을 바꿀지 적으세요. Director가 충돌 여부를 판단합니다." />
+    <span className="intervention-actions"><small>Ctrl+Enter 전송</small><SubmitButton className="secondary-button" disabled={disabled || pending || !draft.trim()}>Director에게 전달</SubmitButton></span>
+    {result?.ok && <p className={deliveryErrors ? 'form-warning' : 'receipt'} role="status">{queued ? '요청 저장됨 · 현재 판단 종료 후 Director가 재계획' : deliveryErrors ? `재계획 요청은 저장됨 · Director 적용 오류 ${deliveryErrors}건` : 'Director 선판단 요청 저장됨 · Worker에게 직통 전달하지 않음'}</p>}
+    {result?.error && <p className="form-error" role="alert">{result.error}</p>}
+  </form>;
+}

@@ -69,6 +69,7 @@
       "../lib/owner-language.js": "./lib/owner-language.js",
       "../lib/praetorium-config.js": "./lib/praetorium-config.js",
       "../lib/project-identity.js": "./lib/project-identity.js",
+      "../lib/worker-trace-stream.js": "./lib/worker-trace-stream.js",
       "../lib/workflow-catalog.js": "./lib/workflow-catalog.js",
       "../lib/wsl-runtime.js": "./lib/wsl-runtime.js",
       "../routes/directors.js": "./routes/directors.js",

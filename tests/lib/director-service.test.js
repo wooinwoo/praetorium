@@ -228,6 +228,9 @@ describe('DirectorService', () => {
     const accepted = await svc.interveneTask('project-director-1', 't_goal_worker', marker);
     assert.match(accepted.interventionId, /^intervention_/);
     assert.equal(goal.taskRecords[0].interventions[0].status, 'accepted_queued');
+    goal.taskRecords[0].pausePending = true;
+    goal.taskRecords[0].controlError = 'pause acknowledgement pending';
+    goal.taskRecords[0].lastControlAttemptAt = '2026-08-24T00:01:00.000Z';
     const restarted = new DirectorService({
       runtime: svc.runtime,
       stateFile: svc.stateFile,
@@ -252,6 +255,17 @@ describe('DirectorService', () => {
     assert.equal(details.praetoriumRecord.interventions[0].id, accepted.interventionId);
     assert.equal(details.praetoriumRecord.interventions[0].workerObserved, true,
       'normal live task polling must reconcile a Worker-authored acknowledgement');
+    assert.equal(details.praetoriumRecord.goalId, goal.id);
+    assert.equal(details.praetoriumRecord.goalStatus, 'executing');
+    assert.equal(details.praetoriumRecord.goalPhase, 'executing');
+    assert.equal(details.praetoriumRecord.currentWaveId, 'wave-1');
+    assert.equal(details.praetoriumRecord.currentWaveIndex, 1);
+    assert.equal(details.praetoriumRecord.inCurrentWave, true);
+    assert.equal(details.praetoriumRecord.pausePending, true);
+    assert.equal(details.praetoriumRecord.resumePending, false);
+    assert.equal(details.praetoriumRecord.controlStatus, 'pause_pending');
+    assert.equal(details.praetoriumRecord.controlError, 'pause acknowledgement pending');
+    assert.equal(details.praetoriumRecord.lastControlAttemptAt, '2026-08-24T00:01:00.000Z');
   });
 
   it('reconciles epoch-second intervention comments while rejecting pre-acceptance acknowledgements', () => {
@@ -1437,6 +1451,13 @@ describe('DirectorService', () => {
     assert.equal(goal.verificationBarrier.reason, 'owner_guidance');
     assert.equal(goal.verificationBarrier.afterWave, 1);
     assert.equal(goal.guidanceReanalysisPending.guidanceId, goal.ownerAnswers.at(-1).id);
+    assert.ok(goal.ownerAnswers.at(-1).appliedAt);
+    assert.equal(goal.ownerAnswers.at(-1).deliveryState, 'accepted_queued');
+    assert.deepEqual(goal.ownerAnswers.at(-1).targetTaskIds, ['t_guided_worker']);
+    assert.equal(goal.ownerAnswers.at(-1).perWorkerReceipts.length, 1);
+    assert.equal(goal.ownerAnswers.at(-1).perWorkerReceipts[0].taskId, 't_guided_worker');
+    assert.equal(goal.ownerAnswers.at(-1).perWorkerReceipts[0].interventionId, result.receipts[0].interventionId);
+    assert.equal(goal.ownerAnswers.at(-1).perWorkerReceipts[0].status, 'accepted_queued');
     assert.match(comments[0].message, /OWNER IMAGE ATTACHMENTS/);
     assert.match(comments[0].message, /guidance\.png/);
     assert.ok(comments[0].message.includes(JSON.stringify(goal.attachments[0].path)));
@@ -1446,6 +1467,95 @@ describe('DirectorService', () => {
     assert.doesNotMatch(durableState, new RegExp(ONE_PIXEL_PNG_BASE64.slice(0, 24)));
     assert.ok(goal.events.some(event => event.phase === 'goal_guidance'
       && event.details?.guidanceId === goal.ownerAnswers.at(-1).id));
+  });
+
+  it('routes Director-mode guidance through fresh analysis without creating a Worker intervention', async () => {
+    const comments = [];
+    const svc = service({ runtime: runtime({
+      taskDetails: async ({ taskId }) => ({ task: { id: taskId, status: 'running' }, comments: [] }),
+      commentTask: async ({ taskId, message }) => { comments.push({ taskId, message }); },
+    }) });
+    const goal = seedActiveGoal(svc, { taskId: 't_director_guidance' });
+
+    const result = await svc.guideGoal('project-director-1', goal.id, {
+      message: 'Have the Director reconsider the architecture before changing Worker instructions.',
+      deliveryMode: 'director',
+    });
+    const guidance = goal.ownerAnswers.at(-1);
+
+    assert.equal(result.accepted, true);
+    assert.deepEqual(result.receipts, []);
+    assert.deepEqual(result.errors, []);
+    assert.equal(guidance.deliveryMode, 'director');
+    assert.ok(guidance.appliedAt);
+    assert.equal(guidance.deliveryState, 'director_checkpoint');
+    assert.deepEqual(guidance.targetTaskIds, []);
+    assert.deepEqual(guidance.perWorkerReceipts, []);
+    assert.equal(comments.length, 0);
+    assert.equal(goal.taskRecords[0].interventions?.length || 0, 0);
+    assert.equal(goal.guidanceReanalysisPending.guidanceId, guidance.id);
+    assert.equal(goal.status, 'executing');
+
+    const restarted = new DirectorService({
+      runtime: svc.runtime,
+      stateFile: svc.stateFile,
+      projectsRoot: 'C:\\projects',
+      getProjects: () => [{ id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha' }],
+    });
+    const recovered = restarted.getGoal(goal.id);
+    assert.equal(recovered.ownerAnswers.at(-1).deliveryMode, 'director');
+    assert.equal(recovered.ownerAnswers.at(-1).deliveryState, 'director_checkpoint');
+    assert.equal(recovered.guidanceReanalysisPending.guidanceId, guidance.id);
+    assert.equal(recovered.taskRecords[0].interventions?.length || 0, 0);
+
+    let resumed = null;
+    restarted._resumeInitialGoalPlanning = async (director, resumedGoal) => {
+      resumed = { directorId: director.id, goalId: resumedGoal.id };
+      return { resumed: true };
+    };
+    const outcome = await restarted._maybeSuperviseGoal(restarted.getDirector('project-director-1'), [{
+      id: 't_director_guidance', status: 'done', completed_at: '2026-08-27T02:00:00.000Z',
+    }]);
+
+    assert.deepEqual(outcome, { resumed: true });
+    assert.deepEqual(resumed, { directorId: 'project-director-1', goalId: recovered.id });
+    assert.equal(recovered.status, 'planning');
+    assert.equal(recovered.phase, 'guidance_reanalysis');
+    assert.equal(recovered.guidanceReanalysisPending, null);
+    assert.equal(comments.length, 0);
+    assert.equal(recovered.taskRecords[0].interventions?.length || 0, 0);
+  });
+
+  it('starts Director-mode reanalysis immediately when no live Worker wave exists', async () => {
+    const svc = service();
+    const goal = seedActiveGoal(svc, {
+      taskId: 'unused-director-guidance', taskIds: [], currentWaveTaskIds: [], taskRecords: [], waves: [],
+      status: 'planning', phase: 'planning',
+    });
+    const ticks = [];
+    svc.tickDirector = async directorId => { ticks.push(directorId); return { monitored: true }; };
+
+    await assert.rejects(
+      svc.guideGoal('project-director-1', goal.id, { message: 'invalid mode', deliveryMode: 'broadcast' }),
+      error => error.code === 'INVALID_GUIDANCE_DELIVERY_MODE' && error.statusCode === 400,
+    );
+    assert.equal(goal.ownerAnswers.length, 0);
+
+    await svc.guideGoal('project-director-1', goal.id, {
+      message: 'Replan this Goal through the Director now.',
+      deliveryMode: 'director',
+    });
+    await waitFor(() => ticks.length === 1, 'immediate Director guidance tick');
+
+    const guidance = goal.ownerAnswers.at(-1);
+    assert.equal(guidance.deliveryMode, 'director');
+    assert.equal(guidance.deliveryState, 'director_checkpoint');
+    assert.ok(guidance.appliedAt);
+    assert.equal(goal.guidanceReanalysisPending, null);
+    assert.equal(goal.reanalysisRequired, true);
+    assert.equal(goal.status, 'planning');
+    assert.equal(goal.phase, 'guidance_reanalysis');
+    assert.deepEqual(ticks, ['project-director-1']);
   });
 
   it('queues guidance during a Director checkpoint and applies it before stale control', async () => {
@@ -1497,7 +1607,10 @@ describe('DirectorService', () => {
 
     const applied = await svc._maybeSuperviseGoal(director, [{ id: 't_busy_guidance', status: 'running' }]);
     assert.equal(applied.applied, true);
-    assert.equal(goal.ownerAnswers.at(-1).deliveryState, 'applied');
+    assert.ok(goal.ownerAnswers.at(-1).appliedAt);
+    assert.equal(goal.ownerAnswers.at(-1).deliveryState, 'accepted_queued');
+    assert.equal(goal.ownerAnswers.at(-1).perWorkerReceipts[0].taskId, 't_busy_guidance');
+    assert.match(goal.ownerAnswers.at(-1).perWorkerReceipts[0].interventionId, /^intervention_/);
     assert.equal(goal.guidanceReanalysisPending.guidanceId, goal.ownerAnswers.at(-1).id);
     assert.equal(comments.length, 1);
   });
@@ -1705,6 +1818,20 @@ describe('DirectorService', () => {
     assert.equal(result.receipts.length, 0);
     assert.equal(result.errors.length, 1);
     assert.equal(result.errors[0].taskId, 't_guidance_failure');
+    assert.ok(goal.ownerAnswers.at(-1).appliedAt);
+    assert.equal(goal.ownerAnswers.at(-1).deliveryState, 'delivery_failed');
+    assert.deepEqual(goal.ownerAnswers.at(-1).perWorkerReceipts, [{
+      taskId: 't_guidance_failure',
+      interventionId: null,
+      status: 'delivery_failed',
+      retryable: false,
+      hermesAccepted: false,
+      deliveryScheduled: false,
+      workerObserved: false,
+      deliveryAttempts: 0,
+      deliveryError: 'worker lookup failed',
+      nextDeliveryAt: null,
+    }]);
     assert.equal(goal.ownerAnswers.at(-1).answer, '이 방향으로 계속 진행해.');
     const restarted = new DirectorService({
       runtime: svc.runtime,
@@ -1713,6 +1840,54 @@ describe('DirectorService', () => {
       getProjects: () => [{ id: 'alpha', name: 'Alpha', path: 'C:\\projects\\alpha' }],
     });
     assert.equal(restarted.getGoal(goal.id).ownerAnswers.at(-1).kind, 'guidance');
+    assert.equal(restarted.getGoal(goal.id).ownerAnswers.at(-1).deliveryState, 'delivery_failed');
+  });
+
+  it('retries failed Goal guidance through the same durable Worker intervention receipt', async () => {
+    let shouldFail = true;
+    const delivered = [];
+    const svc = service({ runtime: runtime({
+      taskDetails: async ({ taskId }) => ({ task: { id: taskId, status: 'running' }, comments: [] }),
+      taskLog: async () => '',
+      commentTask: async ({ message }) => {
+        delivered.push(message);
+        if (shouldFail) throw new Error('guidance comment transport offline');
+      },
+    }) });
+    const goal = seedActiveGoal(svc, { taskId: 't_guidance_retry' });
+
+    const result = await svc.guideGoal('project-director-1', goal.id, {
+      message: 'Keep the compatibility boundary and retry delivery.',
+    });
+    const guidance = goal.ownerAnswers.at(-1);
+    const intervention = goal.taskRecords[0].interventions[0];
+
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.receipts.length, 1);
+    assert.ok(guidance.appliedAt);
+    assert.equal(guidance.deliveryState, 'delivery_failed');
+    assert.equal(guidance.perWorkerReceipts[0].interventionId, intervention.id);
+    assert.equal(guidance.perWorkerReceipts[0].status, 'delivery_failed');
+    assert.equal(intervention.id, result.receipts[0].interventionId);
+    assert.equal(goal.taskRecords[0].interventions.length, 1);
+
+    intervention.nextDeliveryAt = new Date(Date.now() - 1).toISOString();
+    shouldFail = false;
+    await svc.getTaskDetails('project-director-1', 't_guidance_retry');
+
+    assert.equal(guidance.deliveryState, 'accepted_queued');
+    assert.equal(guidance.perWorkerReceipts[0].interventionId, intervention.id);
+    assert.equal(guidance.perWorkerReceipts[0].status, 'accepted_queued');
+    assert.equal(guidance.perWorkerReceipts[0].deliveryAttempts, 2);
+    assert.equal(intervention.deliveryAttempts, 2);
+    assert.equal(goal.taskRecords[0].interventions.length, 1,
+      'guidance retry must not create a second durable intervention');
+    assert.equal(delivered.length, 2);
+    assert.ok(delivered.every(message => message.includes(intervention.id)));
+
+    const exposed = svc.getGoalDetails(goal.id).ownerAnswers.at(-1);
+    assert.equal(exposed.deliveryState, 'accepted_queued');
+    assert.equal(exposed.perWorkerReceipts[0].interventionId, intervention.id);
   });
 
   it('rejects traversal, MIME mismatches, non-images, and more than four attachments before creating a run', () => {
@@ -2191,6 +2366,40 @@ describe('DirectorService', () => {
     await assert.rejects(svc.controlGoal('project-director-1', goal.id, 'cancel'), /reclaim unavailable/);
     assert.equal(goal.status, 'awaiting_owner');
     assert.notEqual(goal.terminalReason, 'owner_cancelled');
+  });
+
+  it('quiesces a running Worker when an exact Owner decision stops the Goal', async () => {
+    let boardStatus = 'running';
+    const calls = [];
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [{ id: 't_decision_stop', status: boardStatus }],
+      reclaimTask: async ({ taskId }) => { calls.push(`reclaim:${taskId}`); boardStatus = 'ready'; },
+      taskDetails: async ({ taskId }) => ({ task: { id: taskId, status: boardStatus } }),
+      blockTask: async ({ taskId }) => { calls.push(`block:${taskId}`); boardStatus = 'blocked'; },
+    }) });
+    const goal = seedActiveGoal(svc, {
+      taskId: 't_decision_stop',
+      status: 'awaiting_owner',
+      phase: 'awaiting_owner',
+      ownerDecision: {
+        required: true,
+        kind: 'material_decision',
+        question: 'Stop this Goal?',
+        options: ['Stop Goal'],
+        optionActions: { 'Stop Goal': 'stop' },
+        evidence: [],
+      },
+    });
+
+    const stopped = await svc.answerGoalDecision('project-director-1', goal.id, {
+      selectedOption: 'Stop Goal',
+    });
+
+    assert.equal(stopped.status, 'blocked');
+    assert.deepEqual(calls, ['reclaim:t_decision_stop', 'block:t_decision_stop']);
+    assert.equal(goal.taskRecords[0].status, 'blocked');
+    assert.ok(goal.taskRecords[0].cancelQuiescedAt);
+    assert.equal(goal.ownerAnswers.at(-1).action, 'stop');
   });
 
   it('rejects cancellation when a blocked ready card disappears from the board but is still live-running', async () => {

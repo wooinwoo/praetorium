@@ -311,6 +311,7 @@ describe('director routes', () => {
       streamRequest({ remoteAddress: '192.168.1.8' }),
       streamRequest({ host: 'attacker.example:3848' }),
       streamRequest({ origin: 'https://attacker.example' }),
+      streamRequest({ origin: 'https://127.0.0.1:3848' }),
       streamRequest({ fetchSite: 'cross-site' }),
     ]) {
       const res = response();
@@ -424,7 +425,7 @@ describe('director routes', () => {
     assert.match(res.body.error, /Worker is running/);
   });
 
-  it('passes bounded image guidance to an active durable Goal', async () => {
+  it('passes bounded image guidance and its delivery mode to an active durable Goal', async () => {
     let captured = null;
     service.guideGoal = async (directorId, goalId, payload) => {
       captured = { directorId, goalId, payload };
@@ -434,12 +435,12 @@ describe('director routes', () => {
     const res = response();
     await routes['POST /api/directors/:id/goals/:goalId/guidance']({
       params: { id: 'project-director-1', goalId: 'goal-1' },
-      body: { message: 'use this layout', attachments },
+      body: { message: 'use this layout', attachments, deliveryMode: 'director' },
     }, res);
     assert.equal(res.status, 202);
     assert.deepEqual(captured, {
       directorId: 'project-director-1', goalId: 'goal-1',
-      payload: { message: 'use this layout', attachments },
+      payload: { message: 'use this layout', attachments, deliveryMode: 'director' },
     });
     assert.equal(readBodyOptions.maxBytes, 17 * 1024 * 1024);
   });

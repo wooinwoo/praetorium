@@ -6,6 +6,7 @@ Praetorium is a local-only Owner Console for directing several real Codex workst
 - Three project Directors
 - One Skill Director
 - Durable Goal supervision across disposable Director and Worker sessions
+- Read-only xterm Worker consoles with live local output, durable interventions, and Director-mediated steering
 - Per-project native Windows or WSL2 execution
 - Dynamically sized fresh Worker sessions; writes in one project cwd are serialized
 - Hermes profiles and Kanban state
@@ -75,7 +76,7 @@ After a restart, an interrupted Director turn is marked failed while its non-ter
 
 Open the desktop app or browse locally to `http://127.0.0.1:3848`.
 
-The single product screen contains the three project Directors, Skill Director, active/queued/recent Goal switcher, current objective, execution trace, Owner decision queue, detail inspector, and Director conversation. There are no worker tabs to manage. Queue receipts distinguish accepted work from a Director turn that is actually running, and Owner cancellation is rendered as a separate terminal meaning rather than as an unexplained failure.
+The single product screen contains the three project Directors, Skill Director, active/queued/recent Goal switcher, current objective, execution trace, Owner decision queue, detail inspector, Director conversation, and one workspace tab for every opened Worker. The tabs do not create or own Worker sessions; they are views over the Director-managed durable tasks. Queue receipts distinguish accepted work from a Director turn that is actually running, and Owner cancellation is rendered as a separate terminal meaning rather than as an unexplained failure.
 
 The central trace is ordered as:
 
@@ -88,15 +89,15 @@ Owner objective
 → Owner decision or verified terminal report
 ```
 
-Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, gate freshness, and stop conditions. Wave boundaries distinguish task dispatch from later Director judgment. Selecting a Worker exposes the full task contract, live public operational checkpoints, observed commands, raw worker log, lifecycle events, acceptance criteria, and final evidence. This is an evidence trace, not private model chain-of-thought.
+Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, gate freshness, and stop conditions. Wave boundaries distinguish task dispatch from later Director judgment. Selecting a Worker opens a real xterm renderer backed by a same-origin local log stream, plus its task contract, public operational checkpoints, observed commands, lifecycle events, acceptance criteria, and final evidence. The terminal is deliberately read-only: it is not a PTY and does not attach stdin to the Codex app-server protocol. This is a complete operational evidence trace, not private model chain-of-thought.
 
-The console also subscribes to a bounded same-origin Server-Sent Events stream for public Director run, Goal, scheduler, and output-activity receipts. It reconnects and resynchronizes from durable state when needed. The stream reports lifecycle metadata and public checkpoints only; it never streams raw model output or private chain-of-thought.
+The console also subscribes to bounded same-origin Server-Sent Events streams. One carries public Director run, Goal, scheduler, and output-activity receipts; the Worker console follows the managed local Hermes log file directly on Windows and uses a bounded snapshot fallback for WSL/custom runtimes. Both reconnect and resynchronize from durable state when needed. No stream exposes an input, shell, remote-control channel, raw private model output, or private chain-of-thought.
 
 Owner communication follows the Owner's language. When an Owner request contains Korean, public Director summaries and questions plus Worker task text, checkpoints, and final reports are written in Korean. Machine contracts remain stable English: JSON keys, schema names, enum values, identifiers, and the `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` markers are never translated.
 
 New Worker tasks are required to publish concise `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` comments at meaningful checkpoints. These are public operational artifacts, not private chain-of-thought. Historical tasks still expose their raw Hermes log even when they predate the structured checkpoint contract.
 
-The Owner can intervene without opening a Worker tab:
+The Owner can intervene from the selected Worker console or its Inspector:
 
 - add a durable instruction to a queued or blocked task;
 - steer a running Worker in-place through Hermes' live comment bridge (normally observed within about six seconds);
@@ -104,7 +105,7 @@ The Owner can intervene without opening a Worker tab:
 - resume a paused task and return it to automatic dispatch;
 - reorder, defer, or cancel a queued Goal, and safely retry a stopped blocked or failed Goal;
 - answer a pending Goal decision with a listed option or a written answer, which records the decision and resumes supervision;
-- send durable guidance to the currently selected active Goal without creating another Goal; Praetorium records it first, forwards it to current non-terminal Workers, invalidates prior authority/gate conclusions, and performs fresh analysis after the current wave settles. An `awaiting_owner` Goal must use its exact decision control instead;
+- steer the selected Worker directly inside its existing task boundary, or route a proposed objective/completion-condition change to the Director without first injecting it into that Worker. Director-mediated guidance is recorded durably, invalidates stale authority/gate conclusions, and receives a fresh Director judgment at the next safe checkpoint after the current wave settles. An `awaiting_owner` Goal must use its exact decision control instead;
 - attach up to four local PNG, JPEG, WebP, or GIF images to a Director message or current-Goal guidance (5 MiB each, 12 MiB total); images are validated, hashed, stored locally, and exposed only through same-origin previews;
 - enlarge the Inspector or change global text scale for long traces;
 - drag the Inspector splitter to change its width and the activity splitter to change the activity area's height. Double-click resets a splitter, focused splitters accept Arrow keys, and both dimensions persist locally across reloads.
@@ -125,6 +126,7 @@ POST /api/directors/:id/goals/:goalId/control
      { "action": "reorder", "position": "front" | "back" | 1 } or { "action": "defer" | "cancel" | "retry" }
 GET  /api/directors/:id/tasks/:taskId       one Worker task with durable Praetorium metadata and current evidence
 GET  /api/directors/:id/tasks/:taskId/trace raw local Worker execution trace
+GET  /api/directors/:id/tasks/:taskId/trace-stream read-only same-origin Worker trace SSE
 POST /api/directors/:id/tasks/:taskId/interventions
      { "message": "..." }
 POST /api/directors/:id/tasks/:taskId/control
@@ -217,7 +219,7 @@ npm test
 git diff --check
 ```
 
-The test suite covers Director control-envelope validation, durable Goal/wave supervision, ordered Goal controls, workflow gate freshness, exact candidate snapshots, Owner decisions, restart and materialization recovery, infrastructure backoff, fair shared Worker capacity, stable project-to-Director assignment, bounded handoff, board caching, Worker concurrency, local-only policy, WSL launch boundaries, intervention delivery leases and Worker acknowledgement, pause/resume commands, evidence-free blocker handling, release execution proof, and route behavior.
+The test suite covers Director control-envelope validation, durable Goal/wave supervision, ordered Goal controls, workflow gate freshness, exact candidate snapshots, Owner decisions, restart and materialization recovery, infrastructure backoff, fair shared Worker capacity, stable project-to-Director assignment, bounded handoff, board caching, Worker concurrency, local-only policy, WSL launch boundaries, intervention delivery leases and Worker acknowledgement, direct versus Director-mediated steering, read-only Worker trace streaming, pause/resume commands, evidence-free blocker handling, release execution proof, and route behavior.
 
 Bootstrap profiles and skills:
 
@@ -258,6 +260,7 @@ npm run tauri build -- --bundles nsis
 - `dist/`: generated UI served by `server.js` and packaged by the desktop shell
 - `css/owner-console.css`, `js/owner-console.js`: legacy reference UI, not the production console
 - `lib/director-service.js`: Director turns, durable Goal lifecycle, wave materialization, board scheduler, restart recovery, Owner decisions, Worker intervention
+- `lib/worker-trace-stream.js`: bounded local Worker log SSE with ownership checks, resync, backpressure, and connection cleanup
 - `lib/director-attachments.js`: bounded local image validation, storage, integrity checks, and same-origin previews
 - `lib/goal-supervisor.js`: Goal normalization, task/wave synchronization, evidence snapshots, acceptance checks, and supervision prompts
 - `lib/director-actions.js`: strict Director analysis and action-envelope extraction/validation

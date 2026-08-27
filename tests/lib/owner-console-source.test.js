@@ -34,8 +34,9 @@ test('Owner console keeps stale trace, locks mutations, and labels queued interv
 });
 
 test('React console rejects stale Worker responses and pauses hidden evidence polling', async () => {
-  const [app, apiClient, hook, settings, workspace] = await Promise.all([
+  const [app, apiClient, hook, settings, workspace, workerConsole] = await Promise.all([
     source('src/App.jsx'), source('src/lib/api.js'), source('src/hooks/usePraetorium.js'), source('src/components/Settings.jsx'), source('src/components/Workspace.jsx'),
+    source('src/components/WorkerConsole.jsx'),
   ]);
   assert.match(apiClient, /\['GET', 'HEAD'\]\.includes\(method\) \? 10000/);
   assert.match(apiClient, /error\.name === 'AbortError' && timedOut/);
@@ -48,10 +49,10 @@ test('React console rejects stale Worker responses and pauses hidden evidence po
   assert.match(workspace, /Worker 목록 동기화 실패/);
   assert.match(workspace, /selectedEntry\?\.type === 'task'/);
   assert.match(workspace, /goals\/\$\{encodeURIComponent\(goal\.id\)\}\/control/);
-  assert.match(workspace, /공개 체크포인트/);
-  assert.match(workspace, /수명주기 증거/);
-  assert.match(workspace, /최종 결과·검증/);
-  assert.match(workspace, /detail\?\.latest_summary/);
+  assert.match(workerConsole, /공개 체크포인트/);
+  assert.match(workerConsole, /수명주기 증거/);
+  assert.match(workerConsole, /최종 결과·검증/);
+  assert.match(workerConsole, /detail\?\.latest_summary/);
   assert.match(hook, /taskEvidenceSettled/);
   for (const status of ['succeeded', 'success', 'blocked']) assert.match(hook, new RegExp(`'${status}'`));
 });
@@ -151,8 +152,8 @@ test('Owner console bounds long trace DOM and keeps wave collapse independent fr
 });
 
 test('Owner console provides readable evidence text and removes hidden offscreen focus traps', async () => {
-  const [app, workspace, css] = await Promise.all([
-    source('src/App.jsx'), source('src/components/Workspace.jsx'), source('src/styles.css'),
+  const [app, workspace, workerConsole, css] = await Promise.all([
+    source('src/App.jsx'), source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/styles.css'),
   ]);
   assert.match(workspace, /aria-label="Inspector"/);
   assert.match(workspace, /증거 원문/);
@@ -161,7 +162,10 @@ test('Owner console provides readable evidence text and removes hidden offscreen
   assert.match(app, /Math\.max\(\.9/);
   assert.match(app, /Math\.min\(1\.25/);
   assert.match(css, /font-size: calc\(16px \* var\(--ui-scale\)\)/);
-  assert.match(css, /\.live-log pre, \.worker-terminal-log pre[\s\S]*overflow: auto/);
+  assert.match(css, /\.live-log pre \{[^}]*overflow: auto/);
+  assert.match(workerConsole, /fontSize: terminalFontSize\(\)/);
+  assert.match(workerConsole, /terminal\.options\.fontSize = terminalFontSize\(\)/);
+  assert.match(css, /\.worker-xterm[\s\S]*min-height: 0/);
   assert.match(css, /\.live-log-pane[\s\S]*min-height: 0/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.primary-button, \.secondary-button, \.load-older, \.text-button \{ min-height: 44px; \}/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.director-composer select \{ height: 44px; \}/);
@@ -230,6 +234,7 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(workspace, />현황</);
   assert.match(workspace, />디렉터</);
   assert.match(workspace, /worker-tabs/);
+  assert.match(workspace, /<WorkerConsole directorId=\{director\?\.id\}/);
   assert.match(workspace, /Worker 원문 로그/);
   assert.match(workspace, /<Splitter label="세부 정보 너비"/);
   assert.match(workspace, /onClose=\{\(\) => setInspectorOpen\(false\)\}/);
@@ -238,7 +243,7 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(workspace, /setSelectedEntry\(trace\.find\(entry => entry\.type === 'task' && entry\.taskId === id\)/);
   assert.match(workspace, /inspectorCloseRef\.current\?\.focus/);
   assert.match(workspace, /event\.key === 'Escape'/);
-  assert.match(workspace, /!document\.querySelector\('\[role="dialog"\]'\)/);
+  assert.match(workspace, /!document\.querySelector\('dialog\[open\], \[role="dialog"\]'\)/);
   assert.match(sidebar, /aria-label=\{accessibleLabel\}/);
   assert.match(common, /className="rich-code"/);
   assert.match(common, /const ordered = line\.match/);
@@ -259,23 +264,41 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
 });
 
 test('Worker tabs expose a live log console with direct bounded intervention', async () => {
-  const [workspace, forms, css] = await Promise.all([
-    source('src/components/Workspace.jsx'), source('src/components/forms.jsx'), source('src/styles.css'),
+  const [workspace, workerConsole, forms, css] = await Promise.all([
+    source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/components/forms.jsx'), source('src/styles.css'),
   ]);
-  assert.match(workspace, /className="worker-view worker-terminal-view"/);
-  assert.match(workspace, /className="worker-terminal-log" aria-label="Worker 실행 터미널"/);
-  assert.match(workspace, /setFollowLog\(event\.currentTarget\.scrollHeight/);
-  assert.match(workspace, /<WorkerIntervention key=\{task\.id\} directorId=\{directorId\}/);
+  assert.match(workspace, /const WorkerConsole = lazy\(\(\) => import\('\.\/WorkerConsole\.jsx'\)\)/);
+  assert.match(workspace, /<WorkerConsole directorId=\{director\?\.id\}/);
   assert.match(workspace, /setInspectorOpen\(false\)/);
   assert.match(workspace, /workerControls=\{!activeTab\.startsWith\('task:'\)\}/);
   assert.match(workspace, /detailError=\{errors\.task\} traceError=\{errors\.trace\}/);
+  assert.match(workerConsole, /new Terminal\(\{/);
+  assert.match(workerConsole, /disableStdin: true/);
+  assert.match(workerConsole, /읽기 전용 · PTY 아님/);
+  assert.match(workerConsole, /sanitizeTerminalOutput/);
+  assert.match(workerConsole, /new EventSource\(url\)/);
+  assert.match(workerConsole, /addEventListener\('snapshot'/);
+  assert.match(workerConsole, /addEventListener\('append'/);
+  assert.match(workerConsole, /addEventListener\('reset'/);
+  assert.match(workerConsole, /addEventListener\('status'/);
+  assert.match(workerConsole, /source\.onerror[\s\S]*renderLog\(fallbackLogRef\.current, true\)/);
+  assert.match(workerConsole, /role="tab" aria-selected=\{mode === 'observe'\}/);
+  assert.match(workerConsole, /role="tab" aria-selected=\{mode === 'worker'\}/);
+  assert.match(workerConsole, /role="tab" aria-selected=\{mode === 'director'\}/);
+  assert.match(workerConsole, /<WorkerIntervention key=\{task\.id\}/);
+  assert.match(workerConsole, /<DirectorGuidance key=\{`\$\{goalId\}:\$\{task\.id\}`\}/);
+  assert.match(forms, /body: \{ message, deliveryMode: 'director' \}/);
+  assert.match(workerConsole, /<details ref=\{drawerRef\} className="worker-evidence-drawer"/);
+  assert.doesNotMatch(workerConsole, /className="worker-evidence-drawer"[^>]*\sopen/);
+  for (const state of ['정지 요청 중', '재개 요청 중', 'Owner가 일시정지', 'Director 관리']) assert.match(workerConsole, new RegExp(state));
   assert.match(forms, /event\.currentTarget\.form\?\.requestSubmit\(\)/);
   assert.match(forms, /const fieldId = useId\(\)/);
   assert.match(forms, /const submittingRef = useRef\(false\)/);
   assert.match(forms, /disabled=\{disabled \|\| pending\}/);
-  assert.match(css, /\.worker-terminal-grid[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(260px, 34%\)/);
-  assert.match(css, /\.worker-terminal-log[\s\S]*grid-template-rows: 36px minmax\(0, 1fr\) auto/);
-  assert.match(css, /@container \(max-width: 620px\)[\s\S]*\.worker-terminal-log pre \{ overscroll-behavior-y: auto; \}/);
+  assert.match(forms, /goals\/\$\{encodeURIComponent\(goalId\)\}\/guidance/);
+  assert.match(css, /\.worker-output[\s\S]*grid-template-rows: 34px minmax\(0, 1fr\) auto/);
+  assert.match(css, /\.worker-evidence-drawer\[open\][\s\S]*width: min\(390px, 44%\)/);
+  assert.match(css, /@container \(max-width: 620px\)[\s\S]*\.worker-evidence-drawer\[open\] \{ width: 100%; \}/);
 });
 
 test('Director channel uses durable Goal-scoped chat and explicit decision or conclusion bubbles', async () => {
@@ -291,7 +314,7 @@ test('Director channel uses durable Goal-scoped chat and explicit decision or co
   assert.match(forms, /!event\.nativeEvent\.isComposing/);
   assert.match(forms, /<textarea id="director-prompt" name="prompt" rows="2"/);
   assert.match(workspace, /const events = scopedEvents\.slice\(compact \? -5 : -18\)\.reverse\(\)/);
-  assert.match(workspace, /const summary = compact \? '세부 활동 펼치기' : '운영 단계 · 체크포인트'/);
+  assert.match(workspace, /const summary = compact \? events\[0\]\?\.message \|\| '첫 실행 이벤트를 기다리는 중…' : '운영 단계 · 체크포인트'/);
   assert.match(workspace, /const \[open, setOpen\] = useState\(!compact\)/);
   assert.match(workspace, /open=\{open\} onToggle=/);
   assert.match(workspace, /<small aria-live="polite">\{summary\}<\/small>/);
@@ -397,11 +420,12 @@ test('Owner console exposes a visible theme state and real light-theme tokens', 
 });
 
 test('Primary operational labels are shown in Korean while internal status keys stay stable', async () => {
-  const [model, workspace, forms] = await Promise.all([
-    source('src/domain/operator-model.js'), source('src/components/Workspace.jsx'), source('src/components/forms.jsx'),
+  const [model, workspace, workerConsole, forms] = await Promise.all([
+    source('src/domain/operator-model.js'), source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/components/forms.jsx'),
   ]);
   for (const copy of ['대기', '실행 중', '판단 필요', '오너 판단', '검증']) assert.match(model, new RegExp(copy));
-  for (const copy of ['디렉터 채팅', '오너 결정 필요', '공개 체크포인트', '명령·결과 원문']) assert.match(workspace, new RegExp(copy));
+  for (const copy of ['디렉터 채팅', '오너 결정 필요']) assert.match(workspace, new RegExp(copy));
+  for (const copy of ['공개 체크포인트', '실시간 출력', '읽기 전용 · PTY 아님']) assert.match(workerConsole, new RegExp(copy));
   for (const copy of ['Worker 위임', '답변만']) assert.match(forms, new RegExp(copy));
   for (const copy of ['접수됨', 'Worker 확인됨']) assert.match(model, new RegExp(copy));
   assert.equal(
@@ -477,9 +501,9 @@ test('Owner console uses conditional compact polling and avoids hidden or unneed
 });
 
 test('React console keeps durable history, scoped chat, completed Worker access, and operator alerts', async () => {
-  const [app, hook, sidebar, workspace, notifications, notificationModel, notificationCenter, css] = await Promise.all([
+  const [app, hook, sidebar, workspace, workerConsole, notifications, notificationModel, notificationCenter, css] = await Promise.all([
     source('src/App.jsx'), source('src/hooks/usePraetorium.js'), source('src/components/Sidebar.jsx'),
-    source('src/components/Workspace.jsx'), source('src/hooks/useOperatorNotifications.js'),
+    source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/hooks/useOperatorNotifications.js'),
     source('src/domain/notification-model.js'), source('src/components/NotificationCenter.jsx'), source('src/styles.css'),
   ]);
   assert.match(hook, /\/goals\?\$\{query\}/);
@@ -515,7 +539,7 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   assert.match(workspace, /선택 후 동작/);
   assert.match(workspace, /확인된 근거/);
   assert.match(workspace, /관련 Worker 근거/);
-  assert.match(workspace, /공개 체크포인트/);
+  assert.match(workerConsole, /공개 체크포인트/);
   assert.doesNotMatch(workspace, /task\.summary \|\| task\.checkpoint \|\| task\.description/);
   assert.match(workspace, /const detailedGoal = goalDetail\?\.id === goal\?\.id \? goalDetail : null/);
   assert.match(workspace, /decisionReady=\{Boolean\(detailedGoal\) && !errors\.goal\}/);
@@ -536,7 +560,8 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   assert.match(workspace, /마지막으로 확인된 상태만 표시합니다/);
   assert.match(workspace, /<ul className=\{`worker-now-list/);
   assert.doesNotMatch(workspace, /role="listitem"/);
-  assert.match(workspace, /세부 활동 펼치기/);
+  assert.match(workspace, /events\[0\]\?\.message \|\| '첫 실행 이벤트를 기다리는 중…'/);
+  assert.match(workspace, /\(!taskIsTerminal\(item\.task\) \|\| taskPausedByOwner\(item\.task\)\)/);
   assert.match(css, /\.worker-now-list button/);
   assert.match(css, /\.worker-tabs > button\.worker-tab-running/);
   assert.match(notifications, /!document\.hidden && document\.hasFocus\(\)/);
@@ -565,9 +590,9 @@ test('React console keeps durable history, scoped chat, completed Worker access,
 });
 
 test('React operator UI keeps resumable Workers active and renders complete decision and Worker evidence', async () => {
-  const [model, sidebar, workspace, forms, css] = await Promise.all([
+  const [model, sidebar, workspace, workerConsole, forms, css] = await Promise.all([
     source('src/domain/operator-model.js'), source('src/components/Sidebar.jsx'),
-    source('src/components/Workspace.jsx'), source('src/components/forms.jsx'), source('src/styles.css'),
+    source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/components/forms.jsx'), source('src/styles.css'),
   ]);
   assert.match(model, /function taskPausedByOwner/);
   assert.match(model, /function taskIsTerminal/);
@@ -581,11 +606,14 @@ test('React operator UI keeps resumable Workers active and renders complete deci
     assert.match(forms, new RegExp(`\\b${field}\\b`), field);
   }
   assert.match(forms, /승인 권한과 적용 범위/);
-  assert.match(workspace, /omittedComments/);
-  assert.match(workspace, /omittedEvents/);
-  assert.match(workspace, /이전 \{Math\.min\(EVIDENCE_PAGE_SIZE, omittedComments\)\}개 보기/);
-  assert.match(workspace, /detail\?\.validation/);
-  assert.match(workspace, /구조화 검증/);
+  assert.match(workerConsole, /omittedComments/);
+  assert.match(workerConsole, /omittedEvents/);
+  assert.match(workerConsole, /이전 \{Math\.min\(EVIDENCE_PAGE_SIZE, omittedComments\)\}개 보기/);
+  assert.match(workerConsole, /detail\?\.validation/);
+  assert.match(workerConsole, /구조화 검증/);
+  assert.match(workerConsole, /record\?\.pausePending/);
+  assert.match(workerConsole, /record\?\.resumePending/);
+  assert.match(workerConsole, /record\?\.pausedByOwner/);
   assert.match(css, /\.supervision-health\.stalled/);
   assert.match(css, /\.authority-decision/);
   assert.match(css, /\.evidence-more/);
