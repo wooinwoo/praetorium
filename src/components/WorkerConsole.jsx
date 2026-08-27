@@ -149,7 +149,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
   const [streamState, setStreamState] = useState('fallback');
   const [streamStatus, setStreamStatus] = useState(null);
   const [streamObservedAt, setStreamObservedAt] = useState(null);
-  const [mode, setMode] = useState('observe');
+  const [mode, setMode] = useState('worker');
   const [controlRequest, setControlRequest] = useState('');
   const [controlError, setControlError] = useState('');
 
@@ -267,7 +267,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
   }, []);
 
   useEffect(() => {
-    setMode('observe');
+    setMode('worker');
     setControlRequest('');
     setControlError('');
     setStreamState('fallback');
@@ -382,8 +382,8 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     : streamState === 'connecting' ? '연결 중'
       : streamStatus === 'not_started' ? '실행 전'
         : streamStatus === 'error' || streamStatus === 'unavailable' ? '스트림 오류' : '실시간';
-  const modeDescription = mode === 'observe' ? '입력 없는 읽기 전용 실행 출력입니다.'
-    : mode === 'worker' ? '현재 작업 범위 안의 보정을 영속 기록 후 Worker에게 전달합니다.'
+  const modeDescription = mode === 'observe' ? 'Codex 세션 출력만 봅니다.'
+    : mode === 'worker' ? '이 입력은 영속 기록된 뒤 현재 Codex turn에 바로 들어갑니다.'
       : '목표·완료조건 충돌 여부를 Director가 판단하고 필요하면 재계획합니다.';
   const onDrawerToggle = () => requestAnimationFrame(() => { try { fitRef.current?.fit(); } catch { /* drawer transition */ } });
 
@@ -410,12 +410,12 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     {controlError && <p className="worker-control-error form-error" role="alert">{controlError}</p>}
     <div className="worker-console-main">
       <section className="worker-output" aria-label="Worker 실행 출력">
-        <header><span><Icon name="terminal" /><strong>실시간 출력</strong><em>읽기 전용 · PTY 아님</em></span><span>{traceError && <small role="alert">실시간 스트림 오류 · 저장된 스냅샷 표시</small>}<small>{followLog ? '최신 출력 따라가는 중' : '과거 출력 보는 중'}</small></span></header>
-        <div ref={terminalHostRef} className="worker-xterm" aria-label="읽기 전용 Worker 로그" />
+        <header><span><Icon name="terminal" /><strong>실제 Codex 세션</strong><em>실시간 출력 · 읽기 전용 · PTY 아님</em></span><span>{traceError && <small role="alert">실시간 스트림 오류 · 저장된 스냅샷 표시</small>}<small>{followLog ? '최신 출력 따라가는 중' : '과거 출력 보는 중'}</small></span></header>
+        <div ref={terminalHostRef} className="worker-xterm" aria-label="Codex Worker 세션 출력" />
         <footer className={`worker-control-dock mode-${mode}`}>
           <div className="worker-control-mode" role="tablist" aria-label="Worker 제어 모드">
-            <button type="button" role="tab" aria-selected={mode === 'observe'} className={mode === 'observe' ? 'selected' : ''} onClick={() => setMode('observe')}><Icon name="activity" />관찰</button>
-            <button type="button" role="tab" aria-selected={mode === 'worker'} className={mode === 'worker' ? 'selected' : ''} disabled={workerTerminal} onClick={() => setMode('worker')}><Icon name="command" />Worker 보정</button>
+            <button type="button" role="tab" aria-selected={mode === 'worker'} className={mode === 'worker' ? 'selected' : ''} disabled={workerTerminal} onClick={() => setMode('worker')}><Icon name="command" />세션 입력</button>
+            <button type="button" role="tab" aria-selected={mode === 'observe'} className={mode === 'observe' ? 'selected' : ''} onClick={() => setMode('observe')}><Icon name="activity" />출력만 보기</button>
             <button type="button" role="tab" aria-selected={mode === 'director'} className={mode === 'director' ? 'selected' : ''} disabled={!goalId || workerTerminal} onClick={() => setMode('director')}><span className="tab-avatar">D</span>Director 경유</button>
             <small>{modeDescription}</small>
           </div>

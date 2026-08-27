@@ -304,9 +304,9 @@ export function WorkerIntervention({ directorId, taskId, disabled, onAccepted })
   }, null);
   useEffect(() => { submittingRef.current = false; setDraft(''); }, [taskId]);
   return <form action={action} className="intervention-form" aria-busy={pending} onSubmit={event => { if (submittingRef.current) event.preventDefault(); else submittingRef.current = true; }}>
-    <label htmlFor={fieldId}>Worker에게 지시</label>
-    <textarea id={fieldId} name="message" rows="3" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (!disabled && !pending && !submittingRef.current && (event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} disabled={disabled || pending} placeholder={disabled ? '종료된 Worker에는 지시할 수 없습니다.' : '현재 작업 범위 안에서 수정하거나 확인할 내용을 전달합니다.'} />
-    <span className="intervention-actions"><small>Ctrl+Enter 전송</small><SubmitButton className="secondary-button" disabled={disabled || pending}>지시 전달</SubmitButton></span>
+    <label htmlFor={fieldId}>현재 Codex 세션에 입력</label>
+    <textarea id={fieldId} name="message" rows="3" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (!disabled && !pending && !submittingRef.current && (event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} disabled={disabled || pending} placeholder={disabled ? '종료된 Codex 세션에는 입력할 수 없습니다.' : '현재 Codex Worker에게 바로 추가 지시를 입력하세요.'} />
+    <span className="intervention-actions"><small>실행 중이면 turn/steer · Ctrl+Enter</small><SubmitButton className="secondary-button" disabled={disabled || pending}>세션에 입력</SubmitButton></span>
     {result?.receipt && <p className="receipt">{interventionReceiptText(result.receipt)}{result.receipt.deliveryError ? ` · ${result.receipt.deliveryError}` : ''}</p>}
     {result?.error && <p className="form-error" role="alert">{result.error}</p>}
   </form>;

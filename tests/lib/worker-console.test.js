@@ -22,8 +22,8 @@ function loadSanitizerFromSource() {
   return Function('value', declaration[1]);
 }
 
-describe('Worker Console v2 contract', () => {
-  it('uses the real xterm renderer as a read-only terminal', () => {
+describe('Worker Codex session console contract', () => {
+  it('renders the real Codex session stream in xterm without exposing raw shell stdin', () => {
     const workerConsole = source('src/components/WorkerConsole.jsx');
     const manifest = JSON.parse(source('package.json'));
 
@@ -38,6 +38,10 @@ describe('Worker Console v2 contract', () => {
     assert.match(workerConsole, /attributeFilter: \['style', 'data-theme'\]/);
     assert.match(source('src/styles.css'), /\.worker-output \{[^}]*color-scheme: dark/);
     assert.match(source('src/styles.css'), /\.worker-xterm \.xterm-screen, \.worker-xterm \.xterm-rows \{ color: #b8c0cc; \}/);
+    assert.match(workerConsole, /실제 Codex 세션/);
+    assert.match(workerConsole, /실시간 출력 · 읽기 전용 · PTY 아님/);
+    assert.match(source('src/components/forms.jsx'), /현재 Codex 세션에 입력/);
+    assert.match(source('src/components/forms.jsx'), /실행 중이면 turn\/steer/);
   });
 
   it('removes terminal control strings that can mutate browser or terminal state', () => {
@@ -82,6 +86,30 @@ describe('Worker Console v2 contract', () => {
     assert.match(workerConsole, /rawStreamHasOutputRef\.current/);
     assert.match(workerConsole, /publicOperationalTrace\(detail\)/);
     assert.doesNotMatch(workerConsole, /<details[^>]*worker-evidence-drawer[^>]*\sopen(?:=|\s|>)/);
+  });
+
+  it('patches Hermes workers to stream the public Codex event feed and use native turn steering', () => {
+    const windowsPatch = source('scripts/patch-hermes-codex-runtime.ps1');
+    const portablePatch = source('scripts/patch-hermes-codex-runtime.mjs');
+
+    for (const patch of [windowsPatch, portablePatch]) {
+      assert.match(patch, /PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1/);
+      assert.match(patch, /PRAETORIUM_WORKER_CONTEXT_PROMPT_V2/);
+      assert.match(patch, /PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3/);
+      assert.match(patch, /PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1/);
+      assert.match(patch, /PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1/);
+      assert.match(patch, /PRAETORIUM_CODEX_EVENT_STEER_POLL_V1/);
+      assert.match(patch, /item\/reasoning\/summaryTextDelta/);
+      assert.match(patch, /item\/commandExecution\/outputDelta/);
+      assert.match(patch, /turn\/plan\/updated/);
+      assert.match(patch, /redirect\(note\)/);
+      assert.match(patch, /inject_new_comments_from_env\(agent\)/);
+      assert.match(patch, /build_worker_context/);
+      assert.match(patch, /complete authoritative Director instruction/);
+      assert.match(patch, /never invoke/);
+      assert.match(patch, /hermes kanban through the shell/);
+      assert.doesNotMatch(patch, /_praetorium_console\(params\.get\("delta"\).*item\/reasoning\/textDelta/);
+    }
   });
 
   it('distinguishes an in-flight pause from a confirmed Owner pause', () => {

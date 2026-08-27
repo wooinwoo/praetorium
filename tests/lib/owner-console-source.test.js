@@ -40,7 +40,8 @@ test('React console rejects stale Worker responses and pauses hidden evidence po
   ]);
   assert.match(apiClient, /\['GET', 'HEAD'\]\.includes\(method\) \? 10000/);
   assert.match(apiClient, /error\.name === 'AbortError' && timedOut/);
-  assert.match(app, /taskPollingEnabled: activeTab !== 'director'/);
+  assert.match(app, /taskPollingEnabled: true/);
+  assert.match(app, /projectMessagesEnabled: true/);
   assert.match(hook, /requestId !== taskRequest\.current \|\| signal\.aborted/);
   assert.match(hook, /5000, taskPollingEnabled/);
   assert.match(settings, /role="dialog" aria-modal="true"/);
@@ -213,7 +214,7 @@ test('Owner Goal controls confirm exact destructive scope and preserve server re
   assert.equal(_test.goalControlSuccessMessage('reorder', { queuePosition: 1, previousPosition: 3 }), '대기열 #1로 이동했습니다 · 이전 #3.');
 });
 
-test('Owner console uses resizable rail and overview, Director chat, and Worker workspace tabs', async () => {
+test('Owner console uses a resizable project room with persistent Director and Worker areas', async () => {
   const [html, app, common, sidebar, workspace, css] = await Promise.all([
     source('index.html'), source('src/App.jsx'), source('src/components/common.jsx'),
     source('src/components/Sidebar.jsx'), source('src/components/Workspace.jsx'), source('src/styles.css'),
@@ -226,16 +227,16 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(common, /onDoubleClick=\{onReset\}/);
   assert.match(common, /ArrowLeft.*ArrowRight.*Home/);
   assert.match(app, /praetorium\.railWidth/);
+  assert.match(app, /praetorium\.workerRoomWidth/);
   assert.match(app, /praetorium\.inspectorWidth/);
   assert.match(app, /praetorium\.inspectorOpen/);
-  assert.match(workspace, /role="tablist"/);
-  assert.match(workspace, /\['ArrowLeft', 'ArrowRight', 'Home', 'End'\]/);
-  assert.match(workspace, /role="tabpanel"/);
-  assert.match(workspace, />현황</);
-  assert.match(workspace, />디렉터</);
-  assert.match(workspace, /worker-tabs/);
+  assert.match(workspace, /className="project-room"/);
+  assert.match(workspace, /Owner ↔ Director/);
+  assert.match(workspace, /className="worker-room"/);
+  assert.match(workspace, /<Splitter label="Director와 Worker 영역 너비"/);
+  assert.doesNotMatch(workspace, /workspace-tabbar/);
   assert.match(workspace, /<WorkerConsole directorId=\{director\?\.id\}/);
-  assert.match(workspace, /Worker 원문 로그/);
+  assert.match(workspace, /작업 과정/);
   assert.match(workspace, /<Splitter label="세부 정보 너비"/);
   assert.match(workspace, /onClose=\{\(\) => setInspectorOpen\(false\)\}/);
   assert.match(workspace, /selectedEntry\?\.type === 'decision'/);
@@ -252,9 +253,9 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.match(common, /event\.preventDefault\(\)/);
   assert.doesNotMatch(common, /location\.assign/);
   assert.match(css, /\.splitter[\s\S]*cursor: ew-resize/);
-  assert.match(css, /--workspace-tab-height: 40px/);
-  assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: var\(--workspace-tab-height\) minmax\(0, 1fr\)/);
-  assert.match(css, /@media \(max-width: 760px\)[\s\S]*--workspace-tab-height: 44px/);
+  assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: auto minmax\(0, 1fr\)/);
+  assert.match(css, /\.project-room \{[^}]*--worker-room-width/);
+  assert.match(css, /@container \(max-width: 920px\)/);
   assert.match(css, /\.workspace-shell > \.splitter-right \{ grid-column: 2; grid-row: 2; \}/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.inspector \{ position: fixed;/);
   assert.match(css, /\.operator-grid \{[^}]*grid-template-columns: clamp\(220px, var\(--rail-width\), 34vw\)/);
@@ -263,14 +264,17 @@ test('Owner console uses resizable rail and overview, Director chat, and Worker 
   assert.equal(_test.workspaceViewKind('unknown'), 'overview');
 });
 
-test('Worker tabs expose a live log console with direct bounded intervention', async () => {
-  const [workspace, workerConsole, forms, css] = await Promise.all([
-    source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/components/forms.jsx'), source('src/styles.css'),
+test('Worker room exposes a live log console with direct bounded intervention', async () => {
+  const [app, workspace, workerConsole, forms, css] = await Promise.all([
+    source('src/App.jsx'), source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/components/forms.jsx'), source('src/styles.css'),
   ]);
   assert.match(workspace, /const WorkerConsole = lazy\(\(\) => import\('\.\/WorkerConsole\.jsx'\)\)/);
   assert.match(workspace, /<WorkerConsole directorId=\{director\?\.id\}/);
-  assert.match(workspace, /setInspectorOpen\(false\)/);
-  assert.match(workspace, /workerControls=\{!activeTab\.startsWith\('task:'\)\}/);
+  assert.match(workspace, /selectTask\(id\)/);
+  assert.match(app, /navigationFromLocation/);
+  assert.match(app, /params\.get\('taskId'\)/);
+  assert.match(app, /data\.selectTask\(pendingNavigation\.taskId\)/);
+  assert.match(workspace, /workerControls=\{false\}/);
   assert.match(workspace, /detailError=\{errors\.task\} traceError=\{errors\.trace\}/);
   assert.match(workerConsole, /new Terminal\(\{/);
   assert.match(workerConsole, /disableStdin: true/);
@@ -500,7 +504,7 @@ test('Owner console uses conditional compact polling and avoids hidden or unneed
   assert.match(js, /if \(!document\.hidden\) void loadConsole\(\{ quiet: true \}\)/);
 });
 
-test('React console keeps durable history, scoped chat, completed Worker access, and operator alerts', async () => {
+test('React console keeps durable history, unified Director chat, Worker access, and operator alerts', async () => {
   const [app, hook, sidebar, workspace, workerConsole, notifications, notificationModel, notificationCenter, css] = await Promise.all([
     source('src/App.jsx'), source('src/hooks/usePraetorium.js'), source('src/components/Sidebar.jsx'),
     source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/hooks/useOperatorNotifications.js'),
@@ -508,23 +512,23 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   ]);
   assert.match(hook, /\/goals\?\$\{query\}/);
   assert.match(hook, /\/messages\?\$\{query\}/);
-  assert.match(sidebar, />현재 목표</);
+  assert.match(sidebar, />현재 작업</);
   assert.match(sidebar, />대기열</);
-  assert.match(sidebar, />기록</);
+  assert.match(sidebar, /작업 기록/);
   assert.match(sidebar, /`\$\{statusText\(goal\.status\)\} · 활성 목표`/);
   assert.match(sidebar, /aria-label=\{accessibleLabel\}/);
   assert.match(sidebar, /이전 기록 더 보기/);
-  assert.match(workspace, /channel-scope/);
+  assert.match(workspace, /channel-route/);
   assert.match(workspace, /const guideableGoalStates = new Set/);
   assert.doesNotMatch(workspace.match(/const guideableGoalStates[^;]+;/)?.[0] || '', /awaiting_owner/);
-  assert.match(workspace, /key=\{`\$\{director\?\.id\}:\$\{chatScope\}:\$\{chatScope === 'goal' \? goal\?\.id \|\| 'none' : 'project'\}`\}/);
+  assert.match(workspace, /key=\{`\$\{director\?\.id\}:\$\{routeToGoal \? goal\?\.id : 'project'\}`\}/);
   assert.match(workspace, /완료 아님 · 오너 결정 대기/);
   assert.match(workspace, /결정 화면 열기/);
   assert.match(workspace, /presentation\.state === 'awaiting_owner' \? onDecision : onOpen/);
   assert.match(workspace, /const openOwnerDecision = \(\) =>/);
   assert.match(workspace, /trace\.findLast\(entry => entry\.type === 'decision'\)/);
-  assert.match(workspace, /setActiveTab\('trace'\);\s*setInspectorOpen\(true\);/);
-  assert.equal(workspace.match(/onClick=\{onOpenDecision\}/g)?.length, 2);
+  assert.match(workspace, /trace\.findLast\(entry => entry\.type === 'decision'\) \|\| null/);
+  assert.ok((workspace.match(/onClick=\{onOpenDecision\}/g)?.length || 0) >= 1);
   assert.match(workspace, /onOpenDecision=\{openOwnerDecision\}/);
   assert.match(workspace, /const scrollTop = scrollRef\.current\?\.scrollTop/);
   assert.match(workspace, /onDecision\(\);\s*requestAnimationFrame/);
@@ -548,22 +552,22 @@ test('React console keeps durable history, scoped chat, completed Worker access,
   assert.match(css, /\.decision-impact-list/);
   assert.match(workspace, /orientation="horizontal"/);
   assert.match(app, /praetorium\.activityHeight/);
-  assert.match(workspace, /setChatScope\('goal'\); setActiveTab\('director'\)/);
-  assert.match(workspace, /CompletedTasksMenu/);
-  assert.match(workspace, /!taskIsTerminal\(task\) \|\| activeTab ===/);
+  assert.match(workspace, /buildConversation\(null,[\s\S]*'project'\)/);
+  assert.match(workspace, /buildConversation\(goal, summary, director, 'goal'\)/);
+  assert.match(workspace, /const ordered = \[\.\.\.tasks\]\.sort/);
   assert.match(workspace, /function WorkerNow/);
   assert.match(workspace, /Worker \$\{running\.length\}개 실행 중/);
   assert.match(workspace, /실행 \$\{running\.length\} · 대기 \$\{waiting\.length\} · 확인 \$\{attention\.length\}/);
-  assert.match(workspace, /<WorkerNow goal=\{goal\} tasks=\{tasks\} error=\{errors\.board\} onOpen=\{onOpenTask\}/);
-  assert.match(workspace, /onOpenTask=\{openTask\}/);
+  assert.match(workspace, /function WorkerRoom/);
+  assert.match(workspace, /selectTask=\{openTask\}/);
   assert.match(workspace, /Worker 상태를 확인할 수 없음/);
   assert.match(workspace, /마지막으로 확인된 상태만 표시합니다/);
   assert.match(workspace, /<ul className=\{`worker-now-list/);
-  assert.doesNotMatch(workspace, /role="listitem"/);
+  assert.match(workspace, /role="listitem"/);
   assert.match(workspace, /events\[0\]\?\.message \|\| '첫 실행 이벤트를 기다리는 중…'/);
   assert.match(workspace, /\(!taskIsTerminal\(item\.task\) \|\| taskPausedByOwner\(item\.task\)\)/);
   assert.match(css, /\.worker-now-list button/);
-  assert.match(css, /\.worker-tabs > button\.worker-tab-running/);
+  assert.match(css, /\.worker-room-list > button\.selected/);
   assert.match(notifications, /!document\.hidden && document\.hasFocus\(\)/);
   assert.match(notifications, /show_operator_notification/);
   assert.match(notifications, /operator-notification-open/);
@@ -598,8 +602,8 @@ test('React operator UI keeps resumable Workers active and renders complete deci
   assert.match(model, /function taskIsTerminal/);
   assert.match(model, /function orderQueuedGoals/);
   assert.match(sidebar, /orderQueuedGoals\(visibleGoals\.filter/);
-  assert.match(workspace, /tasks\.filter\(task => taskIsTerminal\(task\)\)/);
-  assert.match(workspace, /일시정지 · 재개 가능/);
+  assert.match(workspace, /taskIsTerminal\(task\) \? 2/);
+  assert.match(workspace, /taskPausedByOwner\(task\)/);
   assert.match(workspace, /lastSyncedAt = null/);
   assert.match(workspace, /goalSupervisionHealth/);
   for (const field of ['approvalKind', 'effect', 'target', 'writeScope', 'throughWave', 'planDigest', 'candidateDigest', 'plannedActions']) {

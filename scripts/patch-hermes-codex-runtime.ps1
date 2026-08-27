@@ -11,6 +11,7 @@ $runtimeProvider = Join-Path $HermesRoot 'hermes-agent\hermes_cli\runtime_provid
 $appServerClient = Join-Path $HermesRoot 'hermes-agent\agent\transports\codex_app_server.py'
 $codexRuntime = Join-Path $HermesRoot 'hermes-agent\agent\codex_runtime.py'
 $kanbanDb = Join-Path $HermesRoot 'hermes-agent\hermes_cli\kanban_db.py'
+$kanbanTools = Join-Path $HermesRoot 'hermes-agent\tools\kanban_tools.py'
 $hermesExeCandidates = @(
     (Join-Path $HermesRoot 'hermes-agent\venv\Scripts\hermes.exe'),
     (Join-Path $HermesRoot 'hermes-agent\bin\hermes.exe')
@@ -33,6 +34,9 @@ if (-not (Test-Path -LiteralPath $codexRuntime -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $kanbanDb -PathType Leaf)) {
     throw "Hermes Kanban runtime not found: $kanbanDb"
+}
+if (-not (Test-Path -LiteralPath $kanbanTools -PathType Leaf)) {
+    throw "Hermes Kanban tools not found: $kanbanTools"
 }
 
 $version = (& $hermesExe --version 2>&1) -join [Environment]::NewLine
@@ -236,4 +240,354 @@ if (-not $kanbanSource.Contains($workerLifecycleMarker)) {
     Write-Host 'Installed durable worker lifecycle and read-only reviewer bridge.'
 } else {
     Write-Host 'Hermes durable worker lifecycle bridge is already installed.'
+}
+
+# Mark dispatched workers so their existing Codex app-server thread emits a
+# complete, public operational transcript to the task log.
+$workerConsoleEnvMarker = 'PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1'
+$kanbanSource = [IO.File]::ReadAllText($kanbanDb)
+if (-not $kanbanSource.Contains($workerConsoleEnvMarker)) {
+    $envNeedle = '    env["HERMES_KANBAN_TASK"] = task.id'
+    if (([regex]::Matches($kanbanSource, [regex]::Escape($envNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: Worker console environment insertion point is not unique.'
+    }
+    $envReplacement = @'
+    # PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1
+    env["PRAETORIUM_WORKER_CONSOLE"] = "true"
+    env["HERMES_KANBAN_TASK"] = task.id
+'@
+    $kanbanPatched = $kanbanSource.Replace($envNeedle, $envReplacement.TrimEnd())
+    [IO.File]::WriteAllText($kanbanDb, $kanbanPatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Installed Codex Worker console environment bridge.'
+} else {
+    Write-Host 'Codex Worker console environment bridge is already installed.'
+}
+
+# Put the complete bounded card directly into Codex's first user turn. Asking
+# a worker to rediscover its task through tools wastes time and can violate a
+# task-specific command allowlist before the card is even loaded.
+$workerContextMarker = 'PRAETORIUM_WORKER_CONTEXT_PROMPT_V2'
+$kanbanSource = [IO.File]::ReadAllText($kanbanDb)
+if (-not $kanbanSource.Contains($workerContextMarker)) {
+    $contextNeedle = @'
+    prompt = (
+        f"Work Kanban task {task.id}. Read the full card before acting. "
+        "You must finish the durable board lifecycle before your final answer: "
+        "call the kanban_complete tool with evidence and artifacts on success, "
+        "or kanban_block with the concrete blocker. Plain text is not completion."
+    )
+'@
+    if (([regex]::Matches($kanbanSource, [regex]::Escape($contextNeedle.TrimEnd()))).Count -ne 1) {
+        throw 'Hermes source layout changed: authoritative Worker context insertion point is not unique.'
+    }
+    $contextReplacement = @'
+    # PRAETORIUM_WORKER_CONTEXT_PROMPT_V2
+    # Put the authoritative card directly into Codex's first user message.
+    # Making the model rediscover its own task through tools caused needless
+    # board exploration and could violate a narrow command allowlist.
+    try:
+        with connect_closing(board=board) as _praetorium_context_conn:
+            _praetorium_worker_context = build_worker_context(
+                _praetorium_context_conn, task.id
+            )
+    except Exception as _praetorium_context_error:
+        _log.warning(
+            "kanban worker: full context render failed for %s: %s",
+            task.id, _praetorium_context_error,
+        )
+        _praetorium_worker_context = (
+            f"# Kanban task {task.id}: {task.title}\n\n"
+            f"## Body\n{task.body or '(no body)'}"
+        )
+    prompt = (
+        f"{_praetorium_worker_context}\n\n"
+        "## Execution contract\n"
+        "The card above is the complete authoritative Director instruction. "
+        "Do not inspect the board database or search for the card; it is already included. "
+        "Respect every command, read, write, and delegation restriction literally. "
+        "Publish the requested public checkpoints as task comments. "
+        # PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3
+        "Use the native kanban_complete or kanban_block tool; never invoke "
+        "hermes kanban through the shell. "
+        "Finish the durable board lifecycle before your final answer: call the "
+        "kanban_complete tool with evidence and artifacts on success, or "
+        "kanban_block with the concrete blocker. Plain text is not completion."
+    )
+'@
+    $kanbanPatched = $kanbanSource.Replace($contextNeedle.TrimEnd(), $contextReplacement.TrimEnd())
+    [IO.File]::WriteAllText($kanbanDb, $kanbanPatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Installed authoritative full-card Worker prompt bridge.'
+} else {
+    Write-Host 'Authoritative full-card Worker prompt bridge is already installed.'
+}
+
+# The lifecycle is a structured Worker tool call, not a shell command. Keeping
+# it out of PowerShell avoids quoting failures and duplicate terminal retries.
+$nativeLifecycleMarker = 'PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3'
+$kanbanSource = [IO.File]::ReadAllText($kanbanDb)
+if (-not $kanbanSource.Contains($nativeLifecycleMarker)) {
+    $lifecycleNeedle = @'
+        "Publish the requested public checkpoints as task comments. "
+        "Finish the durable board lifecycle before your final answer: call the "
+'@
+    if (([regex]::Matches($kanbanSource, [regex]::Escape($lifecycleNeedle.TrimEnd()))).Count -ne 1) {
+        throw 'Hermes source layout changed: native lifecycle instruction insertion point is not unique.'
+    }
+    $lifecycleReplacement = @'
+        "Publish the requested public checkpoints as task comments. "
+        # PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3
+        "Use the native kanban_complete or kanban_block tool; never invoke "
+        "hermes kanban through the shell. "
+        "Finish the durable board lifecycle before your final answer: call the "
+'@
+    $kanbanPatched = $kanbanSource.Replace($lifecycleNeedle.TrimEnd(), $lifecycleReplacement.TrimEnd())
+    [IO.File]::WriteAllText($kanbanDb, $kanbanPatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Installed native Worker lifecycle tool instruction.'
+} else {
+    Write-Host 'Native Worker lifecycle tool instruction is already installed.'
+}
+
+# Deliver live comments to the active Codex turn itself. Hermes' generic
+# steer queue only drains between its own tool iterations; Codex app-server
+# owns that loop and therefore requires its native turn/steer operation.
+$nativeSteerMarker = 'PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1'
+$kanbanToolsSource = [IO.File]::ReadAllText($kanbanTools)
+if (-not $kanbanToolsSource.Contains($nativeSteerMarker)) {
+    $steerNeedle = '        return bool(agent.steer(note))'
+    if (([regex]::Matches($kanbanToolsSource, [regex]::Escape($steerNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: native Codex steer insertion point is not unique.'
+    }
+    $steerReplacement = @'
+        # PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1
+        # A Codex app-server turn owns its internal tool loop. Deliver live
+        # operator guidance through turn/steer instead of Hermes' next-tool
+        # result queue, while preserving the legacy path for other runtimes.
+        if getattr(agent, "api_mode", None) == "codex_app_server":
+            redirect = getattr(agent, "redirect", None)
+            accepted = bool(redirect(note)) if callable(redirect) else False
+        else:
+            accepted = bool(agent.steer(note))
+        # PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2
+        if accepted and os.environ.get("PRAETORIUM_WORKER_CONSOLE") == "true":
+            print(f"\n\033[96m[DIRECTOR -> WORKER]\033[0m\n{note}\n", flush=True)
+        return accepted
+'@
+    $kanbanToolsPatched = $kanbanToolsSource.Replace($steerNeedle, $steerReplacement.TrimEnd())
+    [IO.File]::WriteAllText($kanbanTools, $kanbanToolsPatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Installed native Codex Worker turn/steer bridge.'
+} else {
+    Write-Host 'Native Codex Worker turn/steer bridge is already installed.'
+}
+
+# Repair the one display label if an older Windows PowerShell invocation read
+# the UTF-8 patch source through its legacy code page.
+$nativeSteerAsciiMarker = 'PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2'
+$kanbanToolsSource = [IO.File]::ReadAllText($kanbanTools)
+if (-not $kanbanToolsSource.Contains($nativeSteerAsciiMarker)) {
+    $nativeSteerPattern = '        if accepted and os\.environ\.get\("PRAETORIUM_WORKER_CONSOLE"\) == "true":\r?\n            print\(f"[^\r\n]*\r?\n'
+    $nativeSteerMatches = [regex]::Matches($kanbanToolsSource, $nativeSteerPattern)
+    if ($nativeSteerMatches.Count -ne 1) {
+        throw "Hermes source layout changed: native steer console repair count is $($nativeSteerMatches.Count)."
+    }
+    $nativeSteerAscii = @'
+        # PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2
+        if accepted and os.environ.get("PRAETORIUM_WORKER_CONSOLE") == "true":
+            print(f"\n\033[96m[DIRECTOR -> WORKER]\033[0m\n{note}\n", flush=True)
+'@
+    $kanbanToolsPatched = [regex]::Replace($kanbanToolsSource, $nativeSteerPattern, $nativeSteerAscii.TrimEnd() + [Environment]::NewLine, 1)
+    [IO.File]::WriteAllText($kanbanTools, $kanbanToolsPatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Repaired native Codex Worker steer console label.'
+} else {
+    Write-Host 'Native Codex Worker steer console label is ASCII-safe.'
+}
+
+# Mirror the real Codex app-server event stream into the Worker task log.
+# Raw hidden reasoning text stays private; readable reasoning summaries,
+# plans, commands, command output, file changes, tools, and answers are shown.
+$traceMarker = 'PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1'
+$codexRuntimeSource = [IO.File]::ReadAllText($codexRuntime)
+if (-not $codexRuntimeSource.Contains($traceMarker)) {
+    $traceStateNeedle = '    started: dict[str, tuple[str, dict, float]] = {}'
+    $traceDispatchNeedle = @'
+        if not isinstance(params, dict):
+            params = {}
+'@
+    if (([regex]::Matches($codexRuntimeSource, [regex]::Escape($traceStateNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: Codex trace state insertion point is not unique.'
+    }
+    if (([regex]::Matches($codexRuntimeSource, [regex]::Escape($traceDispatchNeedle.TrimEnd()))).Count -ne 1) {
+        throw 'Hermes source layout changed: Codex trace dispatch insertion point is not unique.'
+    }
+    $traceStateReplacement = @'
+    started: dict[str, tuple[str, dict, float]] = {}
+
+    # PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1
+    # The Kanban process already owns a real Codex app-server thread. Mirror
+    # its public operational event stream to stdout so the per-task log is the
+    # same session transcript an interactive Codex client would render.
+    import os as _praetorium_os
+    _praetorium_trace_enabled = (
+        _praetorium_os.environ.get("PRAETORIUM_WORKER_CONSOLE") == "true"
+    )
+    _praetorium_streamed_items: set[str] = set()
+    _praetorium_open_sections: set[str] = set()
+
+    def _praetorium_console(text: Any = "", *, end: str = "\n") -> None:
+        if not _praetorium_trace_enabled:
+            return
+        print(str(text), end=end, flush=True)
+
+    def _praetorium_item_text(item: dict) -> str:
+        parts = []
+        for content in item.get("content") or []:
+            if isinstance(content, dict) and content.get("type") in {
+                "text", "input_text", "output_text"
+            }:
+                value = content.get("text") or ""
+                if value:
+                    parts.append(str(value))
+        return "\n".join(parts)
+
+    def _praetorium_trace_event(method: str, params: dict) -> None:
+        if not _praetorium_trace_enabled:
+            return
+        if method == "turn/started":
+            turn = params.get("turn") or {}
+            _praetorium_console(
+                f"\n\033[90m-- Codex turn {str(turn.get('id') or '')[:12]} --\033[0m"
+            )
+            return
+        if method == "turn/completed":
+            turn = params.get("turn") or {}
+            _praetorium_console(
+                f"\n\033[90m-- turn {turn.get('status') or 'completed'} --\033[0m"
+            )
+            return
+        if method == "turn/plan/updated":
+            _praetorium_console("\n\033[94mPLAN\033[0m")
+            for entry in params.get("plan") or []:
+                if not isinstance(entry, dict):
+                    continue
+                state = entry.get("status") or "pending"
+                mark = "[x]" if state in {"completed", "complete"} else "[>]" if state in {"inProgress", "in_progress"} else "[ ]"
+                _praetorium_console(f"  {mark} {entry.get('step') or ''}")
+            return
+        if method == "item/reasoning/summaryTextDelta":
+            key = f"reasoning:{params.get('itemId') or ''}"
+            if key not in _praetorium_open_sections:
+                _praetorium_open_sections.add(key)
+                _praetorium_console("\n\033[95mREASONING SUMMARY\033[0m")
+            _praetorium_console(params.get("delta") or "", end="")
+            return
+        if method == "item/reasoning/textDelta":
+            # Raw hidden reasoning is deliberately not exposed. Codex's
+            # readable summary stream above is the public reasoning surface.
+            return
+        if method == "item/agentMessage/delta":
+            item_id = str(params.get("itemId") or "")
+            key = f"agent:{item_id}"
+            if key not in _praetorium_open_sections:
+                _praetorium_open_sections.add(key)
+                _praetorium_console("\n\033[92mCodex\033[0m")
+            _praetorium_streamed_items.add(item_id)
+            _praetorium_console(params.get("delta") or params.get("text") or "", end="")
+            return
+        if method == "item/commandExecution/outputDelta":
+            _praetorium_console(params.get("delta") or "", end="")
+            return
+        if method in {"warning", "error", "configWarning"}:
+            error = params.get("error") or {}
+            message = params.get("message") or params.get("summary") or error.get("message") or "Codex runtime warning"
+            _praetorium_console(f"\n\033[91m! {message}\033[0m")
+            return
+
+        item = params.get("item")
+        if not isinstance(item, dict):
+            return
+        item_type = item.get("type") or ""
+        item_id = str(item.get("id") or "")
+        if method == "item/started" and item_type == "userMessage":
+            text = _praetorium_item_text(item)
+            if text:
+                _praetorium_console(f"\n\033[96mDirector -> Worker\033[0m\n{text}")
+        elif method == "item/started" and item_type == "commandExecution":
+            command = item.get("command") or ""
+            if isinstance(command, list):
+                command = " ".join(str(part) for part in command)
+            cwd = item.get("cwd") or ""
+            _praetorium_console(f"\n\033[93m$ {command}\033[0m")
+            if cwd:
+                _praetorium_console(f"\033[90m  cwd: {cwd}\033[0m")
+        elif method == "item/completed" and item_type == "commandExecution":
+            code = item.get("exitCode")
+            duration = item.get("durationMs")
+            suffix = f" / {duration}ms" if duration is not None else ""
+            _praetorium_console(f"\n\033[90m[exit {code if code is not None else '?'}{suffix}]\033[0m")
+        elif method in {"item/started", "item/completed"} and item_type == "fileChange":
+            verb = "editing" if method == "item/started" else "files changed"
+            paths = [str(change.get("path") or "") for change in item.get("changes") or [] if isinstance(change, dict)]
+            _praetorium_console(f"\n\033[94m{verb}: {', '.join(path for path in paths if path) or 'file change'}\033[0m")
+        elif method == "item/started" and item_type in {"mcpToolCall", "dynamicToolCall", "webSearch", "collabToolCall", "imageView"}:
+            name = item.get("tool") or item.get("query") or item_type
+            server = item.get("server")
+            label = f"{server}/{name}" if server else name
+            _praetorium_console(f"\n\033[94m> {label}\033[0m")
+        elif method == "item/completed" and item_type == "agentMessage" and item_id not in _praetorium_streamed_items:
+            text = item.get("text") or ""
+            if text:
+                _praetorium_console(f"\n\033[92mCodex\033[0m\n{text}")
+        elif method == "item/completed" and item_type == "contextCompaction":
+            _praetorium_console("\n\033[90m[context compacted]\033[0m")
+'@
+    $traceDispatchReplacement = @'
+        if not isinstance(params, dict):
+            params = {}
+        try:
+            _praetorium_trace_event(method, params)
+        except Exception:
+            logger.debug("Praetorium Codex trace bridge raised", exc_info=True)
+'@
+    $codexRuntimePatched = $codexRuntimeSource.Replace($traceStateNeedle, $traceStateReplacement.TrimEnd()).Replace($traceDispatchNeedle.TrimEnd(), $traceDispatchReplacement.TrimEnd())
+    [IO.File]::WriteAllText($codexRuntime, $codexRuntimePatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Installed full Codex Worker event trace bridge.'
+} else {
+    Write-Host 'Full Codex Worker event trace bridge is already installed.'
+}
+
+# Hermes activity callbacks can remain idle while app-server owns a long Codex
+# turn. Poll durable task comments from the actual notification stream so a
+# live Owner/Director instruction reaches turn/steer even during that loop.
+$eventSteerMarker = 'PRAETORIUM_CODEX_EVENT_STEER_POLL_V1'
+$codexRuntimeSource = [IO.File]::ReadAllText($codexRuntime)
+if (-not $codexRuntimeSource.Contains($eventSteerMarker)) {
+    $eventSteerNeedle = @'
+        try:
+            _praetorium_trace_event(method, params)
+        except Exception:
+            logger.debug("Praetorium Codex trace bridge raised", exc_info=True)
+'@
+    if (([regex]::Matches($codexRuntimeSource, [regex]::Escape($eventSteerNeedle.TrimEnd()))).Count -ne 1) {
+        throw 'Hermes source layout changed: Codex event steer insertion point is not unique.'
+    }
+    $eventSteerReplacement = @'
+        try:
+            _praetorium_trace_event(method, params)
+        except Exception:
+            logger.debug("Praetorium Codex trace bridge raised", exc_info=True)
+        # PRAETORIUM_CODEX_EVENT_STEER_POLL_V1
+        # App-server owns the long-running inner loop, so normal Hermes
+        # activity callbacks may not fire while a turn is busy. Poll the
+        # durable comment bridge from the Codex notification stream itself.
+        if _praetorium_trace_enabled:
+            try:
+                from tools.kanban_tools import inject_new_comments_from_env
+                inject_new_comments_from_env(agent)
+            except Exception:
+                logger.debug("Praetorium Codex steer poll raised", exc_info=True)
+'@
+    $codexRuntimePatched = $codexRuntimeSource.Replace($eventSteerNeedle.TrimEnd(), $eventSteerReplacement.TrimEnd())
+    [IO.File]::WriteAllText($codexRuntime, $codexRuntimePatched, [Text.UTF8Encoding]::new($false))
+    Write-Host 'Installed event-driven Codex Worker turn/steer polling.'
+} else {
+    Write-Host 'Event-driven Codex Worker turn/steer polling is already installed.'
 }

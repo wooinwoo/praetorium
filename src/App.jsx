@@ -19,21 +19,30 @@ class AppErrorBoundary extends Component {
   }
 }
 
+function navigationFromLocation() {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const directorId = params.get('directorId');
+  const goalId = params.get('goalId');
+  const taskId = params.get('taskId');
+  if (!directorId && !goalId && !taskId) return null;
+  return { directorId, goalId, taskId, kind: taskId ? 'worker' : 'goal' };
+}
+
 function AppShell() {
-  const [activeTab, setActiveTab] = useState('trace');
-  const [chatScope, setChatScope] = useState('goal');
   const data = usePraetorium({
-    taskPollingEnabled: activeTab !== 'director',
-    projectMessagesEnabled: activeTab === 'director' && chatScope === 'project',
+    taskPollingEnabled: true,
+    projectMessagesEnabled: true,
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useStoredState('praetorium.theme', 'dark');
   const [scale, setScale] = useStoredState('praetorium.scale', 1);
   const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 248);
+  const [workerRoomWidth, setWorkerRoomWidth] = useStoredState('praetorium.workerRoomWidth', 620);
   const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 312);
   const [activityHeight, setActivityHeight] = useStoredState('praetorium.activityHeight', 112);
   const [inspectorOpen, setInspectorOpen] = useStoredState('praetorium.inspectorOpen', false);
-  const [pendingNavigation, setPendingNavigation] = useState(null);
+  const [pendingNavigation, setPendingNavigation] = useState(navigationFromLocation);
   const pendingGoalRequest = useRef('');
 
   const openNotification = useCallback(item => {
@@ -57,9 +66,10 @@ function AppShell() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0d0f13' : '#f4f5f7');
   }, [theme, scale]);
   useEffect(() => {
-    setActiveTab('trace');
-    setChatScope(data.selectedGoalId ? 'goal' : 'project');
-  }, [data.selectedGoalId, data.selectedDirectorId]);
+    if (pendingNavigation?.directorId && pendingNavigation.directorId !== data.selectedDirectorId) {
+      data.selectDirector(pendingNavigation.directorId);
+    }
+  }, [data.selectDirector, data.selectedDirectorId, pendingNavigation]);
   useEffect(() => {
     if (!pendingNavigation || (pendingNavigation.directorId && pendingNavigation.directorId !== data.selectedDirectorId)) return;
     if (pendingNavigation.goalId && pendingNavigation.goalId !== data.selectedGoalId) {
@@ -78,10 +88,6 @@ function AppShell() {
     setPendingNavigation(null);
     if (pendingNavigation.taskId) {
       data.selectTask(pendingNavigation.taskId);
-      setActiveTab(`task:${pendingNavigation.taskId}`);
-    } else {
-      setChatScope('goal');
-      setActiveTab(pendingNavigation.kind === 'owner_decision' ? 'trace' : 'director');
     }
   }, [data.revealGoal, data.selectTask, data.selectedDirectorId, data.selectedGoalId, pendingNavigation]);
 
@@ -110,10 +116,6 @@ function AppShell() {
       <Splitter label="왼쪽 사이드바 너비" side="left" value={railWidth} min={220} max={420} onChange={setRailWidth} onReset={() => setRailWidth(248)} />
       <section className={`workspace-shell ${inspectorOpen ? '' : 'inspector-closed'}`}>
         <Workspace
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          chatScope={chatScope}
-          setChatScope={setChatScope}
           director={data.selectedDirector}
           goal={data.selectedGoal}
           goalDetail={data.goalDetail}
@@ -136,6 +138,8 @@ function AppShell() {
           setInspectorWidth={setInspectorWidth}
           activityHeight={activityHeight}
           setActivityHeight={setActivityHeight}
+          workerRoomWidth={workerRoomWidth}
+          setWorkerRoomWidth={setWorkerRoomWidth}
         />
       </section>
     </div>

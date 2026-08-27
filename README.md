@@ -89,9 +89,9 @@ Owner objective
 → Owner decision or verified terminal report
 ```
 
-Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, gate freshness, and stop conditions. Wave boundaries distinguish task dispatch from later Director judgment. Selecting a Worker opens a real xterm renderer backed by a same-origin local log stream, plus its task contract, public operational checkpoints, observed commands, lifecycle events, acceptance criteria, and final evidence. The terminal is deliberately read-only: it is not a PTY and does not attach stdin to the Codex app-server protocol. This is a complete operational evidence trace, not private model chain-of-thought.
+Selecting a Director checkpoint exposes its public decision journal: success criteria, evidence, constraints, risks, alternatives, worker split, review strategy, gate freshness, and stop conditions. Wave boundaries distinguish task dispatch from later Director judgment. Every dispatched Worker owns a real Codex app-server thread. Selecting it opens that thread's live public session transcript in xterm: Director input, readable reasoning summaries, plans, commands, stdout/stderr, file changes, tool calls, and answers. The attached composer persists each Owner instruction and then injects it into the active thread with Codex `turn/steer`; Director-generated Worker corrections use the same path. xterm itself remains a renderer rather than an arbitrary shell PTY, and raw hidden chain-of-thought is never exposed.
 
-The console also subscribes to bounded same-origin Server-Sent Events streams. One carries public Director run, Goal, scheduler, and output-activity receipts; the Worker console follows the managed local Hermes log file directly on Windows and uses a bounded snapshot fallback for WSL/custom runtimes. Both reconnect and resynchronize from durable state when needed. No stream exposes an input, shell, remote-control channel, raw private model output, or private chain-of-thought.
+The console also subscribes to bounded same-origin Server-Sent Events streams. One carries public Director run, Goal, scheduler, and output-activity receipts; the Worker console follows the managed local Hermes log file directly on Windows and uses a bounded snapshot fallback for WSL/custom runtimes. Hermes mirrors the underlying Codex item stream into that task log, and both streams reconnect and resynchronize from durable state when needed. Input uses a bounded task-scoped HTTP action and Codex `turn/steer`; there is no raw stdin, browser shell, remote-control gateway, private model output, or private chain-of-thought channel.
 
 Owner communication follows the Owner's language. When an Owner request contains Korean, public Director summaries and questions plus Worker task text, checkpoints, and final reports are written in Korean. Machine contracts remain stable English: JSON keys, schema names, enum values, identifiers, and the `PLAN`, `OBSERVED`, `DECISION`, and `VERIFY` markers are never translated.
 
@@ -100,7 +100,7 @@ New Worker tasks are required to publish concise `PLAN`, `OBSERVED`, `DECISION`,
 The Owner can intervene from the selected Worker console or its Inspector:
 
 - add a durable instruction to a queued or blocked task;
-- steer a running Worker in-place through Hermes' live comment bridge (normally observed within about six seconds);
+- steer a running Worker's active Codex turn in-place through the durable comment bridge and native `turn/steer` (normally delivered within about six seconds);
 - immediately pause a running Worker, which terminates its current local process and parks the task for Owner input;
 - resume a paused task and return it to automatic dispatch;
 - reorder, defer, or cancel a queued Goal, and safely retry a stopped blocked or failed Goal;

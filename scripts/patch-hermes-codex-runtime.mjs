@@ -35,7 +35,8 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
   const appServerClient = join(agentRoot, 'agent', 'transports', 'codex_app_server.py');
   const codexRuntime = join(agentRoot, 'agent', 'codex_runtime.py');
   const kanbanDb = join(agentRoot, 'hermes_cli', 'kanban_db.py');
-  for (const path of [runtimeProvider, appServerClient, codexRuntime, kanbanDb]) {
+  const kanbanTools = join(agentRoot, 'tools', 'kanban_tools.py');
+  for (const path of [runtimeProvider, appServerClient, codexRuntime, kanbanDb, kanbanTools]) {
     if (!existsSync(path)) throw new Error(`Hermes source file not found: ${path}`);
   }
 
@@ -103,6 +104,260 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
       'reviewer environment',
     );
   });
+
+  patchFile(kanbanDb, 'PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1', source => replaceOnce(
+    source,
+    '    env["HERMES_KANBAN_TASK"] = task.id',
+    '    # PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1\n    env["PRAETORIUM_WORKER_CONSOLE"] = "true"\n    env["HERMES_KANBAN_TASK"] = task.id',
+    'Codex Worker console environment',
+  ));
+
+  patchFile(kanbanDb, 'PRAETORIUM_WORKER_CONTEXT_PROMPT_V2', source => replaceOnce(
+    source,
+    `    prompt = (
+        f"Work Kanban task {task.id}. Read the full card before acting. "
+        "You must finish the durable board lifecycle before your final answer: "
+        "call the kanban_complete tool with evidence and artifacts on success, "
+        "or kanban_block with the concrete blocker. Plain text is not completion."
+    )`,
+    `    # PRAETORIUM_WORKER_CONTEXT_PROMPT_V2
+    # Put the authoritative card directly into Codex's first user message.
+    # Making the model rediscover its own task through tools caused needless
+    # board exploration and could violate a narrow command allowlist.
+    try:
+        with connect_closing(board=board) as _praetorium_context_conn:
+            _praetorium_worker_context = build_worker_context(
+                _praetorium_context_conn, task.id
+            )
+    except Exception as _praetorium_context_error:
+        _log.warning(
+            "kanban worker: full context render failed for %s: %s",
+            task.id, _praetorium_context_error,
+        )
+        _praetorium_worker_context = (
+            f"# Kanban task {task.id}: {task.title}\\n\\n"
+            f"## Body\\n{task.body or '(no body)'}"
+        )
+    prompt = (
+        f"{_praetorium_worker_context}\\n\\n"
+        "## Execution contract\\n"
+        "The card above is the complete authoritative Director instruction. "
+        "Do not inspect the board database or search for the card; it is already included. "
+        "Respect every command, read, write, and delegation restriction literally. "
+        "Publish the requested public checkpoints as task comments. "
+        # PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3
+        "Use the native kanban_complete or kanban_block tool; never invoke "
+        "hermes kanban through the shell. "
+        "Finish the durable board lifecycle before your final answer: call the "
+        "kanban_complete tool with evidence and artifacts on success, or "
+        "kanban_block with the concrete blocker. Plain text is not completion."
+    )`,
+    'authoritative Worker context prompt',
+  ));
+
+  patchFile(kanbanDb, 'PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3', source => replaceOnce(
+    source,
+    `        "Publish the requested public checkpoints as task comments. "
+        "Finish the durable board lifecycle before your final answer: call the "`,
+    `        "Publish the requested public checkpoints as task comments. "
+        # PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3
+        "Use the native kanban_complete or kanban_block tool; never invoke "
+        "hermes kanban through the shell. "
+        "Finish the durable board lifecycle before your final answer: call the "`,
+    'native Worker lifecycle tool instruction',
+  ));
+
+  patchFile(kanbanTools, 'PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1', source => replaceOnce(
+    source,
+    '        return bool(agent.steer(note))',
+    `        # PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1
+        # A Codex app-server turn owns its internal tool loop. Deliver live
+        # operator guidance through turn/steer instead of Hermes' next-tool
+        # result queue, while preserving the legacy path for other runtimes.
+        if getattr(agent, "api_mode", None) == "codex_app_server":
+            redirect = getattr(agent, "redirect", None)
+            accepted = bool(redirect(note)) if callable(redirect) else False
+        else:
+            accepted = bool(agent.steer(note))
+        # PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2
+        if accepted and os.environ.get("PRAETORIUM_WORKER_CONSOLE") == "true":
+            print(f"\\n\\033[96m[DIRECTOR -> WORKER]\\033[0m\\n{note}\\n", flush=True)
+        return accepted`,
+    'native Codex Worker steer',
+  ));
+
+  patchFile(kanbanTools, 'PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2', source => {
+    const pattern = /        if accepted and os\.environ\.get\("PRAETORIUM_WORKER_CONSOLE"\) == "true":\r?\n            print\(f"[^\r\n]*\r?\n/;
+    const matches = source.match(new RegExp(pattern.source, 'g')) || [];
+    if (matches.length !== 1) throw new Error(`Hermes source layout changed: native steer console repair count is ${matches.length}.`);
+    return source.replace(
+      pattern,
+      '        # PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2\n        if accepted and os.environ.get("PRAETORIUM_WORKER_CONSOLE") == "true":\n            print(f"\\n\\033[96m[DIRECTOR -> WORKER]\\033[0m\\n{note}\\n", flush=True)\n',
+    );
+  });
+
+  patchFile(codexRuntime, 'PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1', source => {
+    let patched = replaceOnce(
+      source,
+      '    started: dict[str, tuple[str, dict, float]] = {}',
+      `    started: dict[str, tuple[str, dict, float]] = {}
+
+    # PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1
+    # The Kanban process already owns a real Codex app-server thread. Mirror
+    # its public operational event stream to stdout so the per-task log is the
+    # same session transcript an interactive Codex client would render.
+    import os as _praetorium_os
+    _praetorium_trace_enabled = (
+        _praetorium_os.environ.get("PRAETORIUM_WORKER_CONSOLE") == "true"
+    )
+    _praetorium_streamed_items: set[str] = set()
+    _praetorium_open_sections: set[str] = set()
+
+    def _praetorium_console(text: Any = "", *, end: str = "\\n") -> None:
+        if not _praetorium_trace_enabled:
+            return
+        print(str(text), end=end, flush=True)
+
+    def _praetorium_item_text(item: dict) -> str:
+        parts = []
+        for content in item.get("content") or []:
+            if isinstance(content, dict) and content.get("type") in {
+                "text", "input_text", "output_text"
+            }:
+                value = content.get("text") or ""
+                if value:
+                    parts.append(str(value))
+        return "\\n".join(parts)
+
+    def _praetorium_trace_event(method: str, params: dict) -> None:
+        if not _praetorium_trace_enabled:
+            return
+        if method == "turn/started":
+            turn = params.get("turn") or {}
+            _praetorium_console(
+                f"\\n\\033[90m-- Codex turn {str(turn.get('id') or '')[:12]} --\\033[0m"
+            )
+            return
+        if method == "turn/completed":
+            turn = params.get("turn") or {}
+            _praetorium_console(
+                f"\\n\\033[90m-- turn {turn.get('status') or 'completed'} --\\033[0m"
+            )
+            return
+        if method == "turn/plan/updated":
+            _praetorium_console("\\n\\033[94mPLAN\\033[0m")
+            for entry in params.get("plan") or []:
+                if not isinstance(entry, dict):
+                    continue
+                state = entry.get("status") or "pending"
+                mark = "[x]" if state in {"completed", "complete"} else "[>]" if state in {"inProgress", "in_progress"} else "[ ]"
+                _praetorium_console(f"  {mark} {entry.get('step') or ''}")
+            return
+        if method == "item/reasoning/summaryTextDelta":
+            key = f"reasoning:{params.get('itemId') or ''}"
+            if key not in _praetorium_open_sections:
+                _praetorium_open_sections.add(key)
+                _praetorium_console("\\n\\033[95mREASONING SUMMARY\\033[0m")
+            _praetorium_console(params.get("delta") or "", end="")
+            return
+        if method == "item/reasoning/textDelta":
+            # Raw hidden reasoning is deliberately not exposed. Codex's
+            # readable summary stream above is the public reasoning surface.
+            return
+        if method == "item/agentMessage/delta":
+            item_id = str(params.get("itemId") or "")
+            key = f"agent:{item_id}"
+            if key not in _praetorium_open_sections:
+                _praetorium_open_sections.add(key)
+                _praetorium_console("\\n\\033[92mCodex\\033[0m")
+            _praetorium_streamed_items.add(item_id)
+            _praetorium_console(params.get("delta") or params.get("text") or "", end="")
+            return
+        if method == "item/commandExecution/outputDelta":
+            _praetorium_console(params.get("delta") or "", end="")
+            return
+        if method in {"warning", "error", "configWarning"}:
+            error = params.get("error") or {}
+            message = params.get("message") or params.get("summary") or error.get("message") or "Codex runtime warning"
+            _praetorium_console(f"\\n\\033[91m! {message}\\033[0m")
+            return
+
+        item = params.get("item")
+        if not isinstance(item, dict):
+            return
+        item_type = item.get("type") or ""
+        item_id = str(item.get("id") or "")
+        if method == "item/started" and item_type == "userMessage":
+            text = _praetorium_item_text(item)
+            if text:
+                _praetorium_console(f"\\n\\033[96mDirector -> Worker\\033[0m\\n{text}")
+        elif method == "item/started" and item_type == "commandExecution":
+            command = item.get("command") or ""
+            if isinstance(command, list):
+                command = " ".join(str(part) for part in command)
+            cwd = item.get("cwd") or ""
+            _praetorium_console(f"\\n\\033[93m$ {command}\\033[0m")
+            if cwd:
+                _praetorium_console(f"\\033[90m  cwd: {cwd}\\033[0m")
+        elif method == "item/completed" and item_type == "commandExecution":
+            code = item.get("exitCode")
+            duration = item.get("durationMs")
+            suffix = f" / {duration}ms" if duration is not None else ""
+            _praetorium_console(f"\\n\\033[90m[exit {code if code is not None else '?'}{suffix}]\\033[0m")
+        elif method in {"item/started", "item/completed"} and item_type == "fileChange":
+            verb = "editing" if method == "item/started" else "files changed"
+            paths = [str(change.get("path") or "") for change in item.get("changes") or [] if isinstance(change, dict)]
+            _praetorium_console(f"\\n\\033[94m{verb}: {', '.join(path for path in paths if path) or 'file change'}\\033[0m")
+        elif method == "item/started" and item_type in {"mcpToolCall", "dynamicToolCall", "webSearch", "collabToolCall", "imageView"}:
+            name = item.get("tool") or item.get("query") or item_type
+            server = item.get("server")
+            label = f"{server}/{name}" if server else name
+            _praetorium_console(f"\\n\\033[94m> {label}\\033[0m")
+        elif method == "item/completed" and item_type == "agentMessage" and item_id not in _praetorium_streamed_items:
+            text = item.get("text") or ""
+            if text:
+                _praetorium_console(f"\\n\\033[92mCodex\\033[0m\\n{text}")
+        elif method == "item/completed" and item_type == "contextCompaction":
+            _praetorium_console("\\n\\033[90m[context compacted]\\033[0m")`,
+      'Codex event bridge state',
+    );
+    patched = replaceOnce(
+      patched,
+      `        if not isinstance(params, dict):
+            params = {}`,
+      `        if not isinstance(params, dict):
+            params = {}
+        try:
+            _praetorium_trace_event(method, params)
+        except Exception:
+            logger.debug("Praetorium Codex trace bridge raised", exc_info=True)`,
+      'Codex event trace dispatch',
+    );
+    return patched;
+  });
+
+  patchFile(codexRuntime, 'PRAETORIUM_CODEX_EVENT_STEER_POLL_V1', source => replaceOnce(
+    source,
+    `        try:
+            _praetorium_trace_event(method, params)
+        except Exception:
+            logger.debug("Praetorium Codex trace bridge raised", exc_info=True)`,
+    `        try:
+            _praetorium_trace_event(method, params)
+        except Exception:
+            logger.debug("Praetorium Codex trace bridge raised", exc_info=True)
+        # PRAETORIUM_CODEX_EVENT_STEER_POLL_V1
+        # App-server owns the long-running inner loop, so normal Hermes
+        # activity callbacks may not fire while a turn is busy. Poll the
+        # durable comment bridge from the Codex notification stream itself.
+        if _praetorium_trace_enabled:
+            try:
+                from tools.kanban_tools import inject_new_comments_from_env
+                inject_new_comments_from_env(agent)
+            except Exception:
+                logger.debug("Praetorium Codex steer poll raised", exc_info=True)`,
+    'Codex event-driven steer poll',
+  ));
 
   return { root, hermes, version };
 }

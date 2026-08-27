@@ -199,34 +199,59 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
   </div>;
 }
 
-function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, chatScope, setChatScope, projectMessages, onLoadOlderMessages, liveActivity, activityHeight, setActivityHeight }) {
-  const conversationSummary = chatScope === 'project' ? { recentRuns: projectMessages?.items || [] } : summary;
-  const messages = useMemo(() => buildConversation(goal, conversationSummary, director, chatScope), [goal, conversationSummary, director, chatScope]);
-  const canGuideGoal = chatScope === 'goal' && guideableGoalStates.has(goal?.status);
+function ProcessJournal({ trace, selectedEntry, onSelectEntry, onSelectTask, onOpenDecision }) {
+  const recent = trace.slice(-10).reverse();
+  return <details className="process-journal">
+    <summary><span><Icon name="activity" /><strong>작업 과정</strong><small>계획·위임·검증 기록</small></span><b>{trace.length}</b></summary>
+    <div className="process-journal-list">
+      {recent.map(entry => <button type="button" key={entry.id} className={selectedEntry?.id === entry.id ? 'selected' : ''} onClick={() => {
+        onSelectEntry(entry);
+        if (entry.taskId) onSelectTask(entry.taskId);
+        if (entry.type === 'decision') onOpenDecision();
+      }}>
+        <span className={`task-tab-dot ${entry.status}`} />
+        <span><small>{entry.eyebrow}</small><strong>{entry.title}</strong></span>
+        <time>{formatClock(entry.at)}</time>
+      </button>)}
+      {!recent.length && <p>아직 공개된 작업 과정이 없습니다.</p>}
+    </div>
+  </details>;
+}
+
+function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, projectMessages, onLoadOlderMessages, liveActivity, activityHeight, setActivityHeight, trace, selectedEntry, onSelectEntry, onSelectTask }) {
+  const canGuideGoal = guideableGoalStates.has(goal?.status);
+  const [messageRoute, setMessageRoute] = useState(canGuideGoal ? 'goal' : 'new');
+  useEffect(() => { setMessageRoute(canGuideGoal ? 'goal' : 'new'); }, [goal?.id, canGuideGoal]);
+  const messages = useMemo(() => {
+    const project = buildConversation(null, { recentRuns: projectMessages?.items || [] }, director, 'project')
+      .map(message => ({ ...message, kind: message.kind ? `프로젝트 · ${message.kind}` : '프로젝트' }));
+    const current = buildConversation(goal, summary, director, 'goal')
+      .map(message => ({ ...message, kind: message.kind ? `현재 작업 · ${message.kind}` : '현재 작업' }));
+    const unique = new Map([...project, ...current].map(message => [message.id, message]));
+    return [...unique.values()].sort((left, right) => Date.parse(left.at || 0) - Date.parse(right.at || 0));
+  }, [director, goal, projectMessages?.items, summary]);
+  const routeToGoal = canGuideGoal && messageRoute === 'goal';
   const waitingForOwner = goal?.status === 'awaiting_owner' && goal?.ownerDecision?.required;
   return <section className="director-view">
-    <header className="channel-header"><span className="director-avatar large">D</span><span><strong>디렉터</strong><small>{chatScope === 'goal' && goal ? goal.objective : `${director?.name || '프로젝트'} 전체 대화`}</small></span><div className="channel-scope" role="group" aria-label="디렉터 대화 범위"><button type="button" className={chatScope === 'project' ? 'selected' : ''} onClick={() => setChatScope('project')}>프로젝트</button><button type="button" disabled={!goal} className={chatScope === 'goal' ? 'selected' : ''} onClick={() => setChatScope('goal')}>현재 Goal</button></div><span className="channel-actions"><Status value={director?.status} /></span></header>
+    <header className="channel-header"><span className="director-avatar large">D</span><span><strong>Owner ↔ Director</strong><small>{director?.name || '프로젝트'}의 지속 대화</small></span><div className="channel-route" role="group" aria-label="메시지 전달 대상"><button type="button" disabled={!canGuideGoal} className={routeToGoal ? 'selected' : ''} onClick={() => setMessageRoute('goal')}>현재 작업에 반영</button><button type="button" className={!routeToGoal ? 'selected' : ''} onClick={() => setMessageRoute('new')}>새 작업으로 전달</button></div><span className="channel-actions"><Status value={director?.status} /></span></header>
     <div className="director-context">
       {waitingForOwner && <section className="director-decision-banner" role="alert" aria-live="polite">
         <span><small>완료 아님 · 오너 결정 대기</small><strong>{goal.ownerDecision.question}</strong></span>
         <button type="button" className="attention-button" onClick={onOpenDecision}>결정 화면 열기 <Icon name="chevron" /></button>
       </section>}
-      <DirectorActivityPanel activity={liveActivity} goalId={chatScope === 'goal' ? goal?.id : null} compact activityHeight={activityHeight} setActivityHeight={setActivityHeight} />
+      <ProcessJournal trace={trace} selectedEntry={selectedEntry} onSelectEntry={onSelectEntry} onSelectTask={onSelectTask} onOpenDecision={onOpenDecision} />
+      <DirectorActivityPanel activity={liveActivity} goalId={goal?.id} compact activityHeight={activityHeight} setActivityHeight={setActivityHeight} />
     </div>
     <DirectorComposer
-      key={`${director?.id}:${chatScope}:${chatScope === 'goal' ? goal?.id || 'none' : 'project'}`}
+      key={`${director?.id}:${routeToGoal ? goal?.id : 'project'}`}
       directorId={director?.id}
-      goalId={canGuideGoal ? goal?.id : null}
+      goalId={routeToGoal ? goal?.id : null}
       messages={messages}
-      readOnly={chatScope === 'goal' && !canGuideGoal}
-      readOnlyAction={goal?.status === 'awaiting_owner'
-        ? <button type="button" className="attention-button" onClick={onOpenDecision}>대기 중인 결정 응답하기</button>
-        : <button type="button" className="secondary-button compact" onClick={() => setChatScope('project')}>프로젝트 대화 열기</button>}
-      hasOlder={chatScope === 'project' && projectMessages?.hasMore}
-      loadingOlder={chatScope === 'project' && projectMessages?.loading}
-      historyError={chatScope === 'project' ? projectMessages?.error : ''}
+      hasOlder={projectMessages?.hasMore}
+      loadingOlder={projectMessages?.loading}
+      historyError={projectMessages?.error || ''}
       onLoadOlder={onLoadOlderMessages}
-      onAccepted={async accepted => { if (chatScope === 'project') onGoalAccepted(accepted?.goalId); refresh(); }}
+      onAccepted={async accepted => { if (!routeToGoal) onGoalAccepted(accepted?.goalId); refresh(); }}
     />
   </section>;
 }
@@ -323,7 +348,63 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
   </aside>;
 }
 
-export default function Workspace({ activeTab, setActiveTab, chatScope, setChatScope, director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, lastSyncedAt = null, liveActivity }) {
+function workHeadline(goal, tasks) {
+  if (!goal) return { label: '대기 중', title: 'Director에게 새 작업을 요청하세요.', detail: '새 요청은 같은 대화에서 이어집니다.', tone: 'idle' };
+  if (goal.ownerDecision?.required || goal.status === 'awaiting_owner') return { label: 'Owner 확인 필요', title: goal.ownerDecision?.question || 'Director가 결정을 기다리고 있습니다.', detail: '결정이 전달되기 전까지 다음 단계는 진행되지 않습니다.', tone: 'attention' };
+  const running = tasks.filter(task => ['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(task)));
+  const failed = tasks.filter(task => ['failed', 'blocked'].includes(taskDisplayStatus(task)) && !taskPausedByOwner(task));
+  const waiting = tasks.filter(task => ['ready', 'queued', 'scheduled', 'todo'].includes(taskDisplayStatus(task)));
+  if (failed.length) return { label: 'Director 재판단 중', title: `${failed[0].title}에서 문제가 발견됐습니다.`, detail: `문제 Worker ${failed.length}개 · 수정 또는 재위임을 판단합니다.`, tone: 'attention' };
+  if (running.length) return { label: `Worker ${running.length}개 실행 중`, title: running[0].title, detail: running.length > 1 ? `${running.slice(1).map(task => task.title).join(' · ')}도 병렬 진행 중` : '실행 출력과 체크포인트를 계속 확인하고 있습니다.', tone: 'running' };
+  if (waiting.length) return { label: `Worker ${waiting.length}개 대기`, title: '선행 작업 또는 Director 지시를 기다리고 있습니다.', detail: `현재 단계 · ${statusText(goal.status)}`, tone: 'waiting' };
+  if (activeGoalStates.has(goal.status)) return { label: 'Director 판단 중', title: goal.objective, detail: `현재 단계 · ${statusText(goal.status)}`, tone: 'reviewing' };
+  return { label: statusText(goal.status), title: goal.objective, detail: goal.finalReport ? '최종 보고가 대화에 기록되었습니다.' : '작업 기록을 확인할 수 있습니다.', tone: successStates.has(goal.status) ? 'done' : 'idle' };
+}
+
+function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onDetails, refresh }) {
+  const current = workHeadline(goal, tasks);
+  const complete = tasks.filter(task => successStates.has(taskDisplayStatus(task))).length;
+  return <header className={`project-room-header tone-${current.tone}`}>
+    <span className="project-room-signal"><i /></span>
+    <div className="project-room-focus"><small>{current.label}</small><strong>{current.title}</strong><span>{current.detail}</span></div>
+    {goal && <div className="project-room-progress"><span>{complete}/{tasks.length || 0} Worker 완료</span><div><i style={{ width: `${tasks.length ? complete / tasks.length * 100 : 0}%` }} /></div></div>}
+    {supervision && <span className={`project-room-health tone-${supervision.tone}`} title={supervision.detail}>{supervision.label}</span>}
+    <div className="project-room-actions">
+      {goal?.ownerDecision?.required && <button type="button" className="attention-button compact" onClick={onDecision}>결정하기</button>}
+      <button type="button" className="secondary-button compact" onClick={onDetails}><Icon name="panel" />세부 정보</button>
+      {goal && <GoalControls directorId={director?.id} goal={goal} refresh={refresh} />}
+    </div>
+  </header>;
+}
+
+function workerPreview(task) {
+  return textValue(task.checkpoint || task.latestSummary || task.latest_summary || task.description || task.body || task.task || '') || '아직 공개된 응답이 없습니다.';
+}
+
+function WorkerRoom({ director, goal, tasks, selectedTask, selectTask, taskDetail, taskTrace, errors, refresh }) {
+  const ordered = [...tasks].sort((left, right) => {
+    const rank = task => taskIsTerminal(task) ? 2 : ['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(task)) ? 0 : 1;
+    return rank(left) - rank(right);
+  });
+  const running = tasks.filter(task => ['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(task))).length;
+  return <section className="worker-room" aria-label="Worker 실행실">
+    <header className="worker-room-header"><span><span className="worker-glyph"><Icon name="command" /></span><span><strong>Workers</strong><small>Director가 지시하고 Owner가 관찰·개입합니다.</small></span></span><span><b>{tasks.length}</b>개 · 실행 {running}</span></header>
+    <div className="worker-room-list" role="list" aria-label="현재 작업의 Worker 목록">
+      {ordered.map(task => <button type="button" role="listitem" key={task.id} className={task.id === selectedTask?.id ? 'selected' : ''} onClick={() => selectTask(task.id)}>
+        <span className={`task-tab-dot ${taskDisplayStatus(task)}`} />
+        <span><small>{workerTabName(tasks, task)} · {statusText(taskDisplayStatus(task))}</small><strong>{task.title}</strong><em>{workerPreview(task)}</em></span>
+        <Icon name="chevron" />
+      </button>)}
+      {!ordered.length && <div className="worker-room-empty"><Icon name="command" /><strong>아직 생성된 Worker가 없습니다.</strong><span>Director가 작업을 나누면 이곳에 세션이 생깁니다.</span></div>}
+    </div>
+    <div className="worker-room-console">
+      {selectedTask ? <Suspense fallback={<div className="workspace-empty"><strong>Worker Console 여는 중…</strong><span>실행 출력을 불러오고 있습니다.</span></div>}><WorkerConsole directorId={director?.id} goalId={goal?.id} task={selectedTask} detail={taskDetail} trace={taskTrace} detailError={errors.task} traceError={errors.trace} onRefresh={refresh} /></Suspense>
+        : <div className="workspace-empty"><strong>Worker 실행실</strong><span>Worker가 생기면 지시, 응답, 실행 출력과 개입 입력을 여기서 함께 봅니다.</span></div>}
+    </div>
+  </section>;
+}
+
+export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, workerRoomWidth, setWorkerRoomWidth, lastSyncedAt = null, liveActivity }) {
   const detailedGoal = goalDetail?.id === goal?.id ? goalDetail : null;
   const currentGoal = detailedGoal || goal;
   const tasks = useMemo(() => goalTasks(board, currentGoal).map(task => task.id === taskDetail?.task?.id
@@ -335,8 +416,6 @@ export default function Workspace({ activeTab, setActiveTab, chatScope, setChatS
   const inspectorToggleRef = useRef(null);
   const inspectorCloseRef = useRef(null);
   const selectedTask = tasks.find(task => task.id === selectedTaskId) || null;
-  const completedTasks = tasks.filter(task => taskIsTerminal(task));
-  const taskTabs = tasks.filter(task => !taskIsTerminal(task) || activeTab === `task:${task.id}`);
   const supervision = useMemo(() => goalSupervisionHealth({
     director,
     goal: currentGoal,
@@ -350,11 +429,7 @@ export default function Workspace({ activeTab, setActiveTab, chatScope, setChatS
       const preferred = tasks.find(task => task.status === 'running') || tasks.at(-1);
       if (preferred) selectTask(preferred.id);
     } else if (!tasks.some(task => task.id === selectedTaskId)) selectTask('');
-    else if (activeTab === 'trace' && taskIsTerminal(tasks.find(task => task.id === selectedTaskId))) {
-      const running = tasks.find(task => task.status === 'running');
-      if (running && running.id !== selectedTaskId) selectTask(running.id);
-    }
-  }, [activeTab, tasks, selectedTaskId, selectTask]);
+  }, [tasks, selectedTaskId, selectTask]);
   useEffect(() => { setSelectedEntry(null); }, [goal?.id]);
   useEffect(() => {
     if (!selectedEntry && selectedTaskId) {
@@ -374,44 +449,18 @@ export default function Workspace({ activeTab, setActiveTab, chatScope, setChatS
   const openTask = id => {
     selectTask(id);
     setSelectedEntry(trace.find(entry => entry.type === 'task' && entry.taskId === id) || trace.find(entry => entry.taskId === id) || null);
-    setActiveTab(`task:${id}`);
-    setInspectorOpen(false);
   };
   const openOwnerDecision = () => {
     setSelectedEntry(trace.findLast(entry => entry.type === 'decision') || null);
-    setActiveTab('trace');
     setInspectorOpen(true);
   };
-  const tabId = value => `workspace-tab-${value.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-  const handleTabKey = event => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]:not(:disabled)')];
-    const current = tabs.indexOf(document.activeElement);
-    if (current < 0) return;
-    event.preventDefault();
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-      : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-    tabs[next].focus();
-    tabs[next].click();
-  };
   return <>
-    <div className="workspace-tabbar">
-      <nav className="workspace-tabs" role="tablist" aria-label="작업 공간" onKeyDown={handleTabKey}>
-        <button id={tabId('trace')} type="button" role="tab" aria-controls="workspace" aria-selected={activeTab === 'trace'} tabIndex={activeTab === 'trace' ? 0 : -1} className={activeTab === 'trace' ? 'selected' : ''} onClick={() => setActiveTab('trace')}><Icon name="activity" />현황</button>
-        <button id={tabId('director')} type="button" role="tab" aria-controls="workspace" aria-selected={activeTab === 'director'} tabIndex={activeTab === 'director' ? 0 : -1} className={activeTab === 'director' ? 'selected' : ''} onClick={() => setActiveTab('director')}><span className="tab-avatar">D</span>디렉터{director?.status === 'running' && <i className="tab-live" />}</button>
-        <span className="tab-divider" />
-        <div className="worker-tabs">
-          {taskTabs.map(task => <button id={tabId(`task:${task.id}`)} type="button" key={task.id} role="tab" aria-controls="workspace" aria-selected={activeTab === `task:${task.id}`} tabIndex={activeTab === `task:${task.id}` ? 0 : -1} className={`${activeTab === `task:${task.id}` ? 'selected ' : ''}worker-tab-${taskDisplayStatus(task)}`} onClick={() => openTask(task.id)} title={`${workerTabName(tasks, task)} · ${task.title}`}><span className={`task-tab-dot ${taskDisplayStatus(task)}`} /><span>{workerTabName(tasks, task)}</span><small>{taskPausedByOwner(task) ? '일시정지 · 재개 가능' : task.title}</small></button>)}
-        </div>
-        <CompletedTasksMenu tasks={completedTasks} onOpen={openTask} />
-      </nav>
-      <button ref={inspectorToggleRef} type="button" className={`inspector-toggle ${inspectorOpen ? 'selected' : ''}`} aria-controls="inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><Icon name="panel" /><span>세부</span></button>
-    </div>
-    <main id="workspace" className="workspace" role="tabpanel" aria-labelledby={tabId(activeTab)} tabIndex="-1">
-      {activeTab === 'director' ? <DirectorView director={director} goal={currentGoal} summary={summary} refresh={refresh} chatScope={chatScope} setChatScope={setChatScope} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} onOpenDecision={openOwnerDecision} onGoalAccepted={id => { if (id) { selectGoal(id); setChatScope('goal'); setActiveTab('trace'); } }} />
-        : activeTab.startsWith('task:') ? <Suspense fallback={<div className="workspace-empty"><strong>Worker Console 여는 중…</strong><span>실시간 출력 렌더러를 불러오고 있습니다.</span></div>}><WorkerConsole directorId={director?.id} goalId={currentGoal?.id} task={selectedTask} detail={taskDetail} trace={taskTrace} detailError={errors.task} traceError={errors.trace} onRefresh={refresh} /></Suspense>
-          : <TraceView goal={currentGoal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={selectTask} onOpenTask={openTask} onDirector={() => { setChatScope('goal'); setActiveTab('director'); }} onDecision={openOwnerDecision} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} />}
+    <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} refresh={refresh} />
+    <main id="workspace" className="project-room" tabIndex="-1" style={{ '--worker-room-width': `${workerRoomWidth}px` }}>
+      <DirectorView director={director} goal={currentGoal} summary={summary} refresh={refresh} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} onOpenDecision={openOwnerDecision} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={openTask} onGoalAccepted={id => { if (id) selectGoal(id); }} />
+      <Splitter label="Director와 Worker 영역 너비" side="right" value={workerRoomWidth} min={360} max={920} onChange={setWorkerRoomWidth} onReset={() => setWorkerRoomWidth(620)} />
+      <WorkerRoom director={director} goal={currentGoal} tasks={tasks} selectedTask={selectedTask} selectTask={openTask} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} />
     </main>
-    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={(selectedEntry?.type === 'task' || activeTab.startsWith('task:')) ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={!activeTab.startsWith('task:')} onClose={() => setInspectorOpen(false)} /></>}
+    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={selectedEntry?.type === 'task' ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={false} onClose={() => setInspectorOpen(false)} /></>}
   </>;
 }
