@@ -8,9 +8,12 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 function replaceOnce(source, needle, replacement, label) {
-  const count = source.split(needle).length - 1;
+  const normalizedSource = source.replace(/\r\n/g, '\n');
+  const normalizedNeedle = needle.replace(/\r\n/g, '\n');
+  const normalizedReplacement = replacement.replace(/\r\n/g, '\n');
+  const count = normalizedSource.split(normalizedNeedle).length - 1;
   if (count !== 1) throw new Error(`Hermes source layout changed: ${label} insertion count is ${count}.`);
-  return source.replace(needle, replacement);
+  return normalizedSource.replace(normalizedNeedle, normalizedReplacement);
 }
 
 function managedExecutable(root) {
@@ -66,7 +69,7 @@ function commitPatches(staged, replaceFile = renameSync) {
   return prepared.length;
 }
 
-export const _test = { commitPatches };
+export const _test = { commitPatches, replaceOnce };
 
 export function patchHermesRuntime(
   root = process.env.HERMES_HOME || join(homedir(), '.hermes'),

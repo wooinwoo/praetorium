@@ -6,6 +6,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function ConvertTo-PraetoriumLf {
+    param([string]$Value)
+    return $Value.Replace("`r`n", "`n")
+}
+
 function Set-PraetoriumPatchedFiles {
     param(
         [System.Collections.IDictionary]$Files,
@@ -341,6 +346,7 @@ if (-not $kanbanSource.Contains($workerConsoleEnvMarker)) {
 # task-specific command allowlist before the card is even loaded.
 $workerContextMarker = 'PRAETORIUM_WORKER_CONTEXT_PROMPT_V2'
 if (-not $kanbanSource.Contains($workerContextMarker)) {
+    $kanbanSource = ConvertTo-PraetoriumLf $kanbanSource
     $contextNeedle = @'
     prompt = (
         f"Work Kanban task {task.id}. Read the full card before acting. "
@@ -349,7 +355,8 @@ if (-not $kanbanSource.Contains($workerContextMarker)) {
         "or kanban_block with the concrete blocker. Plain text is not completion."
     )
 '@
-    if (([regex]::Matches($kanbanSource, [regex]::Escape($contextNeedle.TrimEnd()))).Count -ne 1) {
+    $contextNeedleText = ConvertTo-PraetoriumLf ($contextNeedle.TrimEnd())
+    if (([regex]::Matches($kanbanSource, [regex]::Escape($contextNeedleText))).Count -ne 1) {
         throw 'Hermes source layout changed: authoritative Worker context insertion point is not unique.'
     }
     $contextReplacement = @'
@@ -386,7 +393,8 @@ if (-not $kanbanSource.Contains($workerContextMarker)) {
         "kanban_block with the concrete blocker. Plain text is not completion."
     )
 '@
-    $kanbanPatched = $kanbanSource.Replace($contextNeedle.TrimEnd(), $contextReplacement.TrimEnd())
+    $contextReplacementText = ConvertTo-PraetoriumLf ($contextReplacement.TrimEnd())
+    $kanbanPatched = $kanbanSource.Replace($contextNeedleText, $contextReplacementText)
     $kanbanSource = $kanbanPatched
     Write-Host 'Prepared authoritative full-card Worker prompt bridge.'
 } else {
@@ -397,11 +405,13 @@ if (-not $kanbanSource.Contains($workerContextMarker)) {
 # it out of PowerShell avoids quoting failures and duplicate terminal retries.
 $nativeLifecycleMarker = 'PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3'
 if (-not $kanbanSource.Contains($nativeLifecycleMarker)) {
+    $kanbanSource = ConvertTo-PraetoriumLf $kanbanSource
     $lifecycleNeedle = @'
         "Publish the requested public checkpoints as task comments. "
         "Finish the durable board lifecycle before your final answer: call the "
 '@
-    if (([regex]::Matches($kanbanSource, [regex]::Escape($lifecycleNeedle.TrimEnd()))).Count -ne 1) {
+    $lifecycleNeedleText = ConvertTo-PraetoriumLf ($lifecycleNeedle.TrimEnd())
+    if (([regex]::Matches($kanbanSource, [regex]::Escape($lifecycleNeedleText))).Count -ne 1) {
         throw 'Hermes source layout changed: native lifecycle instruction insertion point is not unique.'
     }
     $lifecycleReplacement = @'
@@ -411,7 +421,8 @@ if (-not $kanbanSource.Contains($nativeLifecycleMarker)) {
         "hermes kanban through the shell. "
         "Finish the durable board lifecycle before your final answer: call the "
 '@
-    $kanbanPatched = $kanbanSource.Replace($lifecycleNeedle.TrimEnd(), $lifecycleReplacement.TrimEnd())
+    $lifecycleReplacementText = ConvertTo-PraetoriumLf ($lifecycleReplacement.TrimEnd())
+    $kanbanPatched = $kanbanSource.Replace($lifecycleNeedleText, $lifecycleReplacementText)
     $kanbanSource = $kanbanPatched
     Write-Host 'Prepared native Worker lifecycle tool instruction.'
 } else {
@@ -476,15 +487,17 @@ if (-not $kanbanToolsSource.Contains($nativeSteerAsciiMarker)) {
 # plans, commands, command output, file changes, tools, and answers are shown.
 $traceMarker = 'PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1'
 if (-not $codexRuntimeSource.Contains($traceMarker)) {
+    $codexRuntimeSource = ConvertTo-PraetoriumLf $codexRuntimeSource
     $traceStateNeedle = '    started: dict[str, tuple[str, dict, float]] = {}'
     $traceDispatchNeedle = @'
         if not isinstance(params, dict):
             params = {}
 '@
+    $traceDispatchNeedleText = ConvertTo-PraetoriumLf ($traceDispatchNeedle.TrimEnd())
     if (([regex]::Matches($codexRuntimeSource, [regex]::Escape($traceStateNeedle))).Count -ne 1) {
         throw 'Hermes source layout changed: Codex trace state insertion point is not unique.'
     }
-    if (([regex]::Matches($codexRuntimeSource, [regex]::Escape($traceDispatchNeedle.TrimEnd()))).Count -ne 1) {
+    if (([regex]::Matches($codexRuntimeSource, [regex]::Escape($traceDispatchNeedleText))).Count -ne 1) {
         throw 'Hermes source layout changed: Codex trace dispatch insertion point is not unique.'
     }
     $traceStateReplacement = @'
@@ -616,7 +629,9 @@ if (-not $codexRuntimeSource.Contains($traceMarker)) {
         except Exception:
             logger.debug("Praetorium Codex trace bridge raised", exc_info=True)
 '@
-    $codexRuntimePatched = $codexRuntimeSource.Replace($traceStateNeedle, $traceStateReplacement.TrimEnd()).Replace($traceDispatchNeedle.TrimEnd(), $traceDispatchReplacement.TrimEnd())
+    $traceStateReplacementText = ConvertTo-PraetoriumLf ($traceStateReplacement.TrimEnd())
+    $traceDispatchReplacementText = ConvertTo-PraetoriumLf ($traceDispatchReplacement.TrimEnd())
+    $codexRuntimePatched = $codexRuntimeSource.Replace($traceStateNeedle, $traceStateReplacementText).Replace($traceDispatchNeedleText, $traceDispatchReplacementText)
     $codexRuntimeSource = $codexRuntimePatched
     Write-Host 'Prepared full Codex Worker event trace bridge.'
 } else {
@@ -628,13 +643,15 @@ if (-not $codexRuntimeSource.Contains($traceMarker)) {
 # live Owner/Director instruction reaches turn/steer even during that loop.
 $eventSteerMarker = 'PRAETORIUM_CODEX_EVENT_STEER_POLL_V1'
 if (-not $codexRuntimeSource.Contains($eventSteerMarker)) {
+    $codexRuntimeSource = ConvertTo-PraetoriumLf $codexRuntimeSource
     $eventSteerNeedle = @'
         try:
             _praetorium_trace_event(method, params)
         except Exception:
             logger.debug("Praetorium Codex trace bridge raised", exc_info=True)
 '@
-    if (([regex]::Matches($codexRuntimeSource, [regex]::Escape($eventSteerNeedle.TrimEnd()))).Count -ne 1) {
+    $eventSteerNeedleText = ConvertTo-PraetoriumLf ($eventSteerNeedle.TrimEnd())
+    if (([regex]::Matches($codexRuntimeSource, [regex]::Escape($eventSteerNeedleText))).Count -ne 1) {
         throw 'Hermes source layout changed: Codex event steer insertion point is not unique.'
     }
     $eventSteerReplacement = @'
@@ -653,7 +670,8 @@ if (-not $codexRuntimeSource.Contains($eventSteerMarker)) {
             except Exception:
                 logger.debug("Praetorium Codex steer poll raised", exc_info=True)
 '@
-    $codexRuntimePatched = $codexRuntimeSource.Replace($eventSteerNeedle.TrimEnd(), $eventSteerReplacement.TrimEnd())
+    $eventSteerReplacementText = ConvertTo-PraetoriumLf ($eventSteerReplacement.TrimEnd())
+    $codexRuntimePatched = $codexRuntimeSource.Replace($eventSteerNeedleText, $eventSteerReplacementText)
     $codexRuntimeSource = $codexRuntimePatched
     Write-Host 'Prepared event-driven Codex Worker turn/steer polling.'
 } else {

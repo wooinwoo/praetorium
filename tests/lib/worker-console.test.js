@@ -114,9 +114,21 @@ describe('Worker Codex session console contract', () => {
       assert.doesNotMatch(patch, /_praetorium_console\(params\.get\("delta"\).*item\/reasoning\/textDelta/);
     }
     assert.match(windowsPatch, /Set-PraetoriumPatchedFiles/);
+    assert.match(windowsPatch, /ConvertTo-PraetoriumLf/);
     assert.doesNotMatch(windowsPatch, /WriteAllText\(\$(?:runtimeProvider|appServerClient|codexRuntime|kanbanDb|kanbanTools),/);
     assert.match(portablePatch, /const staged = new Map\(\)/);
     assert.match(portablePatch, /commitPatches\(staged\)/);
+  });
+
+  it('matches portable Hermes patches across LF and CRLF source', () => {
+    const sourceText = 'before\r\nneedle one\r\nneedle two\r\nafter\r\n';
+    const patched = patchTest.replaceOnce(
+      sourceText,
+      'needle one\nneedle two',
+      'replacement one\nreplacement two',
+      'line ending test',
+    );
+    assert.equal(patched, 'before\nreplacement one\nreplacement two\nafter\n');
   });
 
   it('validates every portable Hermes patch before changing source files', { skip: process.platform === 'win32' }, () => {
@@ -182,7 +194,7 @@ describe('Worker Codex session console contract', () => {
 
   it('rolls back Windows Hermes patch commits and preserves a failed rollback backup', { skip: process.platform !== 'win32' }, () => {
     const windowsPatch = source('scripts/patch-hermes-codex-runtime.ps1');
-    const functionStart = windowsPatch.indexOf('function Set-PraetoriumPatchedFiles');
+    const functionStart = windowsPatch.indexOf('function ConvertTo-PraetoriumLf');
     const functionEnd = windowsPatch.indexOf('$HermesRoot =', functionStart);
     assert.ok(functionStart >= 0 && functionEnd > functionStart);
     const transactionFunction = windowsPatch.slice(functionStart, functionEnd);
@@ -192,6 +204,9 @@ $root = Join-Path ([IO.Path]::GetTempPath()) "praetorium-patch-$([Guid]::NewGuid
 $first = Join-Path $root 'first.py'
 $second = Join-Path $root 'second.py'
 try {
+    $crlf = 'first' + [char]13 + [char]10 + 'second'
+    $lf = 'first' + [char]10 + 'second'
+    if ((ConvertTo-PraetoriumLf $crlf) -ne $lf) { throw 'CRLF normalization failed.' }
     [IO.File]::WriteAllText($first, 'first original' + [Environment]::NewLine)
     [IO.File]::WriteAllText($second, 'second original' + [Environment]::NewLine)
     $files = [ordered]@{
