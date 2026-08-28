@@ -6,6 +6,82 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Set-PraetoriumPatchedFiles {
+    param(
+        [System.Collections.IDictionary]$Files,
+        [scriptblock]$ReplaceFile = {
+            param($Temporary, $Path, $Backup)
+            [IO.File]::Replace($Temporary, $Path, $Backup, $true)
+        },
+        [scriptblock]$RestoreFile = {
+            param($Backup, $Path)
+            [IO.File]::Copy($Backup, $Path, $true)
+        }
+    )
+
+    $encoding = [Text.UTF8Encoding]::new($false)
+    $prepared = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($entry in $Files.GetEnumerator()) {
+            $path = [string]$entry.Key
+            $nextSource = [string]$entry.Value
+            if ([IO.File]::ReadAllText($path) -ceq $nextSource) {
+                continue
+            }
+            $suffix = "$PID.$([Guid]::NewGuid().ToString('N'))"
+            $temporary = "$path.praetorium-$suffix.tmp"
+            $backup = "$path.praetorium-$suffix.bak"
+            $item = [pscustomobject]@{
+                Path = $path
+                Temporary = $temporary
+                Backup = $backup
+                Committed = $false
+                PreserveBackup = $false
+            }
+            $prepared.Add($item)
+            [IO.File]::WriteAllText($temporary, $nextSource, $encoding)
+        }
+        foreach ($item in $prepared) {
+            & $ReplaceFile $item.Temporary $item.Path $item.Backup
+            $item.Committed = $true
+        }
+    } catch {
+        $cause = $_
+        $rollbackFailures = [Collections.Generic.List[string]]::new()
+        for ($index = $prepared.Count - 1; $index -ge 0; $index--) {
+            $item = $prepared[$index]
+            if (-not $item.Committed) {
+                continue
+            }
+            try {
+                & $RestoreFile $item.Backup $item.Path
+            } catch {
+                $item.PreserveBackup = $true
+                $rollbackFailures.Add("$($item.Path): $($_.Exception.Message)")
+            }
+        }
+        $rollback = if ($rollbackFailures.Count) {
+            "Rollback failed for $($rollbackFailures -join '; ')"
+        } else {
+            'Applied files were rolled back.'
+        }
+        throw "Hermes patch commit failed. $rollback Cause: $($cause.Exception.Message)"
+    } finally {
+        foreach ($item in $prepared) {
+            $artifacts = @($item.Temporary)
+            if (-not $item.PreserveBackup) {
+                $artifacts += $item.Backup
+            }
+            foreach ($artifact in $artifacts) {
+                if (Test-Path -LiteralPath $artifact) {
+                    Remove-Item -LiteralPath $artifact -Force
+                }
+            }
+        }
+    }
+    return $prepared.Count
+}
+
 $HermesRoot = [IO.Path]::GetFullPath($HermesRoot)
 $runtimeProvider = Join-Path $HermesRoot 'hermes-agent\hermes_cli\runtime_provider.py'
 $appServerClient = Join-Path $HermesRoot 'hermes-agent\agent\transports\codex_app_server.py'
@@ -83,8 +159,8 @@ $bridge = @'
 '@
 
     $patched = $source.Replace($needle, $needle + $bridge)
-    [IO.File]::WriteAllText($runtimeProvider, $patched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed Hermes Codex app-server authentication bridge.'
+    $source = $patched
+    Write-Host 'Prepared Hermes Codex app-server authentication bridge.'
 } else {
     Write-Host 'Hermes Codex app-server authentication bridge is already installed.'
 }
@@ -106,8 +182,8 @@ if (-not $appServerSource.Contains($boardMarker)) {
         if spawn_env.get("HERMES_KANBAN_TASK") or spawn_env.get("HERMES_KANBAN_BOARD"):
 '@
     $appServerPatched = $appServerSource.Replace($appServerNeedle, $appServerReplacement.TrimEnd())
-    [IO.File]::WriteAllText($appServerClient, $appServerPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed Hermes Director board-root sandbox bridge.'
+    $appServerSource = $appServerPatched
+    Write-Host 'Prepared Hermes Director board-root sandbox bridge.'
 } else {
     Write-Host 'Hermes Director board-root sandbox bridge is already installed.'
 }
@@ -116,7 +192,6 @@ if (-not $appServerSource.Contains($boardMarker)) {
 # roots array fall back to a string value, which app-server rejects during
 # initialize. Forward slashes are valid native Windows paths and valid TOML.
 $windowsPathMarker = 'PRAETORIUM_WINDOWS_TOML_ROOT_BRIDGE_V1'
-$appServerSource = [IO.File]::ReadAllText($appServerClient)
 if (-not $appServerSource.Contains($windowsPathMarker)) {
     $pathNeedle = '            app_server_args.extend('
     $pathMatches = ([regex]::Matches($appServerSource, [regex]::Escape($pathNeedle))).Count
@@ -129,8 +204,8 @@ if (-not $appServerSource.Contains($windowsPathMarker)) {
             app_server_args.extend(
 '@
     $pathPatched = $appServerSource.Replace($pathNeedle, $pathReplacement.TrimEnd())
-    [IO.File]::WriteAllText($appServerClient, $pathPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed Hermes Windows writable-root TOML bridge.'
+    $appServerSource = $pathPatched
+    Write-Host 'Prepared Hermes Windows writable-root TOML bridge.'
 } else {
     Write-Host 'Hermes Windows writable-root TOML bridge is already installed.'
 }
@@ -140,7 +215,6 @@ if (-not $appServerSource.Contains($windowsPathMarker)) {
 # to the board after validation. Reviewers return reports but never mutate the
 # candidate they inspect.
 $readOnlyMarker = 'PRAETORIUM_READ_ONLY_ROLE_BRIDGE_V1'
-$appServerSource = [IO.File]::ReadAllText($appServerClient)
 if (-not $appServerSource.Contains($readOnlyMarker)) {
     $argsNeedle = '        app_server_args = list(extra_args or [])'
     $guardNeedle = '        if spawn_env.get("HERMES_KANBAN_TASK") or spawn_env.get("HERMES_KANBAN_BOARD"):'
@@ -162,8 +236,8 @@ if (-not $appServerSource.Contains($readOnlyMarker)) {
 '@
     $guardReplacement = '        if not _praetorium_read_only and (spawn_env.get("HERMES_KANBAN_TASK") or spawn_env.get("HERMES_KANBAN_BOARD")):'
     $appServerPatched = $appServerSource.Replace($argsNeedle, $argsReplacement.TrimEnd()).Replace($guardNeedle, $guardReplacement)
-    [IO.File]::WriteAllText($appServerClient, $appServerPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed structural read-only Director/reviewer bridge.'
+    $appServerSource = $appServerPatched
+    Write-Host 'Prepared structural read-only Director/reviewer bridge.'
 } else {
     Write-Host 'Hermes structural read-only Director/reviewer bridge is already installed.'
 }
@@ -192,8 +266,8 @@ if (-not $codexRuntimeSource.Contains($projectCwdMarker)) {
         )
 '@
     $codexRuntimePatched = $codexRuntimeSource.Replace($cwdNeedle, $cwdReplacement.TrimEnd())
-    [IO.File]::WriteAllText($codexRuntime, $codexRuntimePatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed Hermes project-scoped Codex cwd bridge.'
+    $codexRuntimeSource = $codexRuntimePatched
+    Write-Host 'Prepared Hermes project-scoped Codex cwd bridge.'
 } else {
     Write-Host 'Hermes project-scoped Codex cwd bridge is already installed.'
 }
@@ -236,8 +310,8 @@ if (-not $kanbanSource.Contains($workerLifecycleMarker)) {
         throw 'Hermes source layout changed: worker environment insertion point is not unique.'
     }
     $kanbanPatched = $kanbanPatched.Replace($reviewerEnvNeedle, $reviewerEnvReplacement.TrimEnd())
-    [IO.File]::WriteAllText($kanbanDb, $kanbanPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed durable worker lifecycle and read-only reviewer bridge.'
+    $kanbanSource = $kanbanPatched
+    Write-Host 'Prepared durable worker lifecycle and read-only reviewer bridge.'
 } else {
     Write-Host 'Hermes durable worker lifecycle bridge is already installed.'
 }
@@ -245,7 +319,6 @@ if (-not $kanbanSource.Contains($workerLifecycleMarker)) {
 # Mark dispatched workers so their existing Codex app-server thread emits a
 # complete, public operational transcript to the task log.
 $workerConsoleEnvMarker = 'PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1'
-$kanbanSource = [IO.File]::ReadAllText($kanbanDb)
 if (-not $kanbanSource.Contains($workerConsoleEnvMarker)) {
     $envNeedle = '    env["HERMES_KANBAN_TASK"] = task.id'
     if (([regex]::Matches($kanbanSource, [regex]::Escape($envNeedle))).Count -ne 1) {
@@ -257,8 +330,8 @@ if (-not $kanbanSource.Contains($workerConsoleEnvMarker)) {
     env["HERMES_KANBAN_TASK"] = task.id
 '@
     $kanbanPatched = $kanbanSource.Replace($envNeedle, $envReplacement.TrimEnd())
-    [IO.File]::WriteAllText($kanbanDb, $kanbanPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed Codex Worker console environment bridge.'
+    $kanbanSource = $kanbanPatched
+    Write-Host 'Prepared Codex Worker console environment bridge.'
 } else {
     Write-Host 'Codex Worker console environment bridge is already installed.'
 }
@@ -267,7 +340,6 @@ if (-not $kanbanSource.Contains($workerConsoleEnvMarker)) {
 # a worker to rediscover its task through tools wastes time and can violate a
 # task-specific command allowlist before the card is even loaded.
 $workerContextMarker = 'PRAETORIUM_WORKER_CONTEXT_PROMPT_V2'
-$kanbanSource = [IO.File]::ReadAllText($kanbanDb)
 if (-not $kanbanSource.Contains($workerContextMarker)) {
     $contextNeedle = @'
     prompt = (
@@ -315,8 +387,8 @@ if (-not $kanbanSource.Contains($workerContextMarker)) {
     )
 '@
     $kanbanPatched = $kanbanSource.Replace($contextNeedle.TrimEnd(), $contextReplacement.TrimEnd())
-    [IO.File]::WriteAllText($kanbanDb, $kanbanPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed authoritative full-card Worker prompt bridge.'
+    $kanbanSource = $kanbanPatched
+    Write-Host 'Prepared authoritative full-card Worker prompt bridge.'
 } else {
     Write-Host 'Authoritative full-card Worker prompt bridge is already installed.'
 }
@@ -324,7 +396,6 @@ if (-not $kanbanSource.Contains($workerContextMarker)) {
 # The lifecycle is a structured Worker tool call, not a shell command. Keeping
 # it out of PowerShell avoids quoting failures and duplicate terminal retries.
 $nativeLifecycleMarker = 'PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3'
-$kanbanSource = [IO.File]::ReadAllText($kanbanDb)
 if (-not $kanbanSource.Contains($nativeLifecycleMarker)) {
     $lifecycleNeedle = @'
         "Publish the requested public checkpoints as task comments. "
@@ -341,8 +412,8 @@ if (-not $kanbanSource.Contains($nativeLifecycleMarker)) {
         "Finish the durable board lifecycle before your final answer: call the "
 '@
     $kanbanPatched = $kanbanSource.Replace($lifecycleNeedle.TrimEnd(), $lifecycleReplacement.TrimEnd())
-    [IO.File]::WriteAllText($kanbanDb, $kanbanPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed native Worker lifecycle tool instruction.'
+    $kanbanSource = $kanbanPatched
+    Write-Host 'Prepared native Worker lifecycle tool instruction.'
 } else {
     Write-Host 'Native Worker lifecycle tool instruction is already installed.'
 }
@@ -373,8 +444,8 @@ if (-not $kanbanToolsSource.Contains($nativeSteerMarker)) {
         return accepted
 '@
     $kanbanToolsPatched = $kanbanToolsSource.Replace($steerNeedle, $steerReplacement.TrimEnd())
-    [IO.File]::WriteAllText($kanbanTools, $kanbanToolsPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed native Codex Worker turn/steer bridge.'
+    $kanbanToolsSource = $kanbanToolsPatched
+    Write-Host 'Prepared native Codex Worker turn/steer bridge.'
 } else {
     Write-Host 'Native Codex Worker turn/steer bridge is already installed.'
 }
@@ -382,7 +453,6 @@ if (-not $kanbanToolsSource.Contains($nativeSteerMarker)) {
 # Repair the one display label if an older Windows PowerShell invocation read
 # the UTF-8 patch source through its legacy code page.
 $nativeSteerAsciiMarker = 'PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2'
-$kanbanToolsSource = [IO.File]::ReadAllText($kanbanTools)
 if (-not $kanbanToolsSource.Contains($nativeSteerAsciiMarker)) {
     $nativeSteerPattern = '        if accepted and os\.environ\.get\("PRAETORIUM_WORKER_CONSOLE"\) == "true":\r?\n            print\(f"[^\r\n]*\r?\n'
     $nativeSteerMatches = [regex]::Matches($kanbanToolsSource, $nativeSteerPattern)
@@ -395,8 +465,8 @@ if (-not $kanbanToolsSource.Contains($nativeSteerAsciiMarker)) {
             print(f"\n\033[96m[DIRECTOR -> WORKER]\033[0m\n{note}\n", flush=True)
 '@
     $kanbanToolsPatched = [regex]::Replace($kanbanToolsSource, $nativeSteerPattern, $nativeSteerAscii.TrimEnd() + [Environment]::NewLine, 1)
-    [IO.File]::WriteAllText($kanbanTools, $kanbanToolsPatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Repaired native Codex Worker steer console label.'
+    $kanbanToolsSource = $kanbanToolsPatched
+    Write-Host 'Prepared native Codex Worker steer console-label repair.'
 } else {
     Write-Host 'Native Codex Worker steer console label is ASCII-safe.'
 }
@@ -405,7 +475,6 @@ if (-not $kanbanToolsSource.Contains($nativeSteerAsciiMarker)) {
 # Raw hidden reasoning text stays private; readable reasoning summaries,
 # plans, commands, command output, file changes, tools, and answers are shown.
 $traceMarker = 'PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1'
-$codexRuntimeSource = [IO.File]::ReadAllText($codexRuntime)
 if (-not $codexRuntimeSource.Contains($traceMarker)) {
     $traceStateNeedle = '    started: dict[str, tuple[str, dict, float]] = {}'
     $traceDispatchNeedle = @'
@@ -548,8 +617,8 @@ if (-not $codexRuntimeSource.Contains($traceMarker)) {
             logger.debug("Praetorium Codex trace bridge raised", exc_info=True)
 '@
     $codexRuntimePatched = $codexRuntimeSource.Replace($traceStateNeedle, $traceStateReplacement.TrimEnd()).Replace($traceDispatchNeedle.TrimEnd(), $traceDispatchReplacement.TrimEnd())
-    [IO.File]::WriteAllText($codexRuntime, $codexRuntimePatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed full Codex Worker event trace bridge.'
+    $codexRuntimeSource = $codexRuntimePatched
+    Write-Host 'Prepared full Codex Worker event trace bridge.'
 } else {
     Write-Host 'Full Codex Worker event trace bridge is already installed.'
 }
@@ -558,7 +627,6 @@ if (-not $codexRuntimeSource.Contains($traceMarker)) {
 # turn. Poll durable task comments from the actual notification stream so a
 # live Owner/Director instruction reaches turn/steer even during that loop.
 $eventSteerMarker = 'PRAETORIUM_CODEX_EVENT_STEER_POLL_V1'
-$codexRuntimeSource = [IO.File]::ReadAllText($codexRuntime)
 if (-not $codexRuntimeSource.Contains($eventSteerMarker)) {
     $eventSteerNeedle = @'
         try:
@@ -586,8 +654,17 @@ if (-not $codexRuntimeSource.Contains($eventSteerMarker)) {
                 logger.debug("Praetorium Codex steer poll raised", exc_info=True)
 '@
     $codexRuntimePatched = $codexRuntimeSource.Replace($eventSteerNeedle.TrimEnd(), $eventSteerReplacement.TrimEnd())
-    [IO.File]::WriteAllText($codexRuntime, $codexRuntimePatched, [Text.UTF8Encoding]::new($false))
-    Write-Host 'Installed event-driven Codex Worker turn/steer polling.'
+    $codexRuntimeSource = $codexRuntimePatched
+    Write-Host 'Prepared event-driven Codex Worker turn/steer polling.'
 } else {
     Write-Host 'Event-driven Codex Worker turn/steer polling is already installed.'
 }
+
+$stagedFiles = [ordered]@{}
+$stagedFiles[$runtimeProvider] = $source
+$stagedFiles[$appServerClient] = $appServerSource
+$stagedFiles[$codexRuntime] = $codexRuntimeSource
+$stagedFiles[$kanbanDb] = $kanbanSource
+$stagedFiles[$kanbanTools] = $kanbanToolsSource
+$changedFileCount = Set-PraetoriumPatchedFiles -Files $stagedFiles
+Write-Host "Praetorium Hermes bridge ready; committed $changedFileCount changed source file(s)."

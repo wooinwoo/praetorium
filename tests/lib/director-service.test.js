@@ -2864,6 +2864,11 @@ describe('DirectorService', () => {
     assert.equal(record.status, 'paused');
     assert.equal(record.completedAt, null);
     assert.equal(recovered.phase, 'paused_by_owner');
+
+    const recoveryEvents = recovered.events.filter(event => event.phase === 'paused_by_owner').length;
+    await restarted.tickDirector('project-director-1');
+    assert.equal(calls.filter(call => call === 'schedule').length, 1);
+    assert.equal(recovered.events.filter(event => event.phase === 'paused_by_owner').length, recoveryEvents);
   });
 
   it('fails a current Worker only after three consecutive missing observations and resets the counter when seen', async () => {

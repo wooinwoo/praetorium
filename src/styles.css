@@ -257,13 +257,14 @@ svg { display: block; flex: none; }
 .channel-route button.selected { box-shadow: inset 0 0 0 1px var(--border-strong); }
 
 .process-journal, .work-history { overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-1); }
-.process-journal > summary, .work-history > summary { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 9px; padding: 0 10px; cursor: pointer; list-style: none; }
-.process-journal > summary::-webkit-details-marker, .work-history > summary::-webkit-details-marker { display: none; }
-.process-journal > summary > span, .work-history > summary > span { display: flex; min-width: 0; align-items: center; gap: 7px; }
-.process-journal > summary strong, .work-history > summary strong { font-size: .78rem; }
-.process-journal > summary small { overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
-.process-journal > summary b, .work-history > summary > small { display: grid; min-width: 20px; height: 20px; padding: 0 5px; place-items: center; color: var(--muted); border-radius: 10px; background: var(--surface-3); font-size: .68rem; }
-.process-journal-list { max-height: 230px; overflow-y: auto; border-top: 1px solid var(--border); }
+.process-journal > header, .work-history > summary { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 9px; padding: 0 10px; list-style: none; }
+.work-history > summary { cursor: pointer; }
+.work-history > summary::-webkit-details-marker { display: none; }
+.process-journal > header > span, .work-history > summary > span { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.process-journal > header strong, .work-history > summary strong { font-size: .78rem; }
+.process-journal > header small { overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.process-journal > header b, .work-history > summary > small { display: grid; min-width: 20px; height: 20px; padding: 0 5px; place-items: center; color: var(--muted); border-radius: 10px; background: var(--surface-3); font-size: .68rem; }
+.process-journal-list { max-height: min(38vh, 420px); overflow-y: auto; border-top: 1px solid var(--border); }
 .process-journal-list > button { display: grid; width: 100%; min-height: 44px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 9px; text-align: left; border-bottom: 1px solid var(--border); background: transparent; }
 .process-journal-list > button:hover, .process-journal-list > button.selected { background: var(--surface-2); }
 .process-journal-list > button > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
@@ -271,6 +272,7 @@ svg { display: block; flex: none; }
 .process-journal-list strong { overflow: hidden; color: var(--text-soft); font-size: .78rem; font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
 .process-journal-list time { color: var(--faint); font: .68rem/1 var(--font-mono); }
 .process-journal-list > p { padding: 12px; color: var(--muted); font-size: .76rem; }
+.process-journal-list > .load-older { display: block; min-height: 36px; color: var(--accent); font-size: .74rem; font-weight: 650; text-align: center; }
 
 .worker-room { display: grid; height: 100%; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--border); background: #0b0d11; }
 .worker-room-header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 9px; border-bottom: 1px solid var(--border); background: var(--surface-1); }

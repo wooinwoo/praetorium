@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import {
+  existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -17,17 +20,61 @@ function managedExecutable(root) {
   return candidates.find(existsSync) || null;
 }
 
-function patchFile(path, marker, transform) {
-  const source = readFileSync(path, 'utf8');
+function patchFile(staged, path, marker, transform) {
+  const source = staged.get(path) ?? readFileSync(path, 'utf8');
   if (source.includes(marker)) return false;
-  writeFileSync(path, transform(source), 'utf8');
+  staged.set(path, transform(source));
   return true;
 }
 
-export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedir(), '.hermes')) {
+function commitPatches(staged, replaceFile = renameSync) {
+  const prepared = [];
+  try {
+    for (const [path, source] of staged) {
+      const original = readFileSync(path);
+      if (original.toString('utf8') === source) continue;
+      const suffix = `${process.pid}-${randomUUID()}`;
+      const temporary = `${path}.praetorium-${suffix}.tmp`;
+      const backup = `${path}.praetorium-${suffix}.bak`;
+      const entry = { path, temporary, backup, committed: false, preserveBackup: false };
+      prepared.push(entry);
+      writeFileSync(temporary, source, { encoding: 'utf8', mode: statSync(path).mode });
+      writeFileSync(backup, original, { mode: statSync(path).mode });
+    }
+    for (const entry of prepared) {
+      replaceFile(entry.temporary, entry.path);
+      entry.committed = true;
+    }
+  } catch (error) {
+    const rollbackFailures = [];
+    for (const entry of [...prepared].reverse()) {
+      if (!entry.committed) continue;
+      try { replaceFile(entry.backup, entry.path); }
+      catch (rollbackError) {
+        entry.preserveBackup = true;
+        rollbackFailures.push(`${entry.path}: ${rollbackError.message}`);
+      }
+    }
+    const detail = rollbackFailures.length ? ` Rollback failed for ${rollbackFailures.join('; ')}` : ' Applied files were rolled back.';
+    throw new Error(`Hermes patch commit failed.${detail}`, { cause: error });
+  } finally {
+    for (const entry of prepared) {
+      rmSync(entry.temporary, { force: true });
+      if (!entry.preserveBackup) rmSync(entry.backup, { force: true });
+    }
+  }
+  return prepared.length;
+}
+
+export const _test = { commitPatches };
+
+export function patchHermesRuntime(
+  root = process.env.HERMES_HOME || join(homedir(), '.hermes'),
+  getVersion = hermes => execFileSync(hermes, ['--version'], { encoding: 'utf8' }),
+) {
   const hermes = managedExecutable(root);
   if (!hermes) throw new Error(`Hermes executable not found under ${root}.`);
-  const version = execFileSync(hermes, ['--version'], { encoding: 'utf8' }).trim();
+  const version = String(getVersion(hermes)).trim();
   if (!/Hermes Agent v0\.20\.5\b/.test(version)) throw new Error(`Expected Hermes Agent v0.20.5, got: ${version}`);
 
   const agentRoot = join(root, 'hermes-agent');
@@ -39,29 +86,30 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
   for (const path of [runtimeProvider, appServerClient, codexRuntime, kanbanDb, kanbanTools]) {
     if (!existsSync(path)) throw new Error(`Hermes source file not found: ${path}`);
   }
+  const staged = new Map();
 
-  patchFile(runtimeProvider, 'PRAETORIUM_CODEX_APP_SERVER_AUTH_BRIDGE_V1', source => replaceOnce(
+  patchFile(staged, runtimeProvider, 'PRAETORIUM_CODEX_APP_SERVER_AUTH_BRIDGE_V1', source => replaceOnce(
     source,
     '    requested_provider = resolve_requested_provider(requested)',
     `    requested_provider = resolve_requested_provider(requested)\n\n    # PRAETORIUM_CODEX_APP_SERVER_AUTH_BRIDGE_V1\n    _praetorium_model_cfg = _get_model_config()\n    if (\n        requested_provider in {"openai", "openai-codex"}\n        and str(_praetorium_model_cfg.get("openai_runtime") or "").strip().lower()\n        == "codex_app_server"\n    ):\n        return {\n            "provider": "openai-codex",\n            "api_mode": "codex_app_server",\n            "base_url": DEFAULT_CODEX_BASE_URL,\n            "api_key": "praetorium-local-codex-app-server",\n            "source": "codex-cli-local-auth",\n            "requested_provider": requested_provider,\n        }`,
     'runtime provider',
   ));
 
-  patchFile(appServerClient, 'PRAETORIUM_DIRECTOR_BOARD_ROOT_BRIDGE_V1', source => replaceOnce(
+  patchFile(staged, appServerClient, 'PRAETORIUM_DIRECTOR_BOARD_ROOT_BRIDGE_V1', source => replaceOnce(
     source,
     '        if spawn_env.get("HERMES_KANBAN_TASK"):',
     '        # PRAETORIUM_DIRECTOR_BOARD_ROOT_BRIDGE_V1\n        if spawn_env.get("HERMES_KANBAN_TASK") or spawn_env.get("HERMES_KANBAN_BOARD"):',
     'Director board root',
   ));
 
-  patchFile(appServerClient, 'PRAETORIUM_WINDOWS_TOML_ROOT_BRIDGE_V1', source => replaceOnce(
+  patchFile(staged, appServerClient, 'PRAETORIUM_WINDOWS_TOML_ROOT_BRIDGE_V1', source => replaceOnce(
     source,
     '            app_server_args.extend(',
     '            # PRAETORIUM_WINDOWS_TOML_ROOT_BRIDGE_V1\n            kanban_root = str(kanban_root).replace("\\\\", "/")\n            app_server_args.extend(',
     'writable root',
   ));
 
-  patchFile(appServerClient, 'PRAETORIUM_READ_ONLY_ROLE_BRIDGE_V1', source => {
+  patchFile(staged, appServerClient, 'PRAETORIUM_READ_ONLY_ROLE_BRIDGE_V1', source => {
     let patched = replaceOnce(
       source,
       '        app_server_args = list(extra_args or [])',
@@ -77,14 +125,14 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
     return patched;
   });
 
-  patchFile(codexRuntime, 'PRAETORIUM_PROJECT_CWD_BRIDGE_V1', source => replaceOnce(
+  patchFile(staged, codexRuntime, 'PRAETORIUM_PROJECT_CWD_BRIDGE_V1', source => replaceOnce(
     source,
     '        cwd = getattr(agent, "session_cwd", None) or str(resolve_agent_cwd())',
     `        # PRAETORIUM_PROJECT_CWD_BRIDGE_V1\n        import os as _praetorium_os\n\n        cwd = (\n            _praetorium_os.environ.get("PRAETORIUM_PROJECT_CWD")\n            or getattr(agent, "session_cwd", None)\n            or str(resolve_agent_cwd())\n        )`,
     'project cwd',
   ));
 
-  patchFile(kanbanDb, 'PRAETORIUM_WORKER_LIFECYCLE_BRIDGE_V1', source => {
+  patchFile(staged, kanbanDb, 'PRAETORIUM_WORKER_LIFECYCLE_BRIDGE_V1', source => {
     let patched = replaceOnce(
       source,
       '    profile_arg = normalize_profile_name(task.assignee)',
@@ -105,14 +153,14 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
     );
   });
 
-  patchFile(kanbanDb, 'PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1', source => replaceOnce(
+  patchFile(staged, kanbanDb, 'PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1', source => replaceOnce(
     source,
     '    env["HERMES_KANBAN_TASK"] = task.id',
     '    # PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1\n    env["PRAETORIUM_WORKER_CONSOLE"] = "true"\n    env["HERMES_KANBAN_TASK"] = task.id',
     'Codex Worker console environment',
   ));
 
-  patchFile(kanbanDb, 'PRAETORIUM_WORKER_CONTEXT_PROMPT_V2', source => replaceOnce(
+  patchFile(staged, kanbanDb, 'PRAETORIUM_WORKER_CONTEXT_PROMPT_V2', source => replaceOnce(
     source,
     `    prompt = (
         f"Work Kanban task {task.id}. Read the full card before acting. "
@@ -155,7 +203,7 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
     'authoritative Worker context prompt',
   ));
 
-  patchFile(kanbanDb, 'PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3', source => replaceOnce(
+  patchFile(staged, kanbanDb, 'PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3', source => replaceOnce(
     source,
     `        "Publish the requested public checkpoints as task comments. "
         "Finish the durable board lifecycle before your final answer: call the "`,
@@ -167,7 +215,7 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
     'native Worker lifecycle tool instruction',
   ));
 
-  patchFile(kanbanTools, 'PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1', source => replaceOnce(
+  patchFile(staged, kanbanTools, 'PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1', source => replaceOnce(
     source,
     '        return bool(agent.steer(note))',
     `        # PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1
@@ -186,7 +234,7 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
     'native Codex Worker steer',
   ));
 
-  patchFile(kanbanTools, 'PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2', source => {
+  patchFile(staged, kanbanTools, 'PRAETORIUM_CODEX_NATIVE_STEER_ASCII_V2', source => {
     const pattern = /        if accepted and os\.environ\.get\("PRAETORIUM_WORKER_CONSOLE"\) == "true":\r?\n            print\(f"[^\r\n]*\r?\n/;
     const matches = source.match(new RegExp(pattern.source, 'g')) || [];
     if (matches.length !== 1) throw new Error(`Hermes source layout changed: native steer console repair count is ${matches.length}.`);
@@ -196,7 +244,7 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
     );
   });
 
-  patchFile(codexRuntime, 'PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1', source => {
+  patchFile(staged, codexRuntime, 'PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1', source => {
     let patched = replaceOnce(
       source,
       '    started: dict[str, tuple[str, dict, float]] = {}',
@@ -336,7 +384,7 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
     return patched;
   });
 
-  patchFile(codexRuntime, 'PRAETORIUM_CODEX_EVENT_STEER_POLL_V1', source => replaceOnce(
+  patchFile(staged, codexRuntime, 'PRAETORIUM_CODEX_EVENT_STEER_POLL_V1', source => replaceOnce(
     source,
     `        try:
             _praetorium_trace_event(method, params)
@@ -359,7 +407,8 @@ export function patchHermesRuntime(root = process.env.HERMES_HOME || join(homedi
     'Codex event-driven steer poll',
   ));
 
-  return { root, hermes, version };
+  const changedFiles = commitPatches(staged);
+  return { root, hermes, version, changedFiles };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

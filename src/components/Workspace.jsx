@@ -199,12 +199,15 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
   </div>;
 }
 
-function ProcessJournal({ trace, selectedEntry, onSelectEntry, onSelectTask, onOpenDecision }) {
-  const recent = trace.slice(-10).reverse();
-  return <details className="process-journal">
-    <summary><span><Icon name="activity" /><strong>작업 과정</strong><small>계획·위임·검증 기록</small></span><b>{trace.length}</b></summary>
+function ProcessJournal({ goalId, trace, selectedEntry, onSelectEntry, onSelectTask, onOpenDecision }) {
+  const [traceLimit, setTraceLimit] = useState(160);
+  const visible = trace.slice(-traceLimit).reverse();
+  const omitted = trace.length - visible.length;
+  useEffect(() => { setTraceLimit(160); }, [goalId]);
+  return <section className="process-journal" aria-label="전체 작업 과정">
+    <header><span><Icon name="activity" /><strong>작업 과정</strong><small>계획·위임·검증 기록</small></span><b>{trace.length}</b></header>
     <div className="process-journal-list">
-      {recent.map(entry => <button type="button" key={entry.id} className={selectedEntry?.id === entry.id ? 'selected' : ''} onClick={() => {
+      {visible.map(entry => <button type="button" key={entry.id} className={selectedEntry?.id === entry.id ? 'selected' : ''} onClick={() => {
         onSelectEntry(entry);
         if (entry.taskId) onSelectTask(entry.taskId);
         if (entry.type === 'decision') onOpenDecision();
@@ -213,9 +216,10 @@ function ProcessJournal({ trace, selectedEntry, onSelectEntry, onSelectTask, onO
         <span><small>{entry.eyebrow}</small><strong>{entry.title}</strong></span>
         <time>{formatClock(entry.at)}</time>
       </button>)}
-      {!recent.length && <p>아직 공개된 작업 과정이 없습니다.</p>}
+      {omitted > 0 && <button type="button" className="load-older" onClick={() => setTraceLimit(limit => limit + 160)}>이전 {Math.min(160, omitted)}개 불러오기</button>}
+      {!visible.length && <p>아직 공개된 작업 과정이 없습니다.</p>}
     </div>
-  </details>;
+  </section>;
 }
 
 function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, projectMessages, onLoadOlderMessages, liveActivity, activityHeight, setActivityHeight, trace, selectedEntry, onSelectEntry, onSelectTask }) {
@@ -239,7 +243,7 @@ function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpen
         <span><small>완료 아님 · 오너 결정 대기</small><strong>{goal.ownerDecision.question}</strong></span>
         <button type="button" className="attention-button" onClick={onOpenDecision}>결정 화면 열기 <Icon name="chevron" /></button>
       </section>}
-      <ProcessJournal trace={trace} selectedEntry={selectedEntry} onSelectEntry={onSelectEntry} onSelectTask={onSelectTask} onOpenDecision={onOpenDecision} />
+      <ProcessJournal goalId={goal?.id} trace={trace} selectedEntry={selectedEntry} onSelectEntry={onSelectEntry} onSelectTask={onSelectTask} onOpenDecision={onOpenDecision} />
       <DirectorActivityPanel activity={liveActivity} goalId={goal?.id} compact activityHeight={activityHeight} setActivityHeight={setActivityHeight} />
     </div>
     <DirectorComposer

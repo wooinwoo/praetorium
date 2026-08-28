@@ -1,8 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { _test as patchTest, patchHermesRuntime } from '../../scripts/patch-hermes-codex-runtime.mjs';
 import {
   LOCAL_BIND_ADDRESS,
   isLoopbackAddress,
@@ -110,6 +113,122 @@ describe('Worker Codex session console contract', () => {
       assert.match(patch, /hermes kanban through the shell/);
       assert.doesNotMatch(patch, /_praetorium_console\(params\.get\("delta"\).*item\/reasoning\/textDelta/);
     }
+    assert.match(windowsPatch, /Set-PraetoriumPatchedFiles/);
+    assert.doesNotMatch(windowsPatch, /WriteAllText\(\$(?:runtimeProvider|appServerClient|codexRuntime|kanbanDb|kanbanTools),/);
+    assert.match(portablePatch, /const staged = new Map\(\)/);
+    assert.match(portablePatch, /commitPatches\(staged\)/);
+  });
+
+  it('validates every portable Hermes patch before changing source files', { skip: process.platform === 'win32' }, () => {
+    const hermesRoot = mkdtempSync(join(tmpdir(), 'praetorium-hermes-patch-'));
+    const agentRoot = join(hermesRoot, 'hermes-agent');
+    const paths = {
+      hermes: join(agentRoot, 'bin', 'hermes'),
+      runtimeProvider: join(agentRoot, 'hermes_cli', 'runtime_provider.py'),
+      appServerClient: join(agentRoot, 'agent', 'transports', 'codex_app_server.py'),
+      codexRuntime: join(agentRoot, 'agent', 'codex_runtime.py'),
+      kanbanDb: join(agentRoot, 'hermes_cli', 'kanban_db.py'),
+      kanbanTools: join(agentRoot, 'tools', 'kanban_tools.py'),
+    };
+    try {
+      for (const path of Object.values(paths)) mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(paths.hermes, '', 'utf8');
+      const originalProvider = '    requested_provider = resolve_requested_provider(requested)\n';
+      writeFileSync(paths.runtimeProvider, originalProvider, 'utf8');
+      writeFileSync(paths.appServerClient, '# incompatible Hermes layout\n', 'utf8');
+      writeFileSync(paths.codexRuntime, '', 'utf8');
+      writeFileSync(paths.kanbanDb, '', 'utf8');
+      writeFileSync(paths.kanbanTools, '', 'utf8');
+
+      assert.throws(
+        () => patchHermesRuntime(hermesRoot, () => 'Hermes Agent v0.20.5'),
+        /Director board root insertion count is 0/,
+      );
+      assert.equal(readFileSync(paths.runtimeProvider, 'utf8'), originalProvider);
+    } finally {
+      rmSync(hermesRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rolls back portable Hermes patch commits and preserves a failed rollback backup', () => {
+    const patchRoot = mkdtempSync(join(tmpdir(), 'praetorium-hermes-commit-'));
+    const first = join(patchRoot, 'first.py');
+    const second = join(patchRoot, 'second.py');
+    const originals = new Map([[first, 'first original\n'], [second, 'second original\n']]);
+    const staged = new Map([[first, 'first patched\n'], [second, 'second patched\n']]);
+    try {
+      for (const [path, sourceText] of originals) writeFileSync(path, sourceText, 'utf8');
+      const failSecondCommit = (sourcePath, targetPath) => {
+        if (sourcePath.endsWith('.tmp') && targetPath === second) throw new Error('forced second commit failure');
+        renameSync(sourcePath, targetPath);
+      };
+      assert.throws(() => patchTest.commitPatches(staged, failSecondCommit), /Applied files were rolled back/);
+      for (const [path, sourceText] of originals) assert.equal(readFileSync(path, 'utf8'), sourceText);
+      assert.deepEqual(readdirSync(patchRoot).sort(), ['first.py', 'second.py']);
+
+      const failCommitAndRollback = (sourcePath, targetPath) => {
+        if (sourcePath.endsWith('.tmp') && targetPath === second) throw new Error('forced second commit failure');
+        if (sourcePath.endsWith('.bak') && targetPath === first) throw new Error('forced rollback failure');
+        renameSync(sourcePath, targetPath);
+      };
+      assert.throws(() => patchTest.commitPatches(staged, failCommitAndRollback), /Rollback failed for/);
+      const backups = readdirSync(patchRoot).filter(name => name.endsWith('.bak'));
+      assert.equal(backups.length, 1);
+      assert.equal(readFileSync(join(patchRoot, backups[0]), 'utf8'), originals.get(first));
+    } finally {
+      rmSync(patchRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rolls back Windows Hermes patch commits and preserves a failed rollback backup', { skip: process.platform !== 'win32' }, () => {
+    const windowsPatch = source('scripts/patch-hermes-codex-runtime.ps1');
+    const functionStart = windowsPatch.indexOf('function Set-PraetoriumPatchedFiles');
+    const functionEnd = windowsPatch.indexOf('\n\n$HermesRoot', functionStart);
+    assert.ok(functionStart >= 0 && functionEnd > functionStart);
+    const transactionFunction = windowsPatch.slice(functionStart, functionEnd);
+    const exercise = String.raw`
+$root = Join-Path ([IO.Path]::GetTempPath()) "praetorium-patch-$([Guid]::NewGuid().ToString('N'))"
+[IO.Directory]::CreateDirectory($root) | Out-Null
+$first = Join-Path $root 'first.py'
+$second = Join-Path $root 'second.py'
+try {
+    [IO.File]::WriteAllText($first, 'first original' + [Environment]::NewLine)
+    [IO.File]::WriteAllText($second, 'second original' + [Environment]::NewLine)
+    $files = [ordered]@{
+        $first = 'first patched' + [Environment]::NewLine
+        $second = 'second patched' + [Environment]::NewLine
+    }
+    $script:commitCount = 0
+    $failSecond = {
+        param($temporary, $path, $backup)
+        $script:commitCount++
+        if ($script:commitCount -eq 2) { throw 'forced second commit failure' }
+        [IO.File]::Replace($temporary, $path, $backup, $true)
+    }
+    $failed = $false
+    try { $null = Set-PraetoriumPatchedFiles -Files $files -ReplaceFile $failSecond }
+    catch { $failed = $true; if ($_.Exception.Message -notmatch 'Applied files were rolled back') { throw } }
+    if (-not $failed) { throw 'Expected the second commit to fail.' }
+    if ([IO.File]::ReadAllText($first) -ne ('first original' + [Environment]::NewLine)) { throw 'First file was not rolled back.' }
+    if ([IO.File]::ReadAllText($second) -ne ('second original' + [Environment]::NewLine)) { throw 'Second file changed.' }
+    if (@(Get-ChildItem -LiteralPath $root -Filter '*.bak').Count) { throw 'Successful rollback left a backup.' }
+
+    $script:commitCount = 0
+    $failRestore = { param($backup, $path) throw 'forced rollback failure' }
+    $failed = $false
+    try { $null = Set-PraetoriumPatchedFiles -Files $files -ReplaceFile $failSecond -RestoreFile $failRestore }
+    catch { $failed = $true; if ($_.Exception.Message -notmatch 'Rollback failed for') { throw } }
+    if (-not $failed) { throw 'Expected rollback to fail.' }
+    $backups = @(Get-ChildItem -LiteralPath $root -Filter '*.bak')
+    if ($backups.Count -ne 1) { throw "Expected one recovery backup, got $($backups.Count)." }
+    if ([IO.File]::ReadAllText($backups[0].FullName) -ne ('first original' + [Environment]::NewLine)) { throw 'Recovery backup lost the original.' }
+} finally {
+    Remove-Item -LiteralPath $root -Recurse -Force
+}
+`;
+    const command = Buffer.from(`${transactionFunction}\n${exercise}`, 'utf16le').toString('base64');
+    const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-EncodedCommand', command], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
   });
 
   it('distinguishes an in-flight pause from a confirmed Owner pause', () => {
@@ -128,6 +247,16 @@ describe('Worker Codex session console contract', () => {
 
     assert.match(forms, /<dialog\b/);
     assert.match(workspace, /document\.querySelector\(['"]dialog\[open\], \[role="dialog"\]['"]\)/);
+  });
+
+  it('keeps the complete Goal trace reachable from the unified project room', () => {
+    const workspace = source('src/components/Workspace.jsx');
+
+    assert.match(workspace, /function ProcessJournal[\s\S]*useState\(160\)/);
+    assert.match(workspace, /trace\.slice\(-traceLimit\)/);
+    assert.match(workspace, /이전 \{Math\.min\(160, omitted\)\}개 불러오기/);
+    assert.match(workspace, /<section className="process-journal" aria-label="전체 작업 과정">/);
+    assert.doesNotMatch(workspace, /trace\.slice\(-10\)/);
   });
 
   it('adds no raw stdin, PTY, WebSocket, or shell-control API', () => {
