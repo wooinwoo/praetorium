@@ -38,11 +38,18 @@ function AppShell() {
   const [theme, setTheme] = useStoredState('praetorium.theme', 'dark');
   const [scale, setScale] = useStoredState('praetorium.scale', 1);
   const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 248);
+  const [railDockPreference, setRailDockPreference] = useStoredState('praetorium.railDock', 'left');
+  const [railOpen, setRailOpen] = useStoredState('praetorium.railOpen', true);
   const [workerRoomWidth, setWorkerRoomWidth] = useStoredState('praetorium.workerRoomWidth', 620);
+  const [workerRoomHeight, setWorkerRoomHeight] = useStoredState('praetorium.workerRoomHeight', 520);
+  const [workerRoomDockPreference, setWorkerRoomDockPreference] = useStoredState('praetorium.workerRoomDock', 'right');
+  const [workerRoomOpen, setWorkerRoomOpen] = useStoredState('praetorium.workerRoomOpen', true);
   const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 312);
   const [activityHeight, setActivityHeight] = useStoredState('praetorium.activityHeight', 112);
   const [inspectorOpen, setInspectorOpen] = useStoredState('praetorium.inspectorOpen', false);
   const [pendingNavigation, setPendingNavigation] = useState(navigationFromLocation);
+  const [railDragging, setRailDragging] = useState(false);
+  const [railDropSide, setRailDropSide] = useState('');
   const pendingGoalRequest = useRef('');
 
   const openNotification = useCallback(item => {
@@ -95,11 +102,71 @@ function AppShell() {
   const sessionCount = data.summary?.sessions?.total || 0;
   const connected = !data.errors.summary && Boolean(data.summary);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const railDock = railDockPreference === 'right' ? 'right' : 'left';
+  const workerRoomDock = ['left', 'right', 'bottom'].includes(workerRoomDockPreference) ? workerRoomDockPreference : 'right';
+  const beginRailDrag = event => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', 'praetorium:project-rail');
+    setRailDragging(true);
+    setRailDropSide(railDock);
+  };
+  const endRailDrag = () => { setRailDragging(false); setRailDropSide(''); };
+  const dragRail = event => {
+    if (!railDragging) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const bounds = event.currentTarget.getBoundingClientRect();
+    setRailDropSide(event.clientX < bounds.left + bounds.width / 2 ? 'left' : 'right');
+  };
+  const dropRail = event => {
+    if (!railDragging) return;
+    event.preventDefault();
+    setRailDockPreference(railDropSide || railDock);
+    endRailDrag();
+  };
+
+  const sidebar = <Sidebar key="project-rail" summary={data.summary} selectedDirector={data.selectedDirector} selectedGoal={data.selectedGoal} goals={data.goals} query={data.goalSearch} onQuery={data.setGoalSearch} historyFilter={data.historyFilter} onHistoryFilter={data.setHistoryFilter} history={data.goalHistory} onLoadMore={data.loadMoreGoals} onDirector={data.selectDirector} onGoal={data.selectGoal} onSettings={() => setSettingsOpen(true)} dockSide={railDock} onDockStart={beginRailDrag} onDockEnd={endRailDrag} onDockToggle={() => setRailDockPreference(value => value === 'right' ? 'left' : 'right')} onCollapse={() => setRailOpen(false)} />;
+  const railSplitter = <Splitter key="project-rail-splitter" label="프로젝트 목록 너비" side={railDock} value={railWidth} min={220} max={420} onChange={setRailWidth} onReset={() => setRailWidth(248)} />;
+  const workspace = <section key="workspace" className={`workspace-shell ${inspectorOpen ? '' : 'inspector-closed'}`}>
+    <Workspace
+      director={data.selectedDirector}
+      goal={data.selectedGoal}
+      goalDetail={data.goalDetail}
+      summary={data.summary}
+      board={data.board}
+      selectedTaskId={data.selectedTaskId}
+      selectTask={data.selectTask}
+      selectGoal={data.selectGoal}
+      taskDetail={data.taskDetail}
+      taskTrace={data.taskTrace}
+      errors={data.errors}
+      lastSyncedAt={data.lastSyncedAt}
+      liveActivity={data.liveActivity}
+      refresh={data.refresh}
+      projectMessages={data.projectMessages}
+      loadMoreProjectMessages={data.loadMoreProjectMessages}
+      inspectorOpen={inspectorOpen}
+      setInspectorOpen={setInspectorOpen}
+      inspectorWidth={inspectorWidth}
+      setInspectorWidth={setInspectorWidth}
+      activityHeight={activityHeight}
+      setActivityHeight={setActivityHeight}
+      workerRoomWidth={workerRoomWidth}
+      setWorkerRoomWidth={setWorkerRoomWidth}
+      workerRoomHeight={workerRoomHeight}
+      setWorkerRoomHeight={setWorkerRoomHeight}
+      workerRoomDock={workerRoomDock}
+      setWorkerRoomDock={setWorkerRoomDockPreference}
+      workerRoomOpen={Boolean(workerRoomOpen)}
+      setWorkerRoomOpen={setWorkerRoomOpen}
+    />
+  </section>;
 
   return <div className="app-shell" style={{ '--rail-width': `${railWidth}px`, '--inspector-width': `${inspectorWidth}px` }}>
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><Icon name="layers" size={18} /></span><strong>PRAETORIUM</strong><span className="brand-divider" /><span className="breadcrumb"><b>{projectName}</b><small>{data.selectedDirector?.runtime === 'wsl' ? `WSL · ${data.selectedDirector.distro || 'Ubuntu'}` : 'Local'}</small></span></div>
       <div className="topbar-actions">
+        <button type="button" className={`icon-button ${railOpen ? 'selected' : ''}`} onClick={() => setRailOpen(value => !value)} aria-label={railOpen ? '프로젝트 목록 접기' : '프로젝트 목록 열기'} title={railOpen ? '프로젝트 목록 접기' : '프로젝트 목록 열기'}><Icon name="panel" /></button>
         <span className={`connection ${connected ? 'online' : 'offline'}`}><i />{connected ? '로컬 연결' : '연결 끊김'}</span>
         {sessionCount > 0 && <span className="session-state" title="현재 실행 프로세스 세션"><Icon name="activity" /><b>{sessionCount}</b> 세션</span>}
         <div className="scale-control" aria-label="화면 글자 크기"><button type="button" onClick={() => setScale(value => Math.max(.9, +(value - .05).toFixed(2)))} aria-label="글자 축소">−</button><button type="button" onClick={() => setScale(1)} title="100%로 초기화">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale(value => Math.min(1.25, +(value + .05).toFixed(2)))} aria-label="글자 확대">+</button></div>
@@ -111,37 +178,12 @@ function AppShell() {
 
     {data.errors.summary && <div className="global-error" role="alert"><span><strong>로컬 서버 동기화 실패</strong>{data.errors.summary}</span><button type="button" onClick={data.refresh}>다시 시도</button></div>}
 
-    <div className="operator-grid">
-      <Sidebar summary={data.summary} selectedDirector={data.selectedDirector} selectedGoal={data.selectedGoal} goals={data.goals} query={data.goalSearch} onQuery={data.setGoalSearch} historyFilter={data.historyFilter} onHistoryFilter={data.setHistoryFilter} history={data.goalHistory} onLoadMore={data.loadMoreGoals} onDirector={data.selectDirector} onGoal={data.selectGoal} onSettings={() => setSettingsOpen(true)} />
-      <Splitter label="왼쪽 사이드바 너비" side="left" value={railWidth} min={220} max={420} onChange={setRailWidth} onReset={() => setRailWidth(248)} />
-      <section className={`workspace-shell ${inspectorOpen ? '' : 'inspector-closed'}`}>
-        <Workspace
-          director={data.selectedDirector}
-          goal={data.selectedGoal}
-          goalDetail={data.goalDetail}
-          summary={data.summary}
-          board={data.board}
-          selectedTaskId={data.selectedTaskId}
-          selectTask={data.selectTask}
-          selectGoal={data.selectGoal}
-          taskDetail={data.taskDetail}
-          taskTrace={data.taskTrace}
-          errors={data.errors}
-          lastSyncedAt={data.lastSyncedAt}
-          liveActivity={data.liveActivity}
-          refresh={data.refresh}
-          projectMessages={data.projectMessages}
-          loadMoreProjectMessages={data.loadMoreProjectMessages}
-          inspectorOpen={inspectorOpen}
-          setInspectorOpen={setInspectorOpen}
-          inspectorWidth={inspectorWidth}
-          setInspectorWidth={setInspectorWidth}
-          activityHeight={activityHeight}
-          setActivityHeight={setActivityHeight}
-          workerRoomWidth={workerRoomWidth}
-          setWorkerRoomWidth={setWorkerRoomWidth}
-        />
-      </section>
+    <div className={`operator-grid rail-${railDock} ${railOpen ? '' : 'rail-closed'} ${railDragging ? `rail-dragging rail-drop-${railDropSide}` : ''}`} onDragOver={dragRail} onDrop={dropRail}>
+      {railDock === 'left' && sidebar}
+      {railOpen && railDock === 'left' && railSplitter}
+      {workspace}
+      {railOpen && railDock === 'right' && railSplitter}
+      {railDock === 'right' && sidebar}
     </div>
     <Settings open={settingsOpen} onClose={closeSettings} onChanged={data.refresh} />
   </div>;

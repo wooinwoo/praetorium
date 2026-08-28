@@ -365,7 +365,7 @@ function workHeadline(goal, tasks) {
   return { label: statusText(goal.status), title: goal.objective, detail: goal.finalReport ? '최종 보고가 대화에 기록되었습니다.' : '작업 기록을 확인할 수 있습니다.', tone: successStates.has(goal.status) ? 'done' : 'idle' };
 }
 
-function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onDetails, refresh }) {
+function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onDetails, onWorkers, workerRoomOpen, refresh }) {
   const current = workHeadline(goal, tasks);
   const complete = tasks.filter(task => successStates.has(taskDisplayStatus(task))).length;
   return <header className={`project-room-header tone-${current.tone}`}>
@@ -374,6 +374,7 @@ function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onD
     {goal && <div className="project-room-progress"><span>{complete}/{tasks.length || 0} Worker 완료</span><div><i style={{ width: `${tasks.length ? complete / tasks.length * 100 : 0}%` }} /></div></div>}
     {supervision && <span className={`project-room-health tone-${supervision.tone}`} title={supervision.detail}>{supervision.label}</span>}
     <div className="project-room-actions">
+      <button type="button" className={`secondary-button compact ${workerRoomOpen ? 'selected' : ''}`} onClick={onWorkers} aria-pressed={workerRoomOpen}><Icon name="command" />Workers {tasks.length}</button>
       {goal?.ownerDecision?.required && <button type="button" className="attention-button compact" onClick={onDecision}>결정하기</button>}
       <button type="button" className="secondary-button compact" onClick={onDetails}><Icon name="panel" />세부 정보</button>
       {goal && <GoalControls directorId={director?.id} goal={goal} refresh={refresh} />}
@@ -385,14 +386,14 @@ function workerPreview(task) {
   return textValue(task.checkpoint || task.latestSummary || task.latest_summary || task.description || task.body || task.task || '') || '아직 공개된 응답이 없습니다.';
 }
 
-function WorkerRoom({ director, goal, tasks, selectedTask, selectTask, taskDetail, taskTrace, errors, refresh }) {
+function WorkerRoom({ director, goal, tasks, selectedTask, selectTask, taskDetail, taskTrace, errors, refresh, dock, onDockStart, onDockEnd, onDockCycle, onClose }) {
   const ordered = [...tasks].sort((left, right) => {
     const rank = task => taskIsTerminal(task) ? 2 : ['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(task)) ? 0 : 1;
     return rank(left) - rank(right);
   });
   const running = tasks.filter(task => ['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(task))).length;
-  return <section className="worker-room" aria-label="Worker 실행실">
-    <header className="worker-room-header"><span><span className="worker-glyph"><Icon name="command" /></span><span><strong>Workers</strong><small>Director가 지시하고 Owner가 관찰·개입합니다.</small></span></span><span><b>{tasks.length}</b>개 · 실행 {running}</span></header>
+  return <section className="worker-room" aria-label="Worker 실행실" data-dock={dock}>
+    <header className="worker-room-header"><span><span className="worker-glyph"><Icon name="command" /></span><span><strong>Workers</strong><small>Director가 지시하고 Owner가 관찰·개입합니다.</small></span></span><span className="worker-room-meta"><span><b>{tasks.length}</b>개 · 실행 {running}</span><span className="panel-drag-handle" draggable="true" role="button" tabIndex="0" title="끌어서 좌·우·아래 배치 · 클릭하면 다음 위치" aria-label="Workers 위치 바꾸기" onDragStart={onDockStart} onDragEnd={onDockEnd} onClick={onDockCycle} onKeyDown={event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); onDockCycle?.(); } }}><Icon name="grip" /></span><button type="button" className="icon-button panel-collapse" onClick={onClose} aria-label="Workers 접기"><Icon name="x" /></button></span></header>
     <div className="worker-room-list" role="list" aria-label="현재 작업의 Worker 목록">
       {ordered.map(task => <button type="button" role="listitem" key={task.id} className={task.id === selectedTask?.id ? 'selected' : ''} onClick={() => selectTask(task.id)}>
         <span className={`task-tab-dot ${taskDisplayStatus(task)}`} />
@@ -408,7 +409,7 @@ function WorkerRoom({ director, goal, tasks, selectedTask, selectTask, taskDetai
   </section>;
 }
 
-export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, workerRoomWidth, setWorkerRoomWidth, lastSyncedAt = null, liveActivity }) {
+export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, workerRoomWidth, setWorkerRoomWidth, workerRoomHeight = 520, setWorkerRoomHeight = () => {}, workerRoomDock = 'right', setWorkerRoomDock = () => {}, workerRoomOpen = true, setWorkerRoomOpen = () => {}, lastSyncedAt = null, liveActivity }) {
   const detailedGoal = goalDetail?.id === goal?.id ? goalDetail : null;
   const currentGoal = detailedGoal || goal;
   const tasks = useMemo(() => goalTasks(board, currentGoal).map(task => task.id === taskDetail?.task?.id
@@ -417,6 +418,8 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   const runs = detailedGoal?.runs || (summary?.recentRuns || []).filter(run => run.goalId === goal?.id);
   const trace = useMemo(() => buildTrace(currentGoal, runs, tasks), [currentGoal, runs, tasks]);
   const [selectedEntry, setSelectedEntry] = useState(null);
+  const [workerDragging, setWorkerDragging] = useState(false);
+  const [workerDropDock, setWorkerDropDock] = useState('');
   const inspectorToggleRef = useRef(null);
   const inspectorCloseRef = useRef(null);
   const selectedTask = tasks.find(task => task.id === selectedTaskId) || null;
@@ -458,12 +461,47 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
     setSelectedEntry(trace.findLast(entry => entry.type === 'decision') || null);
     setInspectorOpen(true);
   };
+  const cycleWorkerDock = () => {
+    const next = { right: 'bottom', bottom: 'left', left: 'right' }[workerRoomDock] || 'right';
+    setWorkerRoomDock(next);
+    setWorkerRoomOpen(true);
+  };
+  const beginWorkerDrag = event => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', 'praetorium:worker-room');
+    setWorkerDragging(true);
+    setWorkerDropDock(workerRoomDock);
+  };
+  const endWorkerDrag = () => { setWorkerDragging(false); setWorkerDropDock(''); };
+  const dragWorker = event => {
+    if (!workerDragging) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / Math.max(1, bounds.width);
+    const y = (event.clientY - bounds.top) / Math.max(1, bounds.height);
+    setWorkerDropDock(y > .68 ? 'bottom' : x < .5 ? 'left' : 'right');
+  };
+  const dropWorker = event => {
+    if (!workerDragging) return;
+    event.preventDefault();
+    setWorkerRoomDock(workerDropDock || workerRoomDock);
+    setWorkerRoomOpen(true);
+    endWorkerDrag();
+  };
+  const directorPanel = <DirectorView key="director-panel" director={director} goal={currentGoal} summary={summary} refresh={refresh} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} onOpenDecision={openOwnerDecision} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={openTask} onGoalAccepted={id => { if (id) selectGoal(id); }} />;
+  const workerPanel = <WorkerRoom key="worker-panel" director={director} goal={currentGoal} tasks={tasks} selectedTask={selectedTask} selectTask={openTask} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} dock={workerRoomDock} onDockStart={beginWorkerDrag} onDockEnd={endWorkerDrag} onDockCycle={cycleWorkerDock} onClose={() => setWorkerRoomOpen(false)} />;
+  const workerSplitter = workerRoomDock === 'bottom'
+    ? <Splitter key="worker-splitter-bottom" label="Director와 Worker 영역 높이" side="right" orientation="horizontal" value={workerRoomHeight} min={360} max={700} onChange={setWorkerRoomHeight} onReset={() => setWorkerRoomHeight(520)} />
+    : <Splitter key="worker-splitter-side" label="Director와 Worker 영역 너비" side={workerRoomDock} value={workerRoomWidth} min={360} max={920} onChange={setWorkerRoomWidth} onReset={() => setWorkerRoomWidth(620)} />;
   return <>
-    <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} refresh={refresh} />
-    <main id="workspace" className="project-room" tabIndex="-1" style={{ '--worker-room-width': `${workerRoomWidth}px` }}>
-      <DirectorView director={director} goal={currentGoal} summary={summary} refresh={refresh} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} onOpenDecision={openOwnerDecision} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={openTask} onGoalAccepted={id => { if (id) selectGoal(id); }} />
-      <Splitter label="Director와 Worker 영역 너비" side="right" value={workerRoomWidth} min={360} max={920} onChange={setWorkerRoomWidth} onReset={() => setWorkerRoomWidth(620)} />
-      <WorkerRoom director={director} goal={currentGoal} tasks={tasks} selectedTask={selectedTask} selectTask={openTask} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} />
+    <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} onWorkers={() => setWorkerRoomOpen(value => !value)} workerRoomOpen={workerRoomOpen} refresh={refresh} />
+    <main id="workspace" className={`project-room worker-${workerRoomDock} ${workerRoomOpen ? '' : 'worker-closed'} ${workerDragging ? `worker-dragging worker-drop-${workerDropDock}` : ''}`} data-worker-dock={workerRoomDock} tabIndex="-1" style={{ '--worker-room-width': `${workerRoomWidth}px`, '--worker-room-height': `${workerRoomHeight}px` }} onDragOver={dragWorker} onDrop={dropWorker}>
+      {workerRoomDock === 'left' && workerPanel}
+      {workerRoomOpen && workerRoomDock === 'left' && workerSplitter}
+      {directorPanel}
+      {workerRoomOpen && workerRoomDock !== 'left' && workerSplitter}
+      {workerRoomDock !== 'left' && workerPanel}
     </main>
     {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={selectedEntry?.type === 'task' ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={false} onClose={() => setInspectorOpen(false)} /></>}
   </>;

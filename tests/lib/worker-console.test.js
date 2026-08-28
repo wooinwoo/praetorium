@@ -25,6 +25,17 @@ function loadSanitizerFromSource() {
   return Function('value', declaration[1]);
 }
 
+function loadReadableBlocksFromSource() {
+  const workerConsole = source('src/components/WorkerConsole.jsx');
+  const declaration = workerConsole.match(
+    /export function readableTerminalBlocks\(value\) \{([\s\S]*?)\n\}\n\nfunction decodeEvent/,
+  );
+  assert.ok(declaration, 'readableTerminalBlocks must remain an exported, independently testable helper');
+  const readable = Function('sanitizeTerminalOutput', 'value', declaration[1]);
+  const sanitizeTerminalOutput = loadSanitizerFromSource();
+  return value => readable(sanitizeTerminalOutput, value);
+}
+
 describe('Worker Codex session console contract', () => {
   it('renders the real Codex session stream in xterm without exposing raw shell stdin', () => {
     const workerConsole = source('src/components/WorkerConsole.jsx');
@@ -43,8 +54,29 @@ describe('Worker Codex session console contract', () => {
     assert.match(source('src/styles.css'), /\.worker-xterm \.xterm-screen, \.worker-xterm \.xterm-rows \{ color: #b8c0cc; \}/);
     assert.match(workerConsole, /실제 Codex 세션/);
     assert.match(workerConsole, /실시간 출력 · 읽기 전용 · PTY 아님/);
+    assert.match(workerConsole, />읽기<\/button>/);
+    assert.match(workerConsole, />원문<\/button>/);
     assert.match(source('src/components/forms.jsx'), /현재 Codex 세션에 입력/);
     assert.match(source('src/components/forms.jsx'), /실행 중이면 turn\/steer/);
+  });
+
+  it('groups public output for reading while keeping commands and pasted image paths intact', () => {
+    const readableTerminalBlocks = loadReadableBlocksFromSource();
+    const blocks = readableTerminalBlocks([
+      '\u001b[90m-- Codex turn abc123 --\u001b[0m',
+      '\u001b[95mREASONING SUMMARY\u001b[0m',
+      '검증 근거를 다시 확인합니다.',
+      '\u001b[93m$ npm test -- --runInBand\u001b[0m',
+      '{\\"status\\":\\"passed\\"}',
+      'Image pasted → /tmp/cockpit-uploads/img-mtcdnaqm-da48ee.png',
+      '\u001b[90m[exit 0 / 213ms]\u001b[0m',
+    ].join('\n'));
+
+    assert.deepEqual(blocks.map(block => block.kind), ['turn', 'reasoning', 'command', 'image', 'result']);
+    assert.equal(blocks[1].text, '검증 근거를 다시 확인합니다.');
+    assert.match(blocks[2].text, /npm test -- --runInBand[\s\S]*\\"status\\"/);
+    assert.equal(blocks[3].path, '/tmp/cockpit-uploads/img-mtcdnaqm-da48ee.png');
+    assert.equal(blocks[4].text, 'exit 0 / 213ms');
   });
 
   it('removes terminal control strings that can mutate browser or terminal state', () => {

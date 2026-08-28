@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -7,7 +7,7 @@ import {
   interventionReceiptText, taskDisplayStatus, taskIsTerminal, taskPausedByOwner, textValue,
 } from '../domain/operator-model.js';
 import { DirectorGuidance, WorkerIntervention } from './forms.jsx';
-import { ErrorNotice, formatClock, Icon, relativeTime, Status, statusText } from './common.jsx';
+import { ErrorNotice, formatClock, Icon, relativeTime, RichText, Status, statusText } from './common.jsx';
 
 const EVIDENCE_PAGE_SIZE = 20;
 const MAX_STREAM_BUFFER = 2_000_000;
@@ -42,6 +42,64 @@ export function sanitizeTerminalOutput(value) {
     .replace(/\x1b\[[0-?]*[ -/]*$/g, '')
     .replace(/\x1b(?!\[)(?:[ -/]*[@-~])?/g, '')
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f-\x9f]/g, '');
+}
+
+export function readableTerminalBlocks(value) {
+  const text = sanitizeTerminalOutput(value)
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .replace(/\r\n?/g, '\n');
+  const blocks = [];
+  let current = null;
+  const flush = () => {
+    if (!current) return;
+    const body = current.lines.join('\n').replace(/^\n+|\n+$/g, '');
+    if (body || current.kind === 'image') blocks.push({ ...current, text: body });
+    current = null;
+  };
+  const start = (kind, label, line = '', path = '') => {
+    flush();
+    current = { kind, label, path, lines: line ? [line] : [] };
+  };
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    const image = trimmed.match(/^Image pasted\s*(?:→|->)\s*(.+)$/i);
+    if (image) {
+      start('image', '이미지 입력', image[1].trim(), image[1].trim());
+      flush();
+    } else if (/^--\s*Codex turn\b.*--$/i.test(trimmed)) {
+      start('turn', '새 Codex turn', trimmed.replace(/^--\s*|\s*--$/g, ''));
+    } else if (/^--\s*turn\b.*--$/i.test(trimmed)) {
+      start('result', 'Turn 결과', trimmed.replace(/^--\s*|\s*--$/g, ''));
+    } else if (trimmed === 'PLAN') {
+      start('plan', '계획');
+    } else if (trimmed === 'REASONING SUMMARY') {
+      start('reasoning', '공개 판단 요약');
+    } else if (trimmed === 'Codex') {
+      start('message', 'Worker 답변');
+    } else if (/^(?:Director\s*(?:->|→)\s*Worker|\[DIRECTOR\s*(?:->|→)\s*WORKER\])$/i.test(trimmed)) {
+      start('instruction', 'Director 지시');
+    } else if (/^\$\s+/.test(trimmed)) {
+      start('command', '명령 실행', trimmed.replace(/^\$\s+/, ''));
+    } else if (/^⚡\s*/.test(trimmed)) {
+      start('tool', '도구 호출', trimmed.replace(/^⚡\s*/, ''));
+    } else if (/^>\s+/.test(trimmed)) {
+      start('tool', '도구 호출', trimmed.replace(/^>\s+/, ''));
+    } else if (/^\[exit\b/i.test(trimmed)) {
+      start('result', '명령 결과', trimmed.replace(/^\[|\]$/g, ''));
+    } else if (/^\[context compacted\]$/i.test(trimmed)) {
+      start('result', '컨텍스트 정리', '이전 컨텍스트가 압축되었습니다.');
+    } else if (/^(?:editing|files changed):\s*/i.test(trimmed)) {
+      start('file', /^editing:/i.test(trimmed) ? '파일 편집' : '파일 변경', trimmed.replace(/^[^:]+:\s*/, ''));
+    } else if (/^!\s+/.test(trimmed)) {
+      start('warning', '경고', trimmed.replace(/^!\s+/, ''));
+    } else {
+      if (!current) current = { kind: 'output', label: '실행 출력', path: '', lines: [] };
+      current.lines.push(line);
+    }
+  }
+  flush();
+  return blocks;
 }
 
 function decodeEvent(event) {
@@ -81,6 +139,29 @@ function streamAge(observedAt) {
 function receiptState(record) {
   const receipt = record?.interventions?.at(-1);
   return receipt ? interventionReceiptText(receipt) : '지시 없음';
+}
+
+function ReadableOutput({ blocks, onScroll, hostRef }) {
+  return <div ref={hostRef} id="worker-readable-output" className="worker-readable-output" role="tabpanel" aria-labelledby="worker-readable-tab" tabIndex="0" onScroll={onScroll}>
+    <div className="worker-readable-stream">
+      {blocks.map((block, index) => {
+        const key = `${block.kind}:${index}:${block.text.slice(0, 24)}`;
+        if (block.kind === 'image') {
+          const fileName = block.path.split(/[\\/]/).at(-1) || block.path;
+          return <article className="worker-readable-block kind-image" key={key}>
+            <header><Icon name="image" /><strong>{block.label}</strong></header>
+            <div className="worker-readable-image"><strong>{fileName}</strong><code>{block.path}</code></div>
+          </article>;
+        }
+        const prose = ['instruction', 'message', 'plan', 'reasoning'].includes(block.kind);
+        return <article className={`worker-readable-block kind-${block.kind}`} key={key}>
+          <header><strong>{block.label}</strong></header>
+          <div className="worker-readable-body">{prose ? <RichText>{block.text}</RichText> : <pre>{block.text}</pre>}</div>
+        </article>;
+      })}
+      {!blocks.length && <p className="worker-readable-empty">표시할 실행 출력이 없습니다.</p>}
+    </div>
+  </div>;
 }
 
 function terminalFontSize() {
@@ -140,11 +221,15 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
   const desiredLogRef = useRef('');
   const terminalWritePendingRef = useRef(false);
   const terminalForceResetRef = useRef(false);
+  const readableHostRef = useRef(null);
+  const readableTimerRef = useRef(null);
   const followLogRef = useRef(true);
   const fallbackLogRef = useRef('');
   const sseInitializedRef = useRef(false);
   const rawStreamHasOutputRef = useRef(false);
   const [terminalReady, setTerminalReady] = useState(false);
+  const [readableLog, setReadableLog] = useState('');
+  const [outputView, setOutputView] = useState('readable');
   const [followLog, setFollowLog] = useState(true);
   const [streamState, setStreamState] = useState('fallback');
   const [streamStatus, setStreamStatus] = useState(null);
@@ -172,6 +257,14 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     || (trace?.availability === 'not_started' ? 'Worker 실행 전 · 출력 없음' : '실행 출력을 불러오는 중…');
   fallbackLogRef.current = fallbackLog;
   const effectiveObservedAt = streamObservedAt || trace?.observedAt;
+
+  const syncReadableLog = useCallback(() => {
+    if (readableTimerRef.current) return;
+    readableTimerRef.current = window.setTimeout(() => {
+      readableTimerRef.current = null;
+      setReadableLog(rawLogRef.current);
+    }, 160);
+  }, []);
 
   const flushTerminal = useCallback(() => {
     const terminal = terminalRef.current;
@@ -202,11 +295,12 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
 
   const renderLog = useCallback((raw, forceReset = false) => {
     rawLogRef.current = String(raw || '').slice(-MAX_STREAM_BUFFER);
+    syncReadableLog();
     const safe = sanitizeTerminalOutput(rawLogRef.current);
     if (forceReset || !safe.startsWith(renderedLogRef.current)) terminalForceResetRef.current = true;
     desiredLogRef.current = safe;
     flushTerminal();
-  }, [flushTerminal]);
+  }, [flushTerminal, syncReadableLog]);
 
   const appendLog = useCallback(chunk => {
     renderLog(`${rawLogRef.current}${String(chunk || '')}`);
@@ -266,6 +360,10 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     };
   }, []);
 
+  useEffect(() => () => {
+    if (readableTimerRef.current) window.clearTimeout(readableTimerRef.current);
+  }, []);
+
   useEffect(() => {
     setMode('worker');
     setControlRequest('');
@@ -278,10 +376,24 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     followLogRef.current = true;
     setFollowLog(true);
     rawLogRef.current = '';
+    if (readableTimerRef.current) window.clearTimeout(readableTimerRef.current);
+    readableTimerRef.current = null;
+    setReadableLog('');
+    setOutputView('readable');
     desiredLogRef.current = '';
     terminalForceResetRef.current = true;
     flushTerminal();
   }, [flushTerminal, task?.id]);
+
+  const readableBlocks = useMemo(
+    () => outputView === 'readable' ? readableTerminalBlocks(readableLog) : [],
+    [outputView, readableLog],
+  );
+
+  useEffect(() => {
+    if (outputView !== 'readable' || !followLogRef.current || !readableHostRef.current) return;
+    readableHostRef.current.scrollTop = readableHostRef.current.scrollHeight;
+  }, [outputView, readableLog]);
 
   useEffect(() => {
     if (controlRequest === 'pause' && (task?.pausePending || record?.pausePending || pausedByOwner)) setControlRequest('');
@@ -386,6 +498,29 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     : mode === 'worker' ? '이 입력은 영속 기록된 뒤 현재 Codex turn에 바로 들어갑니다.'
       : '목표·완료조건 충돌 여부를 Director가 판단하고 필요하면 재계획합니다.';
   const onDrawerToggle = () => requestAnimationFrame(() => { try { fitRef.current?.fit(); } catch { /* drawer transition */ } });
+  const setOutputMode = next => {
+    setOutputView(next);
+    requestAnimationFrame(() => {
+      if (next === 'raw') {
+        try { fitRef.current?.fit(); } catch { /* output view transition */ }
+        if (followLogRef.current) terminalRef.current?.scrollToBottom();
+      } else if (followLogRef.current && readableHostRef.current) {
+        readableHostRef.current.scrollTop = readableHostRef.current.scrollHeight;
+      }
+    });
+  };
+  const jumpToLatest = () => {
+    followLogRef.current = true;
+    setFollowLog(true);
+    if (outputView === 'raw') terminalRef.current?.scrollToBottom();
+    else if (readableHostRef.current) readableHostRef.current.scrollTop = readableHostRef.current.scrollHeight;
+  };
+  const onReadableScroll = event => {
+    const host = event.currentTarget;
+    const following = host.scrollHeight - host.scrollTop - host.clientHeight <= 8;
+    followLogRef.current = following;
+    setFollowLog(following);
+  };
 
   if (!task) return <div className="workspace-empty"><strong>Worker를 선택하세요.</strong><span>현황이나 상단 Worker 탭에서 작업을 여세요.</span></div>;
 
@@ -401,7 +536,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
       </div>
       <div className="worker-console-actions">
         <small>{streamAge(effectiveObservedAt)}</small>
-        {!followLog && <button type="button" className="text-button compact" onClick={() => { followLogRef.current = true; setFollowLog(true); terminalRef.current?.scrollToBottom(); }}>최신 출력</button>}
+        {!followLog && <button type="button" className="text-button compact" onClick={jumpToLatest}>최신 출력</button>}
         {controlAction && <button type="button" className="secondary-button compact" disabled={Boolean(controlRequest)} onClick={() => requestControl(controlAction)}>{controlAction === 'pause' ? '일시정지' : '재개'}</button>}
         {(pausePending || resumePending) && <button type="button" className="secondary-button compact" disabled>{pausePending ? '정지 확인 대기' : '재개 확인 대기'}</button>}
       </div>
@@ -410,8 +545,11 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     {controlError && <p className="worker-control-error form-error" role="alert">{controlError}</p>}
     <div className="worker-console-main">
       <section className="worker-output" aria-label="Worker 실행 출력">
-        <header><span><Icon name="terminal" /><strong>실제 Codex 세션</strong><em>실시간 출력 · 읽기 전용 · PTY 아님</em></span><span>{traceError && <small role="alert">실시간 스트림 오류 · 저장된 스냅샷 표시</small>}<small>{followLog ? '최신 출력 따라가는 중' : '과거 출력 보는 중'}</small></span></header>
-        <div ref={terminalHostRef} className="worker-xterm" aria-label="Codex Worker 세션 출력" />
+        <header><span><Icon name="terminal" /><strong>실제 Codex 세션</strong><em>실시간 출력 · 읽기 전용 · PTY 아님</em><span className="worker-output-view" role="tablist" aria-label="출력 표시 방식"><button id="worker-readable-tab" type="button" role="tab" aria-controls="worker-readable-output" aria-selected={outputView === 'readable'} tabIndex={outputView === 'readable' ? 0 : -1} onClick={() => setOutputMode('readable')}>읽기</button><button id="worker-raw-tab" type="button" role="tab" aria-controls="worker-raw-output" aria-selected={outputView === 'raw'} tabIndex={outputView === 'raw' ? 0 : -1} onClick={() => setOutputMode('raw')}>원문</button></span></span><span>{traceError && <small role="alert">실시간 스트림 오류 · 저장된 스냅샷 표시</small>}<small>{followLog ? '최신 출력 따라가는 중' : '과거 출력 보는 중'}</small></span></header>
+        <div className="worker-output-stage">
+          <div className={outputView === 'readable' ? 'is-active' : ''} aria-hidden={outputView !== 'readable'}><ReadableOutput blocks={readableBlocks} hostRef={readableHostRef} onScroll={onReadableScroll} /></div>
+          <div id="worker-raw-output" role="tabpanel" aria-labelledby="worker-raw-tab" className={outputView === 'raw' ? 'is-active' : ''} aria-hidden={outputView !== 'raw'}><div ref={terminalHostRef} className="worker-xterm" aria-label="Codex Worker 세션 원문 출력" /></div>
+        </div>
         <footer className={`worker-control-dock mode-${mode}`}>
           <div className="worker-control-mode" role="tablist" aria-label="Worker 제어 모드">
             <button type="button" role="tab" aria-selected={mode === 'worker'} className={mode === 'worker' ? 'selected' : ''} disabled={workerTerminal} onClick={() => setMode('worker')}><Icon name="command" />세션 입력</button>

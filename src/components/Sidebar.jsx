@@ -12,7 +12,7 @@ function GoalRow({ goal, selected, active, onSelect }) {
   </button>;
 }
 
-export default function Sidebar({ summary, selectedDirector, selectedGoal, goals, query, onQuery, historyFilter, onHistoryFilter, history, onLoadMore, onDirector, onGoal, onSettings }) {
+export default function Sidebar({ summary, selectedDirector, selectedGoal, goals, query, onQuery, historyFilter, onHistoryFilter, history, onLoadMore, onDirector, onGoal, onSettings, dockSide = 'left', onDockStart, onDockEnd, onDockToggle, onCollapse }) {
   const visibleGoals = useMemo(() => {
     const value = query.trim().toLowerCase();
     if (!value) return goals;
@@ -24,7 +24,11 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
   const recent = visibleGoals.filter(goal => !activeIds.has(goal.id) && goal.status !== 'queued')
     .filter(goal => historyFilter === 'all' || (historyFilter === 'completed' ? goal.status === 'completed' : ['blocked', 'failed'].includes(goal.status)));
 
-  return <aside className="sidebar" aria-label="프로젝트와 디렉터">
+  return <aside className="sidebar" aria-label="프로젝트와 디렉터" data-dock={dockSide}>
+    <header className="sidebar-panel-header">
+      <span><Icon name="layers" /><strong>프로젝트 목록</strong></span>
+      <span><span className="panel-drag-handle" draggable="true" role="button" tabIndex="0" title="끌어서 좌우 이동 · 클릭하면 반대쪽 배치" aria-label="프로젝트 목록 위치 바꾸기" onDragStart={onDockStart} onDragEnd={onDockEnd} onClick={onDockToggle} onKeyDown={event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); onDockToggle?.(); } }}><Icon name="grip" /></span><button type="button" className="icon-button panel-collapse" onClick={onCollapse} aria-label="프로젝트 목록 접기"><Icon name="chevron" /></button></span>
+    </header>
     <div className="sidebar-scroll">
       <section className="nav-section director-section">
         <header><span>프로젝트 룸</span><small>{summary?.directors?.length || 0}</small></header>
