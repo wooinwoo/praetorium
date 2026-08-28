@@ -183,7 +183,7 @@ describe('Worker Codex session console contract', () => {
   it('rolls back Windows Hermes patch commits and preserves a failed rollback backup', { skip: process.platform !== 'win32' }, () => {
     const windowsPatch = source('scripts/patch-hermes-codex-runtime.ps1');
     const functionStart = windowsPatch.indexOf('function Set-PraetoriumPatchedFiles');
-    const functionEnd = windowsPatch.indexOf('\n\n$HermesRoot', functionStart);
+    const functionEnd = windowsPatch.indexOf('$HermesRoot =', functionStart);
     assert.ok(functionStart >= 0 && functionEnd > functionStart);
     const transactionFunction = windowsPatch.slice(functionStart, functionEnd);
     const exercise = String.raw`
