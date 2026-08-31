@@ -40,11 +40,13 @@ function uniqueNodeId(preferred, seen) {
 
 export function createDockLayout(taskIds = [], selectedTaskId = '') {
   const workers = normalizedTaskIds(taskIds).map(workerPanelId);
-  const director = group('director-group', CORE_PANEL_IDS);
-  if (!workers.length) return director;
+  const director = group('director-group', [DIRECTOR_PANEL_ID]);
+  const process = group('process-group', [PROCESS_PANEL_ID]);
+  const core = split('split:core', 'v', .54, director, process);
+  if (!workers.length) return core;
   const selected = workerPanelId(selectedTaskId);
   const workerGroup = group('worker-group', workers, workers.includes(selected) ? selected : workers[0]);
-  return split('split:root', 'h', .64, director, workerGroup);
+  return split('split:root', 'h', .64, core, workerGroup);
 }
 
 function cleanDockLayout(layout, validPanels) {
@@ -86,6 +88,12 @@ export function collectDockPanels(layout, panels = []) {
     collectDockPanels(layout.children[1], panels);
   }
   return panels;
+}
+
+export function compactDockLayout(layout, activePanelId = DIRECTOR_PANEL_ID) {
+  const panels = collectDockPanels(layout);
+  if (!panels.length) return layout;
+  return group('compact-group', panels, panels.includes(activePanelId) ? activePanelId : panels[0]);
 }
 
 function updateGroup(layout, groupId, update) {

@@ -248,6 +248,7 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.match(app, /praetorium\.railDock/);
   assert.match(app, /praetorium\.railOpen/);
   assert.match(app, /praetorium\.workspaceDockLayouts/);
+  assert.match(app, /setTaskFocusRequest\(current => \(\{ taskId: pendingNavigation\.taskId, token: current\.token \+ 1 \}\)\)/);
   assert.match(app, /dockLayoutKey = data\.selectedGoalId/);
   assert.match(app, /praetorium\.workerRoomOpen/);
   assert.match(app, /key="workspace"/);
@@ -257,7 +258,7 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.match(workspace, /function DockSplitter/);
   assert.match(workspace, /function DockGroup/);
   assert.match(workspace, /function DockNode/);
-  assert.match(workspace, /draggable="true"/);
+  assert.match(workspace, /draggable=\{!compact\}/);
   assert.match(workspace, /\['top', 'right', 'bottom', 'left', 'center'\]/);
   assert.match(workspace, /moveDockPanel/);
   assert.match(workspace, /updateDockRatio/);
@@ -268,6 +269,10 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.match(workspace, /const processPanel = <TraceView/);
   assert.match(workspace, /Director 채팅/);
   assert.match(workspace, /mapDockInsertionIndex/);
+  assert.match(workspace, /compactDockLayout\(visible, focusedPanel\)/);
+  assert.match(workspace, /getBoundingClientRect\(\)\.width < 820/);
+  assert.match(workspace, /if \(taskFocusRequest\?\.taskId\) setFocusedPanel\(workerPanelId\(taskFocusRequest\.taskId\)\)/);
+  assert.doesNotMatch(workspace, /if \(selectedTaskId\) setFocusedPanel/);
   assert.match(workspace, /if \(taskId\) setWorkerRoomOpen\(true\)/);
   assert.match(workspace, /const layoutReady = Boolean\(summary\)/);
   assert.match(workspace, /layoutReady\s*\? reconcileDockLayout/);
@@ -278,6 +283,7 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.match(css, /\.dock-split\.horizontal/);
   assert.match(css, /\.dock-split\.vertical/);
   assert.match(css, /\.dock-tab\.selected/);
+  assert.match(css, /\.dock-compact \.dock-tab/);
   assert.match(css, /\.dock-drop-zone\.center/);
   assert.doesNotMatch(workspace, /workspace-tabbar/);
   assert.match(workspace, /<WorkerConsole directorId=\{director\?\.id\}/);

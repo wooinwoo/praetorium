@@ -6,6 +6,7 @@ import {
   PROCESS_PANEL_ID,
   canSplitDockPanel,
   collectDockPanels,
+  compactDockLayout,
   countWorkerDockPanes,
   createDockLayout,
   filterDockLayout,
@@ -38,14 +39,29 @@ function paneShares(layout, share = 1, shares = []) {
   return shares;
 }
 
-test('dock layout starts with separate Director chat, process, and Worker tabs', () => {
+test('dock layout starts with separate Director chat, process, and Worker panes', () => {
   const layout = createDockLayout(['t-1', 't-2'], 't-2');
 
   assert.equal(layout.type, 'split');
   assert.equal(layout.dir, 'h');
-  assert.deepEqual(findDockGroup(layout, 'director-group').tabs, [DIRECTOR_PANEL_ID, PROCESS_PANEL_ID]);
+  assert.equal(layout.children[0].type, 'split');
+  assert.equal(layout.children[0].dir, 'v');
+  assert.deepEqual(findDockGroup(layout, 'director-group').tabs, [DIRECTOR_PANEL_ID]);
+  assert.deepEqual(findDockGroup(layout, 'process-group').tabs, [PROCESS_PANEL_ID]);
   assert.deepEqual(findDockGroup(layout, 'worker-group').tabs, [workerPanelId('t-1'), workerPanelId('t-2')]);
   assert.equal(findDockGroup(layout, 'worker-group').active, workerPanelId('t-2'));
+});
+
+test('compact layout turns panes into tabs without changing the stored layout', () => {
+  const layout = createDockLayout(['t-1', 't-2'], 't-2');
+  const compact = compactDockLayout(layout, PROCESS_PANEL_ID);
+
+  assert.equal(compact.type, 'group');
+  assert.equal(compact.active, PROCESS_PANEL_ID);
+  assert.deepEqual(compact.tabs, [DIRECTOR_PANEL_ID, PROCESS_PANEL_ID, workerPanelId('t-1'), workerPanelId('t-2')]);
+  assert.equal(compactDockLayout(layout, workerPanelId('t-2')).active, workerPanelId('t-2'));
+  assert.equal(layout.type, 'split');
+  assert.deepEqual(findDockGroup(layout, 'director-group').tabs, [DIRECTOR_PANEL_ID]);
 });
 
 test('a Worker tab can reorder inside a group or split on every pane edge', () => {

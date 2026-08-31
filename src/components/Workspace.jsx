@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import {
-  DIRECTOR_PANEL_ID, PROCESS_PANEL_ID, activateDockPanel, canSplitDockPanel, createDockLayout, filterDockLayout, mapDockInsertionIndex,
+  DIRECTOR_PANEL_ID, PROCESS_PANEL_ID, activateDockPanel, canSplitDockPanel, compactDockLayout, createDockLayout, filterDockLayout, mapDockInsertionIndex,
   moveDockPanel, reconcileDockLayout, updateDockRatio, workerPanelId, workerTaskId,
 } from '../lib/dock-layout.js';
 import {
@@ -392,7 +392,7 @@ function DockSplitter({ node, onChange }) {
   return <div className={`dock-divider ${horizontal ? 'horizontal' : 'vertical'}`} role="separator" aria-label="탭 패널 크기 조절" aria-orientation={horizontal ? 'vertical' : 'horizontal'} aria-valuemin="18" aria-valuemax="82" aria-valuenow={Math.round(node.ratio * 100)} tabIndex="0" onPointerDown={event => { dragging.current = true; event.currentTarget.setPointerCapture(event.pointerId); update(event); }} onPointerMove={event => { if (dragging.current) update(event); }} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={() => { dragging.current = false; }} onDoubleClick={() => onChange(node.id, .5)} onKeyDown={keyDown} />;
 }
 
-function DockGroup({ node, tasks, taskByPanel, draggedPanel, splitAllowed, dropTarget, setDropTarget, onDragStart, onDragEnd, onActivate, onFocus, onMove, onCanSplit, renderPanel }) {
+function DockGroup({ node, tasks, taskByPanel, draggedPanel, splitAllowed, compact, dropTarget, setDropTarget, onDragStart, onDragEnd, onActivate, onFocus, onMove, onCanSplit, renderPanel }) {
   const groupRef = useRef(null);
   const [paneSize, setPaneSize] = useState({ width: 0, height: 0 });
   const active = node.tabs.includes(node.active) ? node.active : node.tabs[0];
@@ -413,7 +413,7 @@ function DockGroup({ node, tasks, taskByPanel, draggedPanel, splitAllowed, dropT
     setDropTarget(null);
   };
   const keyDownTab = (event, panelId, index) => {
-    const splitPosition = event.ctrlKey && event.altKey && {
+    const splitPosition = !compact && event.ctrlKey && event.altKey && {
       ArrowUp: 'top', ArrowRight: 'right', ArrowDown: 'bottom', ArrowLeft: 'left',
     }[event.key];
     if (splitPosition) {
@@ -423,7 +423,7 @@ function DockGroup({ node, tasks, taskByPanel, draggedPanel, splitAllowed, dropT
       if (node.tabs.length > 1 && enoughSpace && onCanSplit(panelId)) onMove(panelId, node.id, splitPosition);
       return;
     }
-    if (event.altKey && event.shiftKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    if (!compact && event.altKey && event.shiftKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
       event.preventDefault();
       onMove(panelId, node.id, 'center', event.key === 'ArrowLeft' ? Math.max(0, index - 1) : Math.min(node.tabs.length, index + 2));
       return;
@@ -445,7 +445,7 @@ function DockGroup({ node, tasks, taskByPanel, draggedPanel, splitAllowed, dropT
           const label = directorPanel ? 'Director 채팅' : processPanel ? '작업 과정' : workerTabName(tasks, task);
           const title = directorPanel ? 'Owner ↔ Director' : processPanel ? '계획·위임·검증 기록' : task?.title || panelId;
           const insertBefore = dropTarget?.kind === 'tab' && dropTarget.groupId === node.id && dropTarget.index === index;
-          return <button type="button" role="tab" draggable="true" key={panelId} className={`dock-tab ${active === panelId ? 'selected' : ''} ${insertBefore ? 'drop-before' : ''}`} aria-selected={active === panelId} tabIndex={active === panelId ? 0 : -1} title={`${title} · 끌어서 이동/분할 · Ctrl+Alt+방향키로 분할`} onClick={() => onActivate(panelId)} onDragStart={event => onDragStart(event, panelId)} onDragEnd={onDragEnd} onDragOver={event => { event.preventDefault(); event.stopPropagation(); const bounds = event.currentTarget.getBoundingClientRect(); const targetIndex = event.clientX < bounds.left + bounds.width / 2 ? index : index + 1; setDropTarget({ kind: 'tab', groupId: node.id, index: targetIndex }); }} onDrop={event => drop(event, 'center', dropTarget?.groupId === node.id ? dropTarget.index : index)} onKeyDown={event => keyDownTab(event, panelId, index)}>
+          return <button type="button" role="tab" draggable={!compact} key={panelId} className={`dock-tab ${active === panelId ? 'selected' : ''} ${insertBefore ? 'drop-before' : ''}`} aria-selected={active === panelId} tabIndex={active === panelId ? 0 : -1} title={compact ? title : `${title} · 끌어서 이동/분할 · Ctrl+Alt+방향키로 분할`} onClick={() => onActivate(panelId)} onDragStart={compact ? undefined : event => onDragStart(event, panelId)} onDragEnd={compact ? undefined : onDragEnd} onDragOver={event => { if (compact) return; event.preventDefault(); event.stopPropagation(); const bounds = event.currentTarget.getBoundingClientRect(); const targetIndex = event.clientX < bounds.left + bounds.width / 2 ? index : index + 1; setDropTarget({ kind: 'tab', groupId: node.id, index: targetIndex }); }} onDrop={compact ? undefined : event => drop(event, 'center', dropTarget?.groupId === node.id ? dropTarget.index : index)} onKeyDown={event => keyDownTab(event, panelId, index)}>
             <Icon name="grip" size={12} />
             {directorPanel ? <span className="tab-avatar">D</span> : processPanel ? <span className="tab-core-icon"><Icon name="activity" size={12} /></span> : <span className={`task-tab-dot ${taskDisplayStatus(task)}`} />}
             <span><strong>{label}</strong><small>{title}</small></span>
@@ -472,7 +472,7 @@ function DockNode(props) {
   </div>;
 }
 
-export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, dockLayout, setDockLayout = () => {}, workerRoomOpen = true, setWorkerRoomOpen = () => {}, lastSyncedAt = null, liveActivity }) {
+export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, taskFocusRequest, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, dockLayout, setDockLayout = () => {}, workerRoomOpen = true, setWorkerRoomOpen = () => {}, lastSyncedAt = null, liveActivity }) {
   const detailedGoal = goalDetail?.id === goal?.id ? goalDetail : null;
   const currentGoal = detailedGoal || goal;
   const tasks = useMemo(() => goalTasks(board, currentGoal).map(task => task.id === taskDetail?.task?.id
@@ -483,6 +483,9 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [draggedPanel, setDraggedPanel] = useState('');
   const [dropTarget, setDropTarget] = useState(null);
+  const [focusedPanel, setFocusedPanel] = useState(DIRECTOR_PANEL_ID);
+  const [compactDock, setCompactDock] = useState(false);
+  const projectRoomRef = useRef(null);
   const inspectorToggleRef = useRef(null);
   const inspectorCloseRef = useRef(null);
   const selectedTask = tasks.find(task => task.id === selectedTaskId) || null;
@@ -501,7 +504,10 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   const effectiveDockLayout = useMemo(() => layoutReady
     ? reconcileDockLayout(dockLayout, taskIds, selectedTaskId)
     : createDockLayout(), [dockLayout, layoutReady, taskIdsKey, selectedTaskId]);
-  const visibleDockLayout = useMemo(() => workerRoomOpen ? effectiveDockLayout : filterDockLayout(effectiveDockLayout, panelId => !workerTaskId(panelId)), [effectiveDockLayout, workerRoomOpen]);
+  const visibleDockLayout = useMemo(() => {
+    const visible = workerRoomOpen ? effectiveDockLayout : filterDockLayout(effectiveDockLayout, panelId => !workerTaskId(panelId));
+    return compactDock ? compactDockLayout(visible, focusedPanel) : visible;
+  }, [compactDock, effectiveDockLayout, focusedPanel, workerRoomOpen]);
   const supervision = useMemo(() => goalSupervisionHealth({
     director,
     goal: currentGoal,
@@ -516,7 +522,19 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
       if (preferred) selectTask(preferred.id);
     } else if (!tasks.some(task => task.id === selectedTaskId)) selectTask('');
   }, [tasks, selectedTaskId, selectTask]);
+  useEffect(() => {
+    if (taskFocusRequest?.taskId) setFocusedPanel(workerPanelId(taskFocusRequest.taskId));
+  }, [taskFocusRequest]);
   useEffect(() => { setSelectedEntry(null); }, [goal?.id]);
+  useLayoutEffect(() => {
+    const room = projectRoomRef.current;
+    if (!room) return undefined;
+    const update = () => setCompactDock(room.getBoundingClientRect().width < 820);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(room);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (!layoutReady) return;
     if (JSON.stringify(dockLayout) !== JSON.stringify(effectiveDockLayout)) setDockLayout(effectiveDockLayout);
@@ -559,15 +577,18 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   };
   const endPanelDrag = () => { setDraggedPanel(''); setDropTarget(null); };
   const activatePanel = panelId => {
+    setFocusedPanel(panelId);
     setDockLayout(current => activateDockPanel(reconcileDockLayout(current, taskIds, selectedTaskId), panelId));
     const taskId = workerTaskId(panelId);
     if (taskId) openTask(taskId);
   };
   const focusPanel = panelId => {
+    setFocusedPanel(panelId);
     const taskId = workerTaskId(panelId);
     if (taskId && taskId !== selectedTaskId) selectTask(taskId);
   };
   const movePanel = (panelId, targetGroupId, position, index) => {
+    setFocusedPanel(panelId);
     setDockLayout(current => {
       const reconciled = reconcileDockLayout(current, taskIds, selectedTaskId);
       const targetIndex = position === 'center' && !workerRoomOpen
@@ -594,8 +615,8 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   };
   return <>
     <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} onWorkers={() => setWorkerRoomOpen(value => !value)} onResetLayout={() => { setDockLayout(createDockLayout(taskIds, selectedTaskId)); setWorkerRoomOpen(true); }} workerRoomOpen={workerRoomOpen} refresh={refresh} />
-    <main id="workspace" className={`project-room ${draggedPanel ? 'dock-dragging' : ''}`} tabIndex="-1">
-      <DockNode node={visibleDockLayout} tasks={tasks} taskByPanel={taskByPanel} draggedPanel={draggedPanel} splitAllowed={!draggedPanel || canSplitPanel(draggedPanel)} dropTarget={dropTarget} setDropTarget={setDropTarget} onDragStart={beginPanelDrag} onDragEnd={endPanelDrag} onActivate={activatePanel} onFocus={focusPanel} onMove={movePanel} onCanSplit={canSplitPanel} onRatio={changeRatio} renderPanel={renderPanel} />
+    <main ref={projectRoomRef} id="workspace" className={`project-room ${compactDock ? 'dock-compact' : ''} ${draggedPanel ? 'dock-dragging' : ''}`} tabIndex="-1">
+      <DockNode node={visibleDockLayout} tasks={tasks} taskByPanel={taskByPanel} draggedPanel={draggedPanel} splitAllowed={!draggedPanel || canSplitPanel(draggedPanel)} compact={compactDock} dropTarget={dropTarget} setDropTarget={setDropTarget} onDragStart={beginPanelDrag} onDragEnd={endPanelDrag} onActivate={activatePanel} onFocus={focusPanel} onMove={movePanel} onCanSplit={canSplitPanel} onRatio={changeRatio} renderPanel={renderPanel} />
     </main>
     {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={selectedEntry?.type === 'task' ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={false} onClose={() => setInspectorOpen(false)} /></>}
   </>;

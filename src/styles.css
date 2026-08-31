@@ -291,6 +291,8 @@ svg { display: block; flex: none; }
 .dock-tab small { min-width: 0; color: var(--faint); font-size: .68rem; }
 .dock-tab .tab-avatar { width: 17px; height: 17px; font-size: .62rem; }
 .dock-tab .tab-core-icon { display: grid; width: 17px; height: 17px; flex: none; place-items: center; color: var(--accent); border-radius: 4px; background: var(--accent-soft); }
+.dock-compact .dock-tab { grid-template-columns: auto minmax(0, 1fr); cursor: pointer; }
+.dock-compact .dock-tab > svg { display: none; }
 .dock-tab.drop-before::before { position: absolute; z-index: 3; top: 4px; bottom: 4px; left: -1px; width: 2px; content: ""; background: var(--accent); }
 .dock-tabbar.drop-at-end > div::after { width: 2px; height: 29px; flex: none; align-self: center; content: ""; background: var(--accent); }
 .dock-panel-body { min-width: 0; min-height: 0; overflow: hidden; }
@@ -562,6 +564,8 @@ svg { display: block; flex: none; }
 .error-notice { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto; align-items: center; gap: 8px; margin: 8px 0; padding: 9px 11px; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 30%, var(--border)); border-radius: 7px; background: var(--red-soft); font-size: .8rem; }
 .error-notice span { color: var(--text-soft); overflow-wrap: anywhere; }
 .error-notice button { color: var(--red); background: transparent; text-decoration: underline; }
+.inspector .error-notice { grid-template-columns: minmax(0, 1fr) auto; align-items: start; margin: 10px; }
+.inspector .error-notice > strong { grid-column: 1 / -1; }
 
 .director-view { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 0; background: var(--bg); }
 .director-view.has-context { grid-template-rows: auto auto minmax(0, 1fr); }

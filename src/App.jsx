@@ -40,12 +40,13 @@ function AppShell() {
   const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 248);
   const [railDockPreference, setRailDockPreference] = useStoredState('praetorium.railDock', 'left');
   const [railOpen, setRailOpen] = useStoredState('praetorium.railOpen', true);
-  const [workspaceDockLayouts, setWorkspaceDockLayouts] = useStoredState('praetorium.workspaceDockLayouts', {});
+  const [workspaceDockLayouts, setWorkspaceDockLayouts] = useStoredState('praetorium.workspaceDockLayouts.v2', {});
   const [workerRoomOpen, setWorkerRoomOpen] = useStoredState('praetorium.workerRoomOpen', true);
   const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 312);
   const [activityHeight, setActivityHeight] = useStoredState('praetorium.activityHeight', 112);
   const [inspectorOpen, setInspectorOpen] = useStoredState('praetorium.inspectorOpen', false);
   const [pendingNavigation, setPendingNavigation] = useState(navigationFromLocation);
+  const [taskFocusRequest, setTaskFocusRequest] = useState({ taskId: '', token: 0 });
   const [railDragging, setRailDragging] = useState(false);
   const [railDropSide, setRailDropSide] = useState('');
   const pendingGoalRequest = useRef('');
@@ -104,6 +105,7 @@ function AppShell() {
     pendingGoalRequest.current = '';
     setPendingNavigation(null);
     if (pendingNavigation.taskId) {
+      setTaskFocusRequest(current => ({ taskId: pendingNavigation.taskId, token: current.token + 1 }));
       data.selectTask(pendingNavigation.taskId);
     }
   }, [data.revealGoal, data.selectTask, data.selectedDirectorId, data.selectedGoalId, pendingNavigation]);
@@ -148,6 +150,7 @@ function AppShell() {
       selectGoal={data.selectGoal}
       taskDetail={data.taskDetail}
       taskTrace={data.taskTrace}
+      taskFocusRequest={taskFocusRequest}
       errors={data.errors}
       lastSyncedAt={data.lastSyncedAt}
       liveActivity={data.liveActivity}
