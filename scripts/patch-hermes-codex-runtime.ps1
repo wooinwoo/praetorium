@@ -91,9 +91,11 @@ $HermesRoot = [IO.Path]::GetFullPath($HermesRoot)
 $runtimeProvider = Join-Path $HermesRoot 'hermes-agent\hermes_cli\runtime_provider.py'
 $appServerClient = Join-Path $HermesRoot 'hermes-agent\agent\transports\codex_app_server.py'
 $codexRuntime = Join-Path $HermesRoot 'hermes-agent\agent\codex_runtime.py'
+$codexPluginMigration = Join-Path $HermesRoot 'hermes-agent\hermes_cli\codex_runtime_plugin_migration.py'
 $kanbanDb = Join-Path $HermesRoot 'hermes-agent\hermes_cli\kanban_db.py'
 $kanbanTools = Join-Path $HermesRoot 'hermes-agent\tools\kanban_tools.py'
 $hermesExeCandidates = @(
+    (Join-Path $HermesRoot 'hermes-agent\praetorium-venv\Scripts\hermes.exe'),
     (Join-Path $HermesRoot 'hermes-agent\venv\Scripts\hermes.exe'),
     (Join-Path $HermesRoot 'hermes-agent\bin\hermes.exe')
 )
@@ -112,6 +114,9 @@ if (-not (Test-Path -LiteralPath $appServerClient -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $codexRuntime -PathType Leaf)) {
     throw "Hermes Codex runtime not found: $codexRuntime"
+}
+if (-not (Test-Path -LiteralPath $codexPluginMigration -PathType Leaf)) {
+    throw "Hermes Codex plugin migration not found: $codexPluginMigration"
 }
 if (-not (Test-Path -LiteralPath $kanbanDb -PathType Leaf)) {
     throw "Hermes Kanban runtime not found: $kanbanDb"
@@ -401,6 +406,76 @@ if (-not $kanbanSource.Contains($workerContextMarker)) {
     Write-Host 'Authoritative full-card Worker prompt bridge is already installed.'
 }
 
+$codexPluginMigrationSource = ConvertTo-PraetoriumLf ([IO.File]::ReadAllText($codexPluginMigration))
+$lifecycleEnvMarker = 'PRAETORIUM_CODEX_MCP_LIFECYCLE_ENV_V1'
+if (-not $codexPluginMigrationSource.Contains($lifecycleEnvMarker)) {
+    $lifecycleEnvNeedle = @'
+    if env:
+        out["env"] = env
+    # Generous timeouts
+'@
+    $lifecycleEnvReplacement = @'
+    if env:
+        out["env"] = env
+    # PRAETORIUM_CODEX_MCP_LIFECYCLE_ENV_V1
+    # Codex intentionally forwards only explicitly allowlisted parent variables
+    # into stdio MCP children. Kanban tools are registered from this per-run
+    # context, so omitting it makes a successful Worker unable to comment,
+    # complete, block, or heartbeat its durable task.
+    out["env_vars"] = [
+        "HERMES_HOME",
+        "HERMES_KANBAN_TASK",
+        "HERMES_KANBAN_DB",
+        "HERMES_KANBAN_BOARD",
+        "HERMES_KANBAN_WORKSPACES_ROOT",
+        "HERMES_KANBAN_WORKSPACE",
+        "HERMES_KANBAN_RUN_ID",
+        "HERMES_KANBAN_CLAIM_LOCK",
+        "HERMES_PROFILE",
+        "PRAETORIUM_PROJECT_CWD",
+        "PRAETORIUM_WORKER_CONSOLE",
+    ]
+    out["required"] = True
+    # Generous timeouts
+'@
+    $lifecycleEnvNeedleText = ConvertTo-PraetoriumLf ($lifecycleEnvNeedle.TrimEnd())
+    $lifecycleEnvReplacementText = ConvertTo-PraetoriumLf ($lifecycleEnvReplacement.TrimEnd())
+    if (([regex]::Matches($codexPluginMigrationSource, [regex]::Escape($lifecycleEnvNeedleText))).Count -ne 1) {
+        throw 'Hermes source layout changed: Codex MCP lifecycle environment insertion point is not unique.'
+    }
+    $codexPluginMigrationSource = $codexPluginMigrationSource.Replace($lifecycleEnvNeedleText, $lifecycleEnvReplacementText)
+    Write-Host 'Prepared Codex MCP lifecycle environment forwarding.'
+} else {
+    Write-Host 'Codex MCP lifecycle environment forwarding is already installed.'
+}
+
+# A materialized Worker must execute its assigned action itself. Owner goals can
+# contain Director-facing delegation language, which otherwise tempts the Codex
+# Worker to impersonate the Director and create an invisible child hierarchy.
+$workerRoleBoundaryMarker = 'PRAETORIUM_WORKER_ROLE_BOUNDARY_V1'
+if (-not $kanbanSource.Contains($workerRoleBoundaryMarker)) {
+    $kanbanSource = ConvertTo-PraetoriumLf $kanbanSource
+    $roleBoundaryNeedle = '        f"{_praetorium_worker_context}\n\n"'
+    if (([regex]::Matches($kanbanSource, [regex]::Escape($roleBoundaryNeedle))).Count -ne 1) {
+        throw 'Hermes source layout changed: Worker role boundary insertion point is not unique.'
+    }
+    $roleBoundaryReplacement = @'
+        # PRAETORIUM_WORKER_ROLE_BOUNDARY_V1
+        f"{_praetorium_worker_context}\n\n"
+        "## Worker identity\n"
+        f"You are the already-created assigned Worker running profile {profile_arg}. "
+        "Owner-objective language about creating, assigning, managing, or monitoring Workers is Director context only. "
+        "Execute only the card's assigned [ACTION] yourself. Do not impersonate the Director. "
+        "Never spawn, delegate to, or manage subagents, child Workers, or additional sessions; "
+        "the Praetorium Director exclusively owns the visible Worker graph. "
+'@
+    $roleBoundaryReplacementText = ConvertTo-PraetoriumLf ($roleBoundaryReplacement.TrimEnd())
+    $kanbanSource = $kanbanSource.Replace($roleBoundaryNeedle, $roleBoundaryReplacementText)
+    Write-Host 'Prepared explicit Worker identity and delegation boundary.'
+} else {
+    Write-Host 'Explicit Worker identity and delegation boundary is already installed.'
+}
+
 # The lifecycle is a structured Worker tool call, not a shell command. Keeping
 # it out of PowerShell avoids quoting failures and duplicate terminal retries.
 $nativeLifecycleMarker = 'PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3'
@@ -682,6 +757,7 @@ $stagedFiles = [ordered]@{}
 $stagedFiles[$runtimeProvider] = $source
 $stagedFiles[$appServerClient] = $appServerSource
 $stagedFiles[$codexRuntime] = $codexRuntimeSource
+$stagedFiles[$codexPluginMigration] = $codexPluginMigrationSource
 $stagedFiles[$kanbanDb] = $kanbanSource
 $stagedFiles[$kanbanTools] = $kanbanToolsSource
 $changedFileCount = Set-PraetoriumPatchedFiles -Files $stagedFiles

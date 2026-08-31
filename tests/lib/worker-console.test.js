@@ -28,7 +28,7 @@ function loadSanitizerFromSource() {
 function loadReadableBlocksFromSource() {
   const workerConsole = source('src/components/WorkerConsole.jsx');
   const declaration = workerConsole.match(
-    /export function readableTerminalBlocks\(value\) \{([\s\S]*?)\n\}\n\nfunction decodeEvent/,
+    /export function readableTerminalBlocks\(value\) \{([\s\S]*?)\n\}\r?\n\r?\nfunction decodeEvent/,
   );
   assert.ok(declaration, 'readableTerminalBlocks must remain an exported, independently testable helper');
   const readable = Function('sanitizeTerminalOutput', 'value', declaration[1]);
@@ -130,6 +130,8 @@ describe('Worker Codex session console contract', () => {
     for (const patch of [windowsPatch, portablePatch]) {
       assert.match(patch, /PRAETORIUM_CODEX_WORKER_CONSOLE_ENV_V1/);
       assert.match(patch, /PRAETORIUM_WORKER_CONTEXT_PROMPT_V2/);
+      assert.match(patch, /PRAETORIUM_WORKER_ROLE_BOUNDARY_V1/);
+      assert.match(patch, /PRAETORIUM_CODEX_MCP_LIFECYCLE_ENV_V1/);
       assert.match(patch, /PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3/);
       assert.match(patch, /PRAETORIUM_CODEX_WORKER_TRACE_BRIDGE_V1/);
       assert.match(patch, /PRAETORIUM_CODEX_NATIVE_STEER_BRIDGE_V1/);
@@ -141,13 +143,21 @@ describe('Worker Codex session console contract', () => {
       assert.match(patch, /inject_new_comments_from_env\(agent\)/);
       assert.match(patch, /build_worker_context/);
       assert.match(patch, /complete authoritative Director instruction/);
+      assert.match(patch, /already-created assigned Worker/);
+      assert.match(patch, /Never spawn, delegate to, or manage subagents/);
+      assert.match(patch, /Director exclusively owns the visible Worker graph/);
+      assert.match(patch, /HERMES_KANBAN_TASK/);
+      assert.match(patch, /HERMES_KANBAN_RUN_ID/);
+      assert.match(patch, /HERMES_KANBAN_CLAIM_LOCK/);
+      assert.match(patch, /["']env_vars["']/);
+      assert.match(patch, /["']required["']/);
       assert.match(patch, /never invoke/);
       assert.match(patch, /hermes kanban through the shell/);
       assert.doesNotMatch(patch, /_praetorium_console\(params\.get\("delta"\).*item\/reasoning\/textDelta/);
     }
     assert.match(windowsPatch, /Set-PraetoriumPatchedFiles/);
     assert.match(windowsPatch, /ConvertTo-PraetoriumLf/);
-    assert.doesNotMatch(windowsPatch, /WriteAllText\(\$(?:runtimeProvider|appServerClient|codexRuntime|kanbanDb|kanbanTools),/);
+    assert.doesNotMatch(windowsPatch, /WriteAllText\(\$(?:runtimeProvider|appServerClient|codexRuntime|codexPluginMigration|kanbanDb|kanbanTools),/);
     assert.match(portablePatch, /const staged = new Map\(\)/);
     assert.match(portablePatch, /commitPatches\(staged\)/);
   });

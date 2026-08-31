@@ -3,10 +3,16 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { PROFILE_CATALOG } from '../../lib/workflow-catalog.js';
 import {
-  CODEX_COMPATIBILITY, normalizeWslPath, supportsCodexVersion, WslRuntime, _test,
+  CODEX_COMPATIBILITY, normalizeWslPath, runtimeReadinessError, supportsCodexVersion, WslRuntime, _test,
 } from '../../lib/wsl-runtime.js';
 
 describe('WSL runtime boundary', () => {
+  it('surfaces an actionable Hermes runtime failure before generic readiness errors', () => {
+    assert.equal(runtimeReadinessError({
+      hermes: { installed: false, error: 'Windows Smart App Control blocked Hermes.' },
+    }), 'Windows Smart App Control blocked Hermes.');
+  });
+
   it('normalizes Linux paths and rejects shell-shaped distro input', () => {
     assert.equal(normalizeWslPath('/home/owner/projects/../projects/app'), '/home/owner/projects/app');
     assert.throws(() => normalizeWslPath('/home/owner/app '), /앞뒤 공백/);
@@ -220,6 +226,23 @@ describe('WSL runtime boundary', () => {
     assert.match(installer, /\(\?m\)\^\[ \\t\]\*codex-cli/);
     assert.match(installer, /if \(-not \(Test-CompatibleCodexVersion \$installedVersion\)\)[\s\S]*npm\.cmd install --global/);
     assert.doesNotMatch(installer, /\?\?/);
+  });
+
+  it('recovers Hermes under Smart App Control with a signed Python runtime', () => {
+    const installer = readFileSync(new URL('../../scripts/install-praetorium.ps1', import.meta.url), 'utf8');
+    const bootstrap = readFileSync(new URL('../../scripts/bootstrap-director-system.ps1', import.meta.url), 'utf8');
+    const patcher = readFileSync(new URL('../../scripts/patch-hermes-codex-runtime.ps1', import.meta.url), 'utf8');
+    assert.match(installer, /function Install-PraetoriumHermesRuntime/);
+    assert.match(installer, /Get-AuthenticodeSignature/);
+    assert.match(installer, /Python\.Python\.3\.12/);
+    assert.match(installer, /praetorium-venv\\Scripts\\hermes\.exe/);
+    assert.match(installer, /\$AgentRoot \+ '\[mcp\]'/);
+    assert.match(installer, /from mcp\.server import MCPServer; import agent\.transports\.hermes_tools_mcp_server/);
+    assert.match(installer, /Signed Hermes lifecycle MCP validation failed/);
+    assert.match(installer, /SetEnvironmentVariable\('HERMES_BIN'/);
+    assert.match(bootstrap, /praetorium-venv\\Scripts\\hermes\.exe/);
+    assert.match(bootstrap, /praetorium-venv\\Scripts\\python\.exe/);
+    assert.match(patcher, /praetorium-venv\\Scripts\\hermes\.exe/);
   });
 
   it('captures WSL candidate metadata before and after hashing', async () => {

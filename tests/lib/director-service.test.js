@@ -1282,6 +1282,89 @@ describe('DirectorService', () => {
     assert.doesNotMatch(prompts[0], /C:\\projects\\alpha|\/home\/owner|UNIQUE STATUS QUESTION|UNIQUE STATUS OUTPUT/);
   });
 
+  it('holds board dispatch when a runnable card is foreign to the active Goal', () => {
+    const goal = { taskIds: ['t_active'] };
+    assert.deepEqual(_test.goalBoardIsolation([
+      { id: 't_active', status: 'ready' },
+      { id: 't_cancelled', status: 'scheduled' },
+    ], goal), {
+      safe: true,
+      foreignRunnableTaskIds: [],
+      activeRunnableTaskIds: ['t_active'],
+    });
+    assert.deepEqual(_test.goalBoardIsolation([
+      { id: 't_active', status: 'ready' },
+      { id: 't_foreign', status: 'todo' },
+    ], goal), {
+      safe: false,
+      foreignRunnableTaskIds: ['t_foreign'],
+      activeRunnableTaskIds: ['t_active'],
+    });
+  });
+
+  it('quarantines stale cards from another Goal instead of presenting them as active-Goal work', async () => {
+    const prompts = [];
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [{ id: 't_cancelled_goal_stale', title: 'Old cancelled work', status: 'scheduled' }],
+      chat: async ({ prompt }) => {
+        prompts.push(prompt);
+        return { stdout: conversationOutput('현재 Goal만 확인했습니다.') };
+      },
+    }) });
+    const active = seedActiveGoal(svc, { taskId: 't_removed_active' });
+    active.taskIds = [];
+    active.currentWaveTaskIds = [];
+    active.taskRecords = [];
+    active.waves = [];
+    active.status = 'planning';
+    active.phase = 'planning';
+
+    const submitted = svc.submitMessage('project-director-1', '현재 계획을 설명해줘', { mode: 'conversation' });
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'isolated status prompt');
+
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /"tasks":\{"scope":"active_goal","count":0/);
+    assert.match(prompts[0], /"quarantinedNonterminalWorkers":1/);
+    assert.match(prompts[0], /MUST NOT influence its plan, evidence, dependencies, or completion/);
+    assert.doesNotMatch(prompts[0], /t_cancelled_goal_stale|Old cancelled work/);
+  });
+
+  it('rejects a reviewer-first Goal plan and retries with the required candidate Worker', async () => {
+    const prompts = [];
+    const created = [];
+    let chatCalls = 0;
+    const reviewerFirst = `${analysisOutput()}\n<PRAETORIUM_CONTROL>${JSON.stringify({
+      schema: 'director-action.v1', mode: 'delegate', workflow_id: 'quick-fix', state: 'executing',
+      requirements: ['tests pass'], decisions: ['review before candidate'],
+      actions: [{
+        id: 'premature-review', title: 'Premature review', target: 'adversarial-reviewer',
+        task: 'Review a candidate that does not exist.', effect: 'read_only', skills: ['adversarial-review'],
+        dependencies: [], write_scope: ['read-only:src/'], acceptance: ['review report'], wake_on: ['completion'],
+      }],
+      owner_decision: { required: false, question: null, options: [], evidence: [] },
+    })}</PRAETORIUM_CONTROL>`;
+    const svc = service({ runtime: runtime({
+      chat: async ({ prompt }) => {
+        prompts.push(prompt);
+        chatCalls += 1;
+        return { stdout: chatCalls === 1 ? reviewerFirst : delegationOutput() };
+      },
+      createTask: async options => {
+        created.push(options);
+        return { json: { id: 't_candidate_after_retry' } };
+      },
+    }) });
+
+    const submitted = svc.submitMessage('project-director-1', 'Implement the bounded fix', { mode: 'delegate' });
+    await waitFor(() => svc.getRun(submitted.id)?.status === 'completed', 'candidate-first retry');
+
+    assert.equal(chatCalls, 2);
+    assert.equal(created.length, 1);
+    assert.equal(created[0].assignee, 'codex-implementer');
+    assert.match(prompts[1], /Workflow phase rejected: required stage is candidate/);
+    assert.deepEqual(svc.getGoal(submitted.goalId).taskIds, ['t_candidate_after_retry']);
+  });
+
   it('keeps image inspection but rejects a model completion claim that contradicts durable status', async () => {
     let chatCalls = 0;
     const prompts = [];
@@ -3439,6 +3522,8 @@ describe('DirectorService', () => {
     assert.deepEqual(compact.activeGoals, [goal.id]);
     assert.match(compact.observedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.ok(compact.notificationGoals.some(item => item.id === goal.id));
+    assert.equal(compact.goals.find(item => item.id === goal.id).requiredTransition.stage, 'candidate');
+    assert.equal(svc.getGoalDetails(goal.id).requiredTransition.stage, 'candidate');
     assert.ok(Array.isArray(compact.notificationTasks));
     assert.equal(compact.goals.find(item => item.id === goal.id).events, undefined);
     assert.ok(compact.recentRuns.length <= 8);

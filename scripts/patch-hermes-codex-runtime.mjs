@@ -84,9 +84,10 @@ export function patchHermesRuntime(
   const runtimeProvider = join(agentRoot, 'hermes_cli', 'runtime_provider.py');
   const appServerClient = join(agentRoot, 'agent', 'transports', 'codex_app_server.py');
   const codexRuntime = join(agentRoot, 'agent', 'codex_runtime.py');
+  const codexPluginMigration = join(agentRoot, 'hermes_cli', 'codex_runtime_plugin_migration.py');
   const kanbanDb = join(agentRoot, 'hermes_cli', 'kanban_db.py');
   const kanbanTools = join(agentRoot, 'tools', 'kanban_tools.py');
-  for (const path of [runtimeProvider, appServerClient, codexRuntime, kanbanDb, kanbanTools]) {
+  for (const path of [runtimeProvider, appServerClient, codexRuntime, codexPluginMigration, kanbanDb, kanbanTools]) {
     if (!existsSync(path)) throw new Error(`Hermes source file not found: ${path}`);
   }
   const staged = new Map();
@@ -204,6 +205,50 @@ export function patchHermesRuntime(
         "kanban_block with the concrete blocker. Plain text is not completion."
     )`,
     'authoritative Worker context prompt',
+  ));
+
+  patchFile(staged, codexPluginMigration, 'PRAETORIUM_CODEX_MCP_LIFECYCLE_ENV_V1', source => replaceOnce(
+    source,
+    `    if env:
+        out["env"] = env
+    # Generous timeouts`,
+    `    if env:
+        out["env"] = env
+    # PRAETORIUM_CODEX_MCP_LIFECYCLE_ENV_V1
+    # Codex intentionally forwards only explicitly allowlisted parent variables
+    # into stdio MCP children. Kanban tools are registered from this per-run
+    # context, so omitting it makes a successful Worker unable to comment,
+    # complete, block, or heartbeat its durable task.
+    out["env_vars"] = [
+        "HERMES_HOME",
+        "HERMES_KANBAN_TASK",
+        "HERMES_KANBAN_DB",
+        "HERMES_KANBAN_BOARD",
+        "HERMES_KANBAN_WORKSPACES_ROOT",
+        "HERMES_KANBAN_WORKSPACE",
+        "HERMES_KANBAN_RUN_ID",
+        "HERMES_KANBAN_CLAIM_LOCK",
+        "HERMES_PROFILE",
+        "PRAETORIUM_PROJECT_CWD",
+        "PRAETORIUM_WORKER_CONSOLE",
+    ]
+    out["required"] = True
+    # Generous timeouts`,
+    'Codex MCP lifecycle environment',
+  ));
+
+  patchFile(staged, kanbanDb, 'PRAETORIUM_WORKER_ROLE_BOUNDARY_V1', source => replaceOnce(
+    source,
+    '        f"{_praetorium_worker_context}\\n\\n"',
+    `        # PRAETORIUM_WORKER_ROLE_BOUNDARY_V1
+        f"{_praetorium_worker_context}\\n\\n"
+        "## Worker identity\\n"
+        f"You are the already-created assigned Worker running profile {profile_arg}. "
+        "Owner-objective language about creating, assigning, managing, or monitoring Workers is Director context only. "
+        "Execute only the card's assigned [ACTION] yourself. Do not impersonate the Director. "
+        "Never spawn, delegate to, or manage subagents, child Workers, or additional sessions; "
+        "the Praetorium Director exclusively owns the visible Worker graph. "`,
+    'explicit Worker identity and delegation boundary',
   ));
 
   patchFile(staged, kanbanDb, 'PRAETORIUM_WORKER_NATIVE_LIFECYCLE_V3', source => replaceOnce(

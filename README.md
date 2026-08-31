@@ -37,12 +37,15 @@ The versioned bootstrap script (`scripts/install-praetorium.ps1`) used for publi
 1. installs Git and Node.js through winget when missing;
 2. preserves a compatible Codex CLI (`>=0.149.0 <1.0.0`) or installs the minimum version, then verifies app-server support and local login;
 3. downloads and checksum-verifies Hermes `v2026.8.19` / Agent `v0.20.5`;
-4. checks out the exact requested Praetorium release;
-5. installs 14 role profiles, 12 skills, four boards, and the pinned Codex runtime bridges;
-6. downloads the Windows release installer and verifies its SHA-256 file;
-7. installs and launches Praetorium, then rejects the installation if port `3848` is not loopback-only.
+4. when Windows Smart App Control rejects uv's unsigned Python runtime, builds an isolated Hermes environment from a Python Software Foundation signed Python 3.12 runtime without disabling Windows security;
+5. checks out the exact requested Praetorium release;
+6. installs 14 role profiles, 12 skills, four boards, and the pinned Codex runtime bridges;
+7. downloads the Windows release installer and verifies its SHA-256 file;
+8. installs and launches Praetorium, then rejects the installation if port `3848` is not loopback-only.
 
 Praetorium is a standalone product and repository. Its durable project and Director state lives in `%LOCALAPPDATA%\PraetoriumData`, outside the desktop shell installation, so reinstalling or uninstalling the shell does not erase orchestration state.
+
+The Smart App Control fallback is selected only when the pinned Hermes executable cannot start. It prefers `%LOCALAPPDATA%\hermes\hermes-agent\praetorium-venv`, records that executable in the per-user `HERMES_BIN`, and keeps the upstream source and all Praetorium state in their existing locations. A blocked runtime is reported explicitly in Environment Management instead of appearing as an unexplained numeric Hermes exit code.
 
 Choose the company PC's initial state explicitly:
 

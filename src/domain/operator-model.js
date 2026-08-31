@@ -23,6 +23,129 @@ export const statusTone = status => {
   return 'idle';
 };
 
+const workflowStageMeta = Object.freeze({
+  queue: { label: '대기열', next: 'analysis' },
+  analysis: { label: '요구·인수조건', next: 'candidate' },
+  candidate: { label: '구현·산출물', next: 'review' },
+  review: { label: '독립 리뷰', next: 'gate' },
+  remediation: { label: '지적 수정', next: 'review' },
+  gate: { label: '품질 게이트', next: 'complete' },
+  owner: { label: 'Owner 결정', next: 'candidate' },
+  complete: { label: '완료', next: null },
+  stopped: { label: '중단', next: null },
+});
+
+function operationalStage(goal) {
+  const status = String(goal?.status || '');
+  if (!goal) return 'analysis';
+  if (status === 'queued') return 'queue';
+  if (status === 'awaiting_owner') return 'owner';
+  if (status === 'completed') return 'complete';
+  if (['blocked', 'failed', 'cancelled'].includes(status)) return 'stopped';
+  if (['clarifying', 'planning'].includes(status) || !goal.workflowId) return 'analysis';
+  if (status === 'remediating') return 'remediation';
+  return workflowStageMeta[goal.requiredTransition?.stage]
+    ? goal.requiredTransition.stage
+    : status === 'verifying' ? 'review' : 'candidate';
+}
+
+function activeWaveTasks(goal, tasks) {
+  const currentIds = new Set(goal?.currentWaveTaskIds || []);
+  return currentIds.size
+    ? (tasks || []).filter(task => currentIds.has(task.id))
+    : (tasks || []).filter(task => !taskIsTerminal(task) || taskPausedByOwner(task));
+}
+
+/**
+ * One compact, host-truthful answer to the three questions an Owner needs:
+ * what is happening, what is next, and whether human action is required.
+ */
+export function goalOperationalFocus({ goal, tasks = [], supervision = null } = {}) {
+  const stage = operationalStage(goal);
+  const waveTasks = activeWaveTasks(goal, tasks);
+  const statuses = waveTasks.map(task => taskDisplayStatus(task));
+  const running = statuses.filter(status => ['running', 'executing', 'planning', 'materializing', 'review'].includes(status)).length;
+  const waiting = statuses.filter(status => ['ready', 'queued', 'scheduled', 'todo'].includes(status)).length;
+  const finished = waveTasks.filter(task => taskIsTerminal(task)).length;
+  const paused = waveTasks.filter(task => taskPausedByOwner(task) || taskDisplayStatus(task) === 'paused');
+  const transition = goal?.requiredTransition || {};
+  const total = waveTasks.length;
+  const firstActive = waveTasks.find(task => !taskIsTerminal(task)) || waveTasks.at(-1) || null;
+
+  let currentValue = goal ? statusText(goal.status) : '새 요청 대기';
+  let currentDetail = goal?.objective || 'Director에게 작업을 요청하면 여기에 진행 단계가 표시됩니다.';
+  if (stage === 'queue') currentValue = goal?.queuePosition ? `대기 ${goal.queuePosition}번` : '실행 순서 대기';
+  if (stage === 'analysis') currentValue = goal ? '디렉터가 작업 경계 판단 중' : '활성 Goal 없음';
+  if (['candidate', 'review', 'remediation', 'gate'].includes(stage)) {
+    currentValue = running
+      ? `Worker ${running}/${Math.max(total, running)} 실행 중`
+      : waiting ? `Worker ${waiting}개 실행 대기`
+        : total && finished === total ? `${finished}개 결과 평가 중`
+          : '디렉터가 Worker 배정 준비 중';
+    currentDetail = firstActive?.title || goal?.objective || currentDetail;
+  }
+  if (stage === 'owner') {
+    currentValue = '결정 전 자동 진행 정지';
+    currentDetail = goal?.ownerDecision?.question || 'Owner 결정을 기다리고 있습니다.';
+  }
+  if (stage === 'complete') {
+    currentValue = '인수조건·게이트 통과';
+    currentDetail = textValue(goal?.finalReport) || goal?.objective || '최종 결과가 기록되었습니다.';
+  }
+  if (stage === 'stopped') {
+    currentValue = statusText(goal?.status);
+    currentDetail = textValue(goal?.error) || goal?.objective || '상세 기록을 확인하세요.';
+  }
+
+  let nextStage = workflowStageMeta[stage]?.next || null;
+  let nextValue = nextStage ? workflowStageMeta[nextStage].label : '없음';
+  let nextDetail = nextStage ? '현재 단계가 끝나면 자동으로 진행합니다.' : '워크플로가 종료되었습니다.';
+  if (stage === 'candidate') {
+    const count = transition.missingReviewProfiles?.length;
+    nextValue = `독립 리뷰${count ? ` ${count}개` : ''}`;
+    nextDetail = '구현 후보를 고정한 뒤 별도 Worker가 검토합니다.';
+  } else if (stage === 'review') {
+    nextValue = '수정 또는 품질 게이트';
+    nextDetail = '지적이 있으면 수정·재검토, 없으면 게이트로 갑니다.';
+  } else if (stage === 'remediation') {
+    nextValue = '수정 후보 독립 재검토';
+    nextDetail = '수정 Worker와 다른 Worker가 다시 검증합니다.';
+  } else if (stage === 'gate') {
+    nextValue = '최종 보고';
+    nextDetail = '게이트 통과 증거가 있어야 완료할 수 있습니다.';
+  } else if (stage === 'owner') {
+    nextValue = '결정 범위만 실행';
+    nextDetail = 'Owner 답변을 기록한 뒤 Director가 감독을 재개합니다.';
+  } else if (stage === 'queue') {
+    nextValue = '요구·인수조건 분석';
+  } else if (stage === 'stopped') {
+    nextValue = 'Owner 재시도 판단';
+    nextDetail = '자동 재개하지 않습니다.';
+  }
+
+  let owner = { required: false, value: '없음', detail: '디렉터가 계속 감독합니다.', tone: 'done' };
+  if (stage === 'owner') owner = { required: true, value: '결정 필요', detail: currentDetail, tone: 'attention' };
+  else if (paused.length) owner = { required: true, value: 'Worker 일시정지', detail: '재개하거나 방향을 지시하세요.', tone: 'attention' };
+  else if (supervision?.stalled) owner = { required: true, value: '상태 확인 권장', detail: supervision.detail || supervision.label, tone: 'attention' };
+  else if (stage === 'stopped') owner = { required: true, value: '재시도 판단', detail: currentDetail, tone: 'attention' };
+
+  const mainRoute = ['analysis', 'candidate', 'review', 'gate', 'complete'];
+  const ownerInsertion = Math.max(1, mainRoute.indexOf(transition.stage));
+  const route = stage === 'owner'
+    ? [...mainRoute.slice(0, ownerInsertion), 'owner', ...mainRoute.slice(ownerInsertion)]
+    : stage === 'remediation'
+    ? ['analysis', 'candidate', 'remediation', 'review', 'gate', 'complete']
+    : mainRoute;
+  return {
+    stage,
+    tone: owner.required ? 'attention' : stage === 'complete' ? 'done' : goal ? 'running' : 'idle',
+    current: { label: workflowStageMeta[stage]?.label || statusText(goal?.status), value: currentValue, detail: currentDetail },
+    next: { stage: nextStage, value: nextValue, detail: nextDetail },
+    owner,
+    route: route.map(id => ({ id, label: workflowStageMeta[id].label, state: id === stage ? 'current' : route.indexOf(id) < route.indexOf(stage) ? 'done' : 'pending' })),
+  };
+}
+
 function timeMs(value) {
   const parsed = timestampMs(value);
   return Number.isFinite(parsed) ? parsed : 0;

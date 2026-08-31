@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildConversation, buildTrace, deriveSupervisionHealth, goalConclusionPresentation, goalControlOptions, goalSupervisionHealth,
+  buildConversation, buildTrace, deriveSupervisionHealth, goalConclusionPresentation, goalControlOptions, goalOperationalFocus, goalSupervisionHealth,
   goalTasks, interventionReceiptText, orderQueuedGoals, ownerDecisionPayload, statusText, statusTone,
   taskDisplayStatus, taskIsTerminal, taskPausedByOwner, textValue,
 } from '../../src/domain/operator-model.js';
@@ -41,6 +41,53 @@ test('operator model merges durable task records with fresher board state', () =
   assert.equal(tasks[0].status, 'running');
   assert.equal(tasks[0].summary, 'durable summary');
   assert.equal(tasks[0].profile, 'implementer');
+});
+
+test('operational focus keeps current stage, next handoff, and Owner action visible', () => {
+  const focus = goalOperationalFocus({
+    goal: {
+      id: 'g-focus', objective: '기능 완성', status: 'executing', workflowId: 'quick-fix',
+      currentWaveTaskIds: ['writer', 'waiting'],
+      requiredTransition: {
+        stage: 'candidate', missingReviewProfiles: ['convention-reviewer', 'test-gap-reviewer', 'adversarial-reviewer'],
+      },
+    },
+    tasks: [
+      { id: 'writer', status: 'running', title: 'API 구현' },
+      { id: 'waiting', status: 'todo', title: '후속 구현' },
+    ],
+    supervision: { stalled: false },
+  });
+  assert.equal(focus.stage, 'candidate');
+  assert.equal(focus.current.label, '구현·산출물');
+  assert.equal(focus.current.value, 'Worker 1/2 실행 중');
+  assert.equal(focus.next.value, '독립 리뷰 3개');
+  assert.equal(focus.owner.value, '없음');
+  assert.equal(focus.route.find(step => step.id === 'candidate').state, 'current');
+});
+
+test('operational focus surfaces remediation, Owner decisions, and stalled supervision honestly', () => {
+  const remediation = goalOperationalFocus({
+    goal: { status: 'remediating', workflowId: 'quick-fix', objective: '수정', requiredTransition: { stage: 'remediation' } },
+    tasks: [{ id: 'fix', status: 'running', title: '차단 지적 수정' }],
+  });
+  assert.equal(remediation.stage, 'remediation');
+  assert.equal(remediation.next.value, '수정 후보 독립 재검토');
+
+  const decision = goalOperationalFocus({
+    goal: { status: 'awaiting_owner', ownerDecision: { required: true, question: '실제 배포할까요?' } },
+  });
+  assert.equal(decision.owner.required, true);
+  assert.equal(decision.owner.value, '결정 필요');
+  assert.match(decision.owner.detail, /실제 배포/);
+  assert.equal(decision.route.find(step => step.id === 'owner').state, 'current');
+
+  const stalled = goalOperationalFocus({
+    goal: { status: 'executing', workflowId: 'quick-fix', objective: '작업', requiredTransition: { stage: 'candidate' } },
+    supervision: { stalled: true, detail: '마지막 신호 12분 전' },
+  });
+  assert.equal(stalled.owner.value, '상태 확인 권장');
+  assert.match(stalled.owner.detail, /12분/);
 });
 
 test('operator model creates chronological selectable trace with honest final state', () => {

@@ -7,6 +7,12 @@ import { join } from 'node:path';
 import { acquireProcessLease, adaptiveWorkerLimit, HermesRuntime, _test } from '../../lib/hermes-runtime.js';
 
 describe('HermesRuntime helpers', () => {
+  it('loads the workflow catalog required by live runtime diagnostics', () => {
+    const source = readFileSync(new URL('../../lib/hermes-runtime.js', import.meta.url), 'utf8');
+    assert.match(source, /import \{ PROFILE_CATALOG \} from '\.\/workflow-catalog\.js';/);
+    assert.match(source, /PROFILE_CATALOG\.every\(profile => profiles\.includes\(profile\.id\)\)/);
+  });
+
   it('extracts the last JSON line from Hermes output', () => {
     assert.deepEqual(_test.parseLastJson('notice\n{"ok":true,"spawned":2}\n'), { ok: true, spawned: 2 });
   });
@@ -334,6 +340,10 @@ describe('HermesRuntime helpers', () => {
 
   it('derives the narrow Hermes data root used for board sandbox access', () => {
     assert.equal(
+      _test.hermesRootFromExecutable('C:\\Users\\owner\\AppData\\Local\\hermes\\hermes-agent\\praetorium-venv\\Scripts\\hermes.exe'),
+      'C:\\Users\\owner\\AppData\\Local\\hermes',
+    );
+    assert.equal(
       _test.hermesRootFromExecutable('C:\\Users\\owner\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\hermes.exe'),
       'C:\\Users\\owner\\AppData\\Local\\hermes',
     );
@@ -341,6 +351,20 @@ describe('HermesRuntime helpers', () => {
       _test.hermesRootFromExecutable('C:\\Users\\owner\\AppData\\Local\\hermes\\hermes-agent\\bin\\hermes.exe'),
       'C:\\Users\\owner\\AppData\\Local\\hermes',
     );
+  });
+
+  it('prefers the Smart App Control compatible Hermes environment and explains a blocked runtime', () => {
+    const localAppData = join('root', 'Local');
+    const trusted = join(localAppData, 'hermes', 'hermes-agent', 'praetorium-venv', 'Scripts', 'hermes.exe');
+    const legacy = join(localAppData, 'hermes', 'hermes-agent', 'bin', 'hermes.exe');
+    assert.equal(_test.defaultHermesExecutable({
+      localAppData,
+      fileExists: path => new Set([legacy, trusted]).has(path),
+    }), trusted);
+    const blocked = _test.hermesProcessError(0xc0e90002);
+    assert.equal(blocked.code, 'HERMES_WINDOWS_APP_CONTROL_BLOCKED');
+    assert.match(blocked.message, /Smart App Control/);
+    assert.match(blocked.message, /환경 관리/);
   });
 
   it('rejects a zero-exit Hermes turn that produced no Director answer', async () => {
@@ -377,7 +401,7 @@ describe('HermesRuntime helpers', () => {
     assert.equal(result.stdout, 'finished');
   });
 
-  it('pins the nested Codex app-server thread to the selected project', async () => {
+  it('pins nested Workers and the Codex app-server thread to the selected runtime and project', async () => {
     const fakeChild = new (await import('node:events')).EventEmitter();
     fakeChild.stdout = new (await import('node:stream')).PassThrough();
     fakeChild.stderr = new (await import('node:stream')).PassThrough();
@@ -397,6 +421,10 @@ describe('HermesRuntime helpers', () => {
     await runtime.run(['--version'], { cwd: 'C:\\projects\\alpha', board: 'alpha' });
 
     assert.equal(spawnOptions.cwd, 'C:\\projects\\alpha');
+    assert.equal(
+      spawnOptions.env.HERMES_BIN,
+      'C:\\Users\\owner\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\hermes.exe',
+    );
     assert.equal(spawnOptions.env.TERMINAL_CWD, 'C:\\projects\\alpha');
     assert.equal(spawnOptions.env.PRAETORIUM_PROJECT_CWD, 'C:\\projects\\alpha');
   });

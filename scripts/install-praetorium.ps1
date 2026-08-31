@@ -53,6 +53,7 @@ function Ensure-WingetPackage {
 function Get-HermesExecutable {
     $local = [Environment]::GetFolderPath('LocalApplicationData')
     $candidates = @(
+        (Join-Path $local 'hermes\hermes-agent\praetorium-venv\Scripts\hermes.exe'),
         (Join-Path $local 'hermes\hermes-agent\venv\Scripts\hermes.exe'),
         (Join-Path $local 'hermes\hermes-agent\bin\hermes.exe')
     )
@@ -62,13 +63,103 @@ function Get-HermesExecutable {
     return $null
 }
 
+function Get-HermesVersion {
+    param([Parameter(Mandatory)][string]$Executable)
+    try {
+        $output = (& $Executable --version 2>&1) -join [Environment]::NewLine
+        if ($LASTEXITCODE -eq 0) { return $output }
+    } catch { }
+    return $null
+}
+
+function Get-TrustedPython {
+    $local = [Environment]::GetFolderPath('LocalApplicationData')
+    $candidates = [Collections.Generic.List[string]]::new()
+    $candidates.Add((Join-Path $local 'Programs\Python\Python312\python.exe'))
+    $python = Get-Application 'python.exe'
+    if ($python) { $candidates.Add($python.Source) }
+    $launcher = Get-Application 'py.exe'
+    if ($launcher) {
+        try {
+            $resolved = (& $launcher.Source -3.12 -c 'import sys; print(sys.executable)' 2>$null) -join ''
+            if ($LASTEXITCODE -eq 0 -and $resolved.Trim()) { $candidates.Add($resolved.Trim()) }
+        } catch { }
+    }
+
+    foreach ($candidate in $candidates | Select-Object -Unique) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        $signature = Get-AuthenticodeSignature -LiteralPath $candidate
+        if ($signature.Status -ne 'Valid') { continue }
+        try {
+            $version = (& $candidate -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>$null) -join ''
+            if ($LASTEXITCODE -eq 0 -and [version]$version.Trim() -ge [version]'3.11.0' -and [version]$version.Trim() -lt [version]'3.14.0') {
+                return (Resolve-Path -LiteralPath $candidate).Path
+            }
+        } catch { }
+    }
+    return $null
+}
+
+function Ensure-TrustedPython {
+    $python = Get-TrustedPython
+    if ($python) { return $python }
+    if (-not (Get-Application 'winget.exe')) {
+        throw 'A signed Python 3.11-3.13 runtime is required for Windows Smart App Control compatibility.'
+    }
+    Write-Step 'Installing signed Python 3.12 for Windows Smart App Control compatibility'
+    & winget.exe install --id Python.Python.3.12 -e --source winget --accept-package-agreements --accept-source-agreements --silent
+    if ($LASTEXITCODE -ne 0) { throw "winget failed to install Python.Python.3.12 ($LASTEXITCODE)." }
+    Refresh-ProcessPath
+    $python = Get-TrustedPython
+    if (-not $python) { throw 'Python 3.12 installed, but no valid Python Software Foundation signed runtime was found.' }
+    return $python
+}
+
+function Install-PraetoriumHermesRuntime {
+    param([Parameter(Mandatory)][string]$AgentRoot)
+    if (-not (Test-Path -LiteralPath (Join-Path $AgentRoot 'pyproject.toml') -PathType Leaf)) {
+        throw "Pinned Hermes source is unavailable at '$AgentRoot'."
+    }
+    $python = Ensure-TrustedPython
+    $venv = Join-Path $AgentRoot 'praetorium-venv'
+    Write-Step 'Building Smart App Control compatible Hermes runtime from signed Python'
+    & $python -m venv --clear $venv
+    if ($LASTEXITCODE -ne 0) { throw "Signed Hermes virtual environment creation failed ($LASTEXITCODE)." }
+    $venvPython = Join-Path $venv 'Scripts\python.exe'
+    $installTarget = $AgentRoot + '[mcp]'
+    & $venvPython -m pip install --disable-pip-version-check --editable $installTarget
+    if ($LASTEXITCODE -ne 0) { throw "Signed Hermes dependency install failed ($LASTEXITCODE)." }
+    $mcpProbe = 'from mcp.server import MCPServer; import agent.transports.hermes_tools_mcp_server; print("PRAETORIUM_MCP_OK")'
+    & $venvPython -c $mcpProbe
+    if ($LASTEXITCODE -ne 0) {
+        throw "Signed Hermes lifecycle MCP validation failed ($LASTEXITCODE)."
+    }
+    $hermes = Join-Path $venv 'Scripts\hermes.exe'
+    $version = Get-HermesVersion -Executable $hermes
+    if ($version -notmatch [regex]::Escape($HermesVersion)) {
+        $versionDisplay = if ($version) { $version } else { 'no version output' }
+        throw "Smart App Control compatible Hermes validation failed: $versionDisplay"
+    }
+    return $hermes
+}
+
 function Install-Hermes {
     $hermes = Get-HermesExecutable
     if ($hermes) {
-        $current = (& $hermes --version 2>&1) -join [Environment]::NewLine
-        if ($LASTEXITCODE -eq 0 -and $current -match [regex]::Escape($HermesVersion)) {
+        $current = Get-HermesVersion -Executable $hermes
+        if ($current -match [regex]::Escape($HermesVersion)) {
             Write-Host "Hermes already pinned: $HermesVersion"
             return $hermes
+        }
+    }
+
+    $local = [Environment]::GetFolderPath('LocalApplicationData')
+    $agentRoot = Join-Path $local 'hermes\hermes-agent'
+    if (Test-Path -LiteralPath (Join-Path $agentRoot 'pyproject.toml') -PathType Leaf) {
+        try {
+            return Install-PraetoriumHermesRuntime -AgentRoot $agentRoot
+        } catch {
+            Write-Warning "Existing Hermes source could not be recovered with signed Python: $($_.Exception.Message)"
         }
     }
 
@@ -83,9 +174,14 @@ function Install-Hermes {
     if ($LASTEXITCODE -ne 0) { throw "Hermes install failed ($LASTEXITCODE)." }
     $hermes = Get-HermesExecutable
     if (-not $hermes) { throw 'Hermes installed, but hermes.exe was not found.' }
-    $installedVersion = (& $hermes --version 2>&1) -join [Environment]::NewLine
+    $installedVersion = Get-HermesVersion -Executable $hermes
     if ($installedVersion -notmatch [regex]::Escape($HermesVersion)) {
-        throw "Unexpected Hermes version: $installedVersion"
+        $hermes = Install-PraetoriumHermesRuntime -AgentRoot $agentRoot
+        $installedVersion = Get-HermesVersion -Executable $hermes
+    }
+    if ($installedVersion -notmatch [regex]::Escape($HermesVersion)) {
+        $versionDisplay = if ($installedVersion) { $installedVersion } else { 'no version output' }
+        throw "Unexpected Hermes version: $versionDisplay"
     }
     return $hermes
 }
@@ -217,6 +313,8 @@ $env:PRAETORIUM_PROJECTS_ROOT = $ProjectsRoot
 
 Install-Codex
 $hermes = Install-Hermes
+$env:HERMES_BIN = $hermes
+[Environment]::SetEnvironmentVariable('HERMES_BIN', $hermes, 'User')
 Sync-Source
 
 Write-Step 'Installing Directors, workers, review skills, and local-only policy'

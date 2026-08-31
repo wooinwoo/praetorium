@@ -5,7 +5,7 @@ import {
   moveDockPanel, reconcileDockLayout, updateDockRatio, workerPanelId, workerTaskId,
 } from '../lib/dock-layout.js';
 import {
-  buildConversation, buildTrace, goalConclusionPresentation, goalControlOptions, goalSupervisionHealth, goalTasks,
+  buildConversation, buildTrace, goalConclusionPresentation, goalControlOptions, goalOperationalFocus, goalSupervisionHealth, goalTasks,
   interventionReceiptText, taskDisplayStatus, taskIsTerminal, taskPausedByOwner, textValue,
 } from '../domain/operator-model.js';
 import { runtimeNeedsAttention } from '../lib/runtime-errors.js';
@@ -333,26 +333,18 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
   </aside>;
 }
 
-function workHeadline(goal, tasks) {
-  if (!goal) return { label: '대기 중', title: 'Director에게 새 작업을 요청하세요.', detail: '새 요청은 같은 대화에서 이어집니다.', tone: 'idle' };
-  if (goal.ownerDecision?.required || goal.status === 'awaiting_owner') return { label: 'Owner 확인 필요', title: goal.ownerDecision?.question || 'Director가 결정을 기다리고 있습니다.', detail: '결정이 전달되기 전까지 다음 단계는 진행되지 않습니다.', tone: 'attention' };
-  const running = tasks.filter(task => ['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(task)));
-  const failed = tasks.filter(task => ['failed', 'blocked'].includes(taskDisplayStatus(task)) && !taskPausedByOwner(task));
-  const waiting = tasks.filter(task => ['ready', 'queued', 'scheduled', 'todo'].includes(taskDisplayStatus(task)));
-  if (failed.length) return { label: 'Director 재판단 중', title: `${failed[0].title}에서 문제가 발견됐습니다.`, detail: `문제 Worker ${failed.length}개 · 수정 또는 재위임을 판단합니다.`, tone: 'attention' };
-  if (running.length) return { label: `Worker ${running.length}개 실행 중`, title: running[0].title, detail: running.length > 1 ? `${running.slice(1).map(task => task.title).join(' · ')}도 병렬 진행 중` : '실행 출력과 체크포인트를 계속 확인하고 있습니다.', tone: 'running' };
-  if (waiting.length) return { label: `Worker ${waiting.length}개 대기`, title: '선행 작업 또는 Director 지시를 기다리고 있습니다.', detail: `현재 단계 · ${statusText(goal.status)}`, tone: 'waiting' };
-  if (activeGoalStates.has(goal.status)) return { label: 'Director 판단 중', title: goal.objective, detail: `현재 단계 · ${statusText(goal.status)}`, tone: 'reviewing' };
-  return { label: statusText(goal.status), title: goal.objective, detail: goal.finalReport ? '최종 보고가 대화에 기록되었습니다.' : '작업 기록을 확인할 수 있습니다.', tone: successStates.has(goal.status) ? 'done' : 'idle' };
-}
-
 function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onDetails, onWorkers, onResetLayout, workerRoomOpen, refresh }) {
-  const current = workHeadline(goal, tasks);
-  const complete = tasks.filter(task => successStates.has(taskDisplayStatus(task))).length;
-  return <header className={`project-room-header tone-${current.tone}`}>
+  const focus = goalOperationalFocus({ goal, tasks, supervision });
+  return <header className={`project-room-header tone-${focus.tone}`}>
     <span className="project-room-signal"><i /></span>
-    <div className="project-room-focus"><small>{current.label}</small><strong>{current.title}</strong><span>{current.detail}</span></div>
-    {goal && <div className="project-room-progress"><span>{complete}/{tasks.length || 0} Worker 완료</span><div><i style={{ width: `${tasks.length ? complete / tasks.length * 100 : 0}%` }} /></div></div>}
+    <div className="project-room-focus" title={focus.current.detail}>
+      <small>현재 · {focus.current.label}</small><strong>{focus.current.value}</strong><span>{focus.current.detail}</span>
+    </div>
+    <div className="project-room-handoff" title={focus.next.detail}><small>다음</small><strong>{focus.next.value}</strong><span>{focus.next.detail}</span></div>
+    <button type="button" className={`project-room-owner tone-${focus.owner.tone}`} onClick={focus.owner.required && goal?.ownerDecision?.required ? onDecision : undefined} disabled={!focus.owner.required} title={focus.owner.detail}>
+      <small>OWNER</small><strong>{focus.owner.value}</strong><span>{focus.owner.detail}</span>
+    </button>
+    <ol className="project-room-route" aria-label="Goal 워크플로 진행 단계">{focus.route.map(step => <li key={step.id} className={step.state}><i />{step.label}</li>)}</ol>
     {supervision && <span className={`project-room-health tone-${supervision.tone}`} title={supervision.detail}>{supervision.label}</span>}
     <div className="project-room-actions">
       <button type="button" className={`secondary-button compact ${workerRoomOpen ? 'selected' : ''}`} onClick={onWorkers} aria-pressed={workerRoomOpen}><Icon name="command" />Workers {tasks.length}</button>
@@ -492,10 +484,18 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   const inspectorToggleRef = useRef(null);
   const inspectorCloseRef = useRef(null);
   const selectedTask = tasks.find(task => task.id === selectedTaskId) || null;
-  const orderedTasks = useMemo(() => [...tasks].sort((left, right) => {
-    const rank = task => taskIsTerminal(task) ? 2 : ['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(task)) ? 0 : 1;
-    return rank(left) - rank(right);
-  }), [tasks]);
+  const orderedTasks = useMemo(() => {
+    const currentTaskIds = new Set(currentGoal?.currentWaveTaskIds || []);
+    return [...tasks].sort((left, right) => {
+      const rank = task => {
+        if (currentTaskIds.has(task.id)) return 0;
+        if (['running', 'executing', 'planning', 'materializing'].includes(taskDisplayStatus(task))) return 1;
+        if (taskPausedByOwner(task) || ['failed', 'blocked'].includes(taskDisplayStatus(task))) return 2;
+        return taskIsTerminal(task) ? 4 : 3;
+      };
+      return rank(left) - rank(right);
+    });
+  }, [tasks, currentGoal]);
   const taskIds = useMemo(() => [...new Set([
     ...orderedTasks.map(task => task.id),
     ...(currentGoal?.taskIds || []),

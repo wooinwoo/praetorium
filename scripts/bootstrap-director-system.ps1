@@ -27,6 +27,7 @@ function Resolve-HermesExecutable {
     if ($env:HERMES_EXE) {
         $candidates.Add($env:HERMES_EXE)
     }
+    $candidates.Add((Join-Path $HermesRoot 'hermes-agent\praetorium-venv\Scripts\hermes.exe'))
     $candidates.Add((Join-Path $HermesRoot 'hermes-agent\venv\Scripts\hermes.exe'))
     $candidates.Add((Join-Path $HermesRoot 'hermes-agent\bin\hermes.exe'))
 
@@ -292,6 +293,7 @@ foreach ($director in $profileSpecs | Where-Object { $_.Reasoning -eq 'ultra' })
 # already-authenticated Codex CLI. Direct migration performs the exact same
 # idempotent managed-block update without starting a model session or listener.
 $pythonCandidates = @(
+    (Join-Path $HermesRoot 'hermes-agent\praetorium-venv\Scripts\python.exe'),
     (Join-Path $HermesRoot 'hermes-agent\venv\Scripts\python.exe'),
     (Join-Path $HermesRoot 'hermes-agent\bin\python.exe')
 )

@@ -369,6 +369,11 @@ describe('Director durable lifecycle', () => {
     assert.deepEqual(implementationAssessment.gateAudit.missingProfiles, [
       'convention-reviewer', 'test-gap-reviewer', 'adversarial-reviewer', 'quality-gate-reviewer',
     ]);
+    assert.ok(runtime.createTaskCalls.length >= 5);
+    assert.ok(
+      runtime.createTaskCalls.every(call => call.goalMode === true),
+      'implementers, reviewers, and quality gates must all keep a durable lifecycle turn loop',
+    );
 
     completeVerificationWave(runtime, goal);
     const completedTick = await service.tickDirector('project-director-1');

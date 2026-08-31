@@ -110,6 +110,7 @@ test('Owner console orders selectable active, queued, and recent Goals and prese
   assert.match(hook, /selectedGoalId/);
   assert.match(hook, /\.sort\(\(a, b\) => Date\.parse\(b\.updatedAt/);
   assert.match(sidebar, /const active = visibleGoals\.filter/);
+  assert.match(sidebar, /const activeDirectorIds = new Set/);
   assert.match(sidebar, /const queued = orderQueuedGoals\(visibleGoals\.filter/);
   assert.match(sidebar, /const recent = visibleGoals\.filter/);
   assert.match(workspace, /accepted\?\.goalId/);
@@ -564,10 +565,11 @@ test('Owner console uses conditional compact polling and avoids hidden or unneed
 });
 
 test('React console keeps durable history, unified Director chat, Worker access, and operator alerts', async () => {
-  const [app, hook, sidebar, workspace, workerConsole, notifications, notificationModel, notificationCenter, css] = await Promise.all([
+  const [app, hook, sidebar, workspace, workerConsole, notifications, notificationModel, notificationCenter, css, operatorModel] = await Promise.all([
     source('src/App.jsx'), source('src/hooks/usePraetorium.js'), source('src/components/Sidebar.jsx'),
     source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/hooks/useOperatorNotifications.js'),
     source('src/domain/notification-model.js'), source('src/components/NotificationCenter.jsx'), source('src/styles.css'),
+    source('src/domain/operator-model.js'),
   ]);
   assert.match(hook, /\/goals\?\$\{query\}/);
   assert.match(hook, /\/messages\?\$\{query\}/);
@@ -613,7 +615,14 @@ test('React console keeps durable history, unified Director chat, Worker access,
   assert.match(app, /praetorium\.activityHeight/);
   assert.match(workspace, /buildConversation\(null,[\s\S]*'project'\)/);
   assert.match(workspace, /buildConversation\(goal, summary, director, 'goal'\)/);
-  assert.match(workspace, /const orderedTasks = useMemo\(\(\) => \[\.\.\.tasks\]\.sort/);
+  assert.match(workspace, /const orderedTasks = useMemo\(\(\) => \{/);
+  assert.match(workspace, /currentTaskIds\.has\(task\.id\)/);
+  assert.match(workspace, /currentGoal\?\.currentWaveTaskIds \|\| \[\]/);
+  assert.match(operatorModel, /goal\?\.currentWaveTaskIds \|\| \[\]/);
+  assert.match(operatorModel, /export function goalOperationalFocus/);
+  assert.match(workspace, /project-room-handoff/);
+  assert.match(workspace, /project-room-owner/);
+  assert.match(workspace, /Goal 워크플로 진행 단계/);
   assert.match(workspace, /function WorkerNow/);
   assert.match(workspace, /Worker \$\{running\.length\}개 실행 중/);
   assert.match(workspace, /실행 \$\{running\.length\} · 대기 \$\{waiting\.length\} · 확인 \$\{attention\.length\}/);
@@ -665,7 +674,7 @@ test('React operator UI keeps resumable Workers active and renders complete deci
   assert.match(model, /function taskIsTerminal/);
   assert.match(model, /function orderQueuedGoals/);
   assert.match(sidebar, /orderQueuedGoals\(visibleGoals\.filter/);
-  assert.match(workspace, /taskIsTerminal\(task\) \? 2/);
+  assert.match(workspace, /taskIsTerminal\(task\) \? 4 : 3/);
   assert.match(workspace, /taskPausedByOwner\(task\)/);
   assert.match(workspace, /lastSyncedAt = null/);
   assert.match(workspace, /goalSupervisionHealth/);
@@ -708,4 +717,15 @@ test('Director image composer keeps previews visible, expandable, and submission
   assert.match(server, /route\?\.malformed[^\n]+Malformed URL parameter/);
   assert.match(css, /\.chat-attachments \.chat-image-preview/);
   assert.match(css, /\.image-lightbox/);
+});
+
+test('React and xterm runtime styles are CSP-compatible without weakening script execution', async () => {
+  const [server, tauri] = await Promise.all([source('server.js'), source('src-tauri/tauri.conf.json')]);
+  for (const policy of [server, tauri]) {
+    assert.match(policy, /style-src 'self'/);
+    assert.match(policy, /style-src-elem 'self' 'unsafe-inline'/);
+    assert.match(policy, /style-src-attr 'unsafe-inline'/);
+    assert.match(policy, /script-src 'self'/);
+    assert.doesNotMatch(policy, /script-src[^;]*'unsafe-inline'/);
+  }
 });

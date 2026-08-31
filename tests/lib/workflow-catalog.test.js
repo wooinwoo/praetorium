@@ -5,6 +5,7 @@ import {
   WORKFLOW_POLICIES,
   evaluateWorkflowGates,
   isStructuredEvidenceApproved,
+  requiredWorkflowStage,
   workflowPolicyById,
 } from '../../lib/workflow-catalog.js';
 import { compactReport } from '../../lib/goal-supervisor.js';
@@ -149,6 +150,41 @@ function auditQuickFix(evidence, digest = DIGEST_V1) {
 }
 
 describe('workflow gate policy', () => {
+  it('derives an enforceable candidate → review → remediation/gate → complete sequence', () => {
+    assert.deepEqual(requiredWorkflowStage('quick-fix', []).stage, 'candidate');
+
+    const candidate = [writeEvidence()];
+    const reviewStage = requiredWorkflowStage('quick-fix', candidate);
+    assert.equal(reviewStage.stage, 'review');
+    assert.deepEqual(new Set(reviewStage.missingReviewProfiles), new Set(QUICK_REVIEW_PROFILES));
+
+    const reviewed = [
+      ...candidate,
+      ...QUICK_REVIEW_PROFILES.map(profile => reviewEvidence(profile)),
+    ];
+    assert.equal(requiredWorkflowStage('quick-fix', reviewed).stage, 'gate');
+    assert.equal(requiredWorkflowStage('quick-fix', validQuickFixEvidence()).stage, 'complete');
+
+    const blocked = reviewEvidence('adversarial-reviewer');
+    blocked.report.verdict = 'fail';
+    blocked.report.checks = [{ id: 'counterexample', status: 'fail', evidence: ['reproduced'] }];
+    blocked.report.findings = [{
+      id: 'ADV-001', severity: 'high', confidence: 'high', category: 'correctness',
+      title: 'Counterexample', claim: 'The claimed behavior fails.',
+      evidence: [{ path: 'src/example.js', line: 1, detail: 'reproduction' }],
+      impact: 'Acceptance is not met', required_action: 'Fix the behavior',
+      verification: 'Rerun the reproduction', blocking: true,
+    }];
+    const remediation = requiredWorkflowStage('quick-fix', [
+      ...candidate,
+      ...QUICK_REVIEW_PROFILES.filter(profile => profile !== 'adversarial-reviewer')
+        .map(profile => reviewEvidence(profile)),
+      blocked,
+    ]);
+    assert.equal(remediation.stage, 'remediation');
+    assert.deepEqual(remediation.allowedProfiles, ['remediator']);
+  });
+
   it('publishes the exact required quick-fix profiles and accepts a complete current report set', () => {
     assert.deepEqual(workflowPolicyById('quick-fix'), WORKFLOW_POLICIES['quick-fix']);
     assert.deepEqual(WORKFLOW_POLICIES['quick-fix'].requiredProfiles, [

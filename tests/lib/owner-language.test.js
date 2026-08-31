@@ -77,6 +77,32 @@ describe('Owner communication language', () => {
     assert.match(intervention.message, /\[PRAETORIUM INTERVENTION iv_ko\]/);
   });
 
+  it('binds reviewer and quality-gate completion to the host-ingested metadata.report contract', () => {
+    const base = action();
+    const reviewer = directorTest.taskBody(
+      { id: 'goal-review', objective: '검토해줘', successCriteria: ['근거 확인'], ownerAnswers: [] },
+      { prompt: '검토해줘' },
+      { workflowId: 'quick-fix', requirements: [] },
+      { ...base, id: 'review', target: 'convention-reviewer', effect: 'read_only', writeScope: [] },
+      2,
+    );
+    assert.match(reviewer, /\[STRUCTURED TERMINAL RECEIPT\]/);
+    assert.match(reviewer, /metadata\.report/);
+    assert.match(reviewer, /metadata\.review_outcome/);
+    assert.match(reviewer, /Do not rename metadata\.report to metadata\.review/);
+
+    const gate = directorTest.taskBody(
+      { id: 'goal-gate', objective: '게이트를 실행해줘', successCriteria: ['근거 확인'], ownerAnswers: [] },
+      { prompt: '게이트를 실행해줘' },
+      { workflowId: 'quick-fix', requirements: [] },
+      { ...base, id: 'gate', target: 'quality-gate-reviewer', effect: 'read_only', writeScope: [] },
+      3,
+    );
+    assert.match(gate, /complete quality-gate\.v1 object/);
+    assert.match(gate, /decision "advance"/);
+    assert.match(gate, /acceptance, reports, blockers, residual_risk, or next_action/);
+  });
+
   it('retains the Korean contract on fresh durable Goal supervision turns', () => {
     const prompt = buildSupervisionPrompt({
       goal: {
