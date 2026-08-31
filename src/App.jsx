@@ -40,9 +40,7 @@ function AppShell() {
   const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 248);
   const [railDockPreference, setRailDockPreference] = useStoredState('praetorium.railDock', 'left');
   const [railOpen, setRailOpen] = useStoredState('praetorium.railOpen', true);
-  const [workerRoomWidth, setWorkerRoomWidth] = useStoredState('praetorium.workerRoomWidth', 620);
-  const [workerRoomHeight, setWorkerRoomHeight] = useStoredState('praetorium.workerRoomHeight', 520);
-  const [workerRoomDockPreference, setWorkerRoomDockPreference] = useStoredState('praetorium.workerRoomDock', 'right');
+  const [workspaceDockLayouts, setWorkspaceDockLayouts] = useStoredState('praetorium.workspaceDockLayouts', {});
   const [workerRoomOpen, setWorkerRoomOpen] = useStoredState('praetorium.workerRoomOpen', true);
   const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 312);
   const [activityHeight, setActivityHeight] = useStoredState('praetorium.activityHeight', 112);
@@ -51,6 +49,18 @@ function AppShell() {
   const [railDragging, setRailDragging] = useState(false);
   const [railDropSide, setRailDropSide] = useState('');
   const pendingGoalRequest = useRef('');
+  const dockLayoutKey = data.selectedGoalId || `director:${data.selectedDirectorId || 'default'}`;
+  const workspaceDockLayout = workspaceDockLayouts?.[dockLayoutKey] || null;
+  const setWorkspaceDockLayout = useCallback(value => {
+    setWorkspaceDockLayouts(current => {
+      const layouts = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
+      const previous = layouts[dockLayoutKey] || null;
+      const next = typeof value === 'function' ? value(previous) : value;
+      if (next === previous && layouts === current) return current;
+      const older = Object.entries(layouts).filter(([key]) => key !== dockLayoutKey).slice(-23);
+      return Object.fromEntries([...older, [dockLayoutKey, next]]);
+    });
+  }, [dockLayoutKey, setWorkspaceDockLayouts]);
 
   const openNotification = useCallback(item => {
     if (['connection_lost', 'runtime_error'].includes(item.kind)) {
@@ -103,7 +113,6 @@ function AppShell() {
   const connected = !data.errors.summary && Boolean(data.summary);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const railDock = railDockPreference === 'right' ? 'right' : 'left';
-  const workerRoomDock = ['left', 'right', 'bottom'].includes(workerRoomDockPreference) ? workerRoomDockPreference : 'right';
   const beginRailDrag = event => {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', 'praetorium:project-rail');
@@ -151,12 +160,8 @@ function AppShell() {
       setInspectorWidth={setInspectorWidth}
       activityHeight={activityHeight}
       setActivityHeight={setActivityHeight}
-      workerRoomWidth={workerRoomWidth}
-      setWorkerRoomWidth={setWorkerRoomWidth}
-      workerRoomHeight={workerRoomHeight}
-      setWorkerRoomHeight={setWorkerRoomHeight}
-      workerRoomDock={workerRoomDock}
-      setWorkerRoomDock={setWorkerRoomDockPreference}
+      dockLayout={workspaceDockLayout}
+      setDockLayout={setWorkspaceDockLayout}
       workerRoomOpen={Boolean(workerRoomOpen)}
       setWorkerRoomOpen={setWorkerRoomOpen}
     />

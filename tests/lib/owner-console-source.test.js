@@ -214,10 +214,10 @@ test('Owner Goal controls confirm exact destructive scope and preserve server re
   assert.equal(_test.goalControlSuccessMessage('reorder', { queuePosition: 1, previousPosition: 3 }), '대기열 #1로 이동했습니다 · 이전 #3.');
 });
 
-test('Owner console uses a resizable project room with persistent Director and Worker areas', async () => {
-  const [html, app, common, sidebar, workspace, css] = await Promise.all([
+test('Owner console uses persistent IDE-style tab groups and resizable splits', async () => {
+  const [html, app, common, sidebar, workspace, workerConsole, css] = await Promise.all([
     source('index.html'), source('src/App.jsx'), source('src/components/common.jsx'),
-    source('src/components/Sidebar.jsx'), source('src/components/Workspace.jsx'), source('src/styles.css'),
+    source('src/components/Sidebar.jsx'), source('src/components/Workspace.jsx'), source('src/components/WorkerConsole.jsx'), source('src/styles.css'),
   ]);
   assert.match(html, /class="skip-link" href="#workspace"/);
   assert.match(common, /role="separator"/);
@@ -229,29 +229,37 @@ test('Owner console uses a resizable project room with persistent Director and W
   assert.match(app, /praetorium\.railWidth/);
   assert.match(app, /praetorium\.railDock/);
   assert.match(app, /praetorium\.railOpen/);
-  assert.match(app, /praetorium\.workerRoomWidth/);
-  assert.match(app, /praetorium\.workerRoomHeight/);
-  assert.match(app, /praetorium\.workerRoomDock/);
+  assert.match(app, /praetorium\.workspaceDockLayouts/);
+  assert.match(app, /dockLayoutKey = data\.selectedGoalId/);
   assert.match(app, /praetorium\.workerRoomOpen/);
   assert.match(app, /key="workspace"/);
   assert.match(app, /praetorium\.inspectorWidth/);
   assert.match(app, /praetorium\.inspectorOpen/);
-  assert.match(workspace, /className=\{`project-room worker-\$\{workerRoomDock\}/);
   assert.match(workspace, /Owner ↔ Director/);
-  assert.match(workspace, /className="worker-room"/);
-  assert.match(workspace, /<Splitter[^>]*label="Director와 Worker 영역 너비"/);
-  assert.match(workspace, /<Splitter[^>]*label="Director와 Worker 영역 높이"/);
-  assert.match(workspace, /draggable="true"[\s\S]*Workers 위치 바꾸기/);
-  assert.match(workspace, /key="worker-panel"/);
-  assert.match(workspace, /setWorkerDropDock\(y > \.68 \? 'bottom' : x < \.5 \? 'left' : 'right'\)/);
+  assert.match(workspace, /function DockSplitter/);
+  assert.match(workspace, /function DockGroup/);
+  assert.match(workspace, /function DockNode/);
+  assert.match(workspace, /draggable="true"/);
+  assert.match(workspace, /\['top', 'right', 'bottom', 'left', 'center'\]/);
+  assert.match(workspace, /moveDockPanel/);
+  assert.match(workspace, /updateDockRatio/);
+  assert.match(workspace, /canSplitDockPanel/);
+  assert.match(workspace, /Ctrl\+Alt\+방향키로 분할/);
+  assert.match(workspace, /createDockLayout/);
+  assert.match(workspace, /const layoutReady = Boolean\(summary\)/);
+  assert.match(workspace, /layoutReady\s*\? reconcileDockLayout/);
+  assert.match(workspace, /if \(!layoutReady\) return;/);
   assert.match(sidebar, /draggable="true"[\s\S]*프로젝트 목록 위치 바꾸기/);
   assert.match(css, /\.operator-grid\.rail-right/);
   assert.match(css, /\.operator-grid\.rail-closed \.sidebar \{ display: none; \}/);
-  assert.match(css, /\.project-room\.worker-left/);
-  assert.match(css, /\.project-room\.worker-bottom/);
-  assert.match(css, /\.project-room\.worker-closed > \.worker-room \{ display: none; \}/);
+  assert.match(css, /\.dock-split\.horizontal/);
+  assert.match(css, /\.dock-split\.vertical/);
+  assert.match(css, /\.dock-tab\.selected/);
+  assert.match(css, /\.dock-drop-zone\.center/);
   assert.doesNotMatch(workspace, /workspace-tabbar/);
   assert.match(workspace, /<WorkerConsole directorId=\{director\?\.id\}/);
+  assert.match(workerConsole, /useId\(\)/);
+  assert.doesNotMatch(workerConsole, /id="worker-(?:readable|raw)-(?:tab|output)"/);
   assert.match(workspace, /작업 과정/);
   assert.match(workspace, /<Splitter label="세부 정보 너비"/);
   assert.match(workspace, /onClose=\{\(\) => setInspectorOpen\(false\)\}/);
@@ -270,7 +278,6 @@ test('Owner console uses a resizable project room with persistent Director and W
   assert.doesNotMatch(common, /location\.assign/);
   assert.match(css, /\.splitter[\s\S]*cursor: ew-resize/);
   assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: auto minmax\(0, 1fr\)/);
-  assert.match(css, /\.project-room\.worker-right \{[^}]*--worker-room-width/);
   assert.match(css, /@container \(max-width: 920px\)/);
   assert.match(css, /\.workspace-shell > \.splitter-right \{ grid-column: 2; grid-row: 2; \}/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.inspector \{ position: fixed;/);
@@ -291,7 +298,7 @@ test('Worker room exposes a live log console with direct bounded intervention', 
   assert.match(app, /params\.get\('taskId'\)/);
   assert.match(app, /data\.selectTask\(pendingNavigation\.taskId\)/);
   assert.match(workspace, /workerControls=\{false\}/);
-  assert.match(workspace, /detailError=\{errors\.task\} traceError=\{errors\.trace\}/);
+  assert.match(workspace, /detailError=\{selected \? errors\.task : null\} traceError=\{selected \? errors\.trace : null\}/);
   assert.match(workerConsole, /new Terminal\(\{/);
   assert.match(workerConsole, /disableStdin: true/);
   assert.match(workerConsole, /읽기 전용 · PTY 아님/);
@@ -570,20 +577,20 @@ test('React console keeps durable history, unified Director chat, Worker access,
   assert.match(app, /praetorium\.activityHeight/);
   assert.match(workspace, /buildConversation\(null,[\s\S]*'project'\)/);
   assert.match(workspace, /buildConversation\(goal, summary, director, 'goal'\)/);
-  assert.match(workspace, /const ordered = \[\.\.\.tasks\]\.sort/);
+  assert.match(workspace, /const orderedTasks = useMemo\(\(\) => \[\.\.\.tasks\]\.sort/);
   assert.match(workspace, /function WorkerNow/);
   assert.match(workspace, /Worker \$\{running\.length\}개 실행 중/);
   assert.match(workspace, /실행 \$\{running\.length\} · 대기 \$\{waiting\.length\} · 확인 \$\{attention\.length\}/);
-  assert.match(workspace, /function WorkerRoom/);
-  assert.match(workspace, /selectTask=\{openTask\}/);
+  assert.match(workspace, /function DockGroup/);
+  assert.match(workspace, /onMove=\{movePanel\}/);
   assert.match(workspace, /Worker 상태를 확인할 수 없음/);
   assert.match(workspace, /마지막으로 확인된 상태만 표시합니다/);
   assert.match(workspace, /<ul className=\{`worker-now-list/);
-  assert.match(workspace, /role="listitem"/);
+  assert.match(workspace, /<li key=\{task\.id\}>/);
   assert.match(workspace, /events\[0\]\?\.message \|\| '첫 실행 이벤트를 기다리는 중…'/);
   assert.match(workspace, /\(!taskIsTerminal\(item\.task\) \|\| taskPausedByOwner\(item\.task\)\)/);
   assert.match(css, /\.worker-now-list button/);
-  assert.match(css, /\.worker-room-list > button\.selected/);
+  assert.match(css, /\.dock-tab\.selected/);
   assert.match(notifications, /!document\.hidden && document\.hasFocus\(\)/);
   assert.match(notifications, /show_operator_notification/);
   assert.match(notifications, /operator-notification-open/);

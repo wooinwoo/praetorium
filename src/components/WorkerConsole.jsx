@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -141,8 +141,8 @@ function receiptState(record) {
   return receipt ? interventionReceiptText(receipt) : '지시 없음';
 }
 
-function ReadableOutput({ blocks, onScroll, hostRef }) {
-  return <div ref={hostRef} id="worker-readable-output" className="worker-readable-output" role="tabpanel" aria-labelledby="worker-readable-tab" tabIndex="0" onScroll={onScroll}>
+function ReadableOutput({ blocks, onScroll, hostRef, id, labelledBy }) {
+  return <div ref={hostRef} id={id} className="worker-readable-output" role="tabpanel" aria-labelledby={labelledBy} tabIndex="0" onScroll={onScroll}>
     <div className="worker-readable-stream">
       {blocks.map((block, index) => {
         const key = `${block.kind}:${index}:${block.text.slice(0, 24)}`;
@@ -213,6 +213,11 @@ function EvidenceDrawer({ task, detail, displayStatus, onToggle }) {
 }
 
 export default function WorkerConsole({ directorId, goalId, task, detail, trace, detailError, traceError, onRefresh }) {
+  const consoleId = useId().replaceAll(':', '');
+  const readableTabId = `worker-readable-tab-${consoleId}`;
+  const readableOutputId = `worker-readable-output-${consoleId}`;
+  const rawTabId = `worker-raw-tab-${consoleId}`;
+  const rawOutputId = `worker-raw-output-${consoleId}`;
   const terminalHostRef = useRef(null);
   const terminalRef = useRef(null);
   const fitRef = useRef(null);
@@ -545,10 +550,10 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     {controlError && <p className="worker-control-error form-error" role="alert">{controlError}</p>}
     <div className="worker-console-main">
       <section className="worker-output" aria-label="Worker 실행 출력">
-        <header><span><Icon name="terminal" /><strong>실제 Codex 세션</strong><em>실시간 출력 · 읽기 전용 · PTY 아님</em><span className="worker-output-view" role="tablist" aria-label="출력 표시 방식"><button id="worker-readable-tab" type="button" role="tab" aria-controls="worker-readable-output" aria-selected={outputView === 'readable'} tabIndex={outputView === 'readable' ? 0 : -1} onClick={() => setOutputMode('readable')}>읽기</button><button id="worker-raw-tab" type="button" role="tab" aria-controls="worker-raw-output" aria-selected={outputView === 'raw'} tabIndex={outputView === 'raw' ? 0 : -1} onClick={() => setOutputMode('raw')}>원문</button></span></span><span>{traceError && <small role="alert">실시간 스트림 오류 · 저장된 스냅샷 표시</small>}<small>{followLog ? '최신 출력 따라가는 중' : '과거 출력 보는 중'}</small></span></header>
+        <header><span><Icon name="terminal" /><strong>실제 Codex 세션</strong><em>실시간 출력 · 읽기 전용 · PTY 아님</em><span className="worker-output-view" role="tablist" aria-label="출력 표시 방식"><button id={readableTabId} type="button" role="tab" aria-controls={readableOutputId} aria-selected={outputView === 'readable'} tabIndex={outputView === 'readable' ? 0 : -1} onClick={() => setOutputMode('readable')}>읽기</button><button id={rawTabId} type="button" role="tab" aria-controls={rawOutputId} aria-selected={outputView === 'raw'} tabIndex={outputView === 'raw' ? 0 : -1} onClick={() => setOutputMode('raw')}>원문</button></span></span><span>{traceError && <small role="alert">실시간 스트림 오류 · 저장된 스냅샷 표시</small>}<small>{followLog ? '최신 출력 따라가는 중' : '과거 출력 보는 중'}</small></span></header>
         <div className="worker-output-stage">
-          <div className={outputView === 'readable' ? 'is-active' : ''} aria-hidden={outputView !== 'readable'}><ReadableOutput blocks={readableBlocks} hostRef={readableHostRef} onScroll={onReadableScroll} /></div>
-          <div id="worker-raw-output" role="tabpanel" aria-labelledby="worker-raw-tab" className={outputView === 'raw' ? 'is-active' : ''} aria-hidden={outputView !== 'raw'}><div ref={terminalHostRef} className="worker-xterm" aria-label="Codex Worker 세션 원문 출력" /></div>
+          <div className={outputView === 'readable' ? 'is-active' : ''} aria-hidden={outputView !== 'readable'}><ReadableOutput blocks={readableBlocks} hostRef={readableHostRef} onScroll={onReadableScroll} id={readableOutputId} labelledBy={readableTabId} /></div>
+          <div id={rawOutputId} role="tabpanel" aria-labelledby={rawTabId} className={outputView === 'raw' ? 'is-active' : ''} aria-hidden={outputView !== 'raw'}><div ref={terminalHostRef} className="worker-xterm" aria-label="Codex Worker 세션 원문 출력" /></div>
         </div>
         <footer className={`worker-control-dock mode-${mode}`}>
           <div className="worker-control-mode" role="tablist" aria-label="Worker 제어 모드">
