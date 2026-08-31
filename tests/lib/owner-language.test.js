@@ -89,7 +89,11 @@ describe('Owner communication language', () => {
     assert.match(reviewer, /\[STRUCTURED TERMINAL RECEIPT\]/);
     assert.match(reviewer, /metadata\.report/);
     assert.match(reviewer, /metadata\.review_outcome/);
-    assert.match(reviewer, /Do not rename metadata\.report to metadata\.review/);
+    assert.match(reviewer, /"review_kind":"convention"/);
+    assert.match(reviewer, /"scope":\{"project":"string","objective":"string","base_revision":null,"head_revision":"string\|null","artifact_digest":"string\|null","paths":\["string"\]\}/);
+    assert.match(reviewer, /"checks":\[\{"id":"string","status":"pass\|fail\|not_applicable\|not_verified","evidence":\["string"\]\}\]/);
+    assert.match(reviewer, /"coverage":\{"examined":\["string"\],"omitted":\[\],"limitations":\[\],"assumptions":\[\]\}/);
+    assert.match(reviewer, /never review_type/);
 
     const gate = directorTest.taskBody(
       { id: 'goal-gate', objective: '게이트를 실행해줘', successCriteria: ['근거 확인'], ownerAnswers: [] },
@@ -100,7 +104,10 @@ describe('Owner communication language', () => {
     );
     assert.match(gate, /complete quality-gate\.v1 object/);
     assert.match(gate, /decision "advance"/);
-    assert.match(gate, /acceptance, reports, blockers, residual_risk, or next_action/);
+    assert.match(gate, /"candidate":\{"revision":"string\|null","artifact_digest":"string\|null"\}/);
+    assert.match(gate, /"acceptance":\[\{"criterion":"verbatim Goal success criterion","status":"met\|unmet\|not_verified","evidence":\["string"\]\}\]/);
+    assert.match(gate, /"reports":\[\{"review_kind":"string","status":"current\|missing\|stale","verdict":"string\|null"\}\]/);
+    assert.match(gate, /blockers, residual_risk, or next_action/);
   });
 
   it('retains the Korean contract on fresh durable Goal supervision turns', () => {
