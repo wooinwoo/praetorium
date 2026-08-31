@@ -6,6 +6,7 @@ import { api } from '../lib/api.js';
 import {
   interventionReceiptText, taskDisplayStatus, taskIsTerminal, taskPausedByOwner, textValue,
 } from '../domain/operator-model.js';
+import { runtimeNeedsAttention } from '../lib/runtime-errors.js';
 import { DirectorGuidance, WorkerIntervention } from './forms.jsx';
 import { ErrorNotice, formatClock, Icon, relativeTime, RichText, Status, statusText } from './common.jsx';
 
@@ -212,7 +213,7 @@ function EvidenceDrawer({ task, detail, displayStatus, onToggle }) {
   </details>;
 }
 
-export default function WorkerConsole({ directorId, goalId, task, detail, trace, detailError, traceError, onRefresh }) {
+export default function WorkerConsole({ directorId, goalId, task, detail, trace, detailError, traceError, onRefresh, onOpenSettings }) {
   const consoleId = useId().replaceAll(':', '');
   const readableTabId = `worker-readable-tab-${consoleId}`;
   const readableOutputId = `worker-readable-output-${consoleId}`;
@@ -526,6 +527,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
     followLogRef.current = following;
     setFollowLog(following);
   };
+  const runtimeUnavailable = runtimeNeedsAttention(detailError);
 
   if (!task) return <div className="workspace-empty"><strong>Worker를 선택하세요.</strong><span>현황이나 상단 Worker 탭에서 작업을 여세요.</span></div>;
 
@@ -546,7 +548,7 @@ export default function WorkerConsole({ directorId, goalId, task, detail, trace,
         {(pausePending || resumePending) && <button type="button" className="secondary-button compact" disabled>{pausePending ? '정지 확인 대기' : '재개 확인 대기'}</button>}
       </div>
     </header>
-    {detailError && <ErrorNotice title="Worker 상세 동기화 실패" onRetry={onRefresh}>{detailError}</ErrorNotice>}
+    {detailError && <ErrorNotice title={runtimeUnavailable ? '실행 환경 확인 필요' : 'Worker 상세 동기화 실패'} onRetry={runtimeUnavailable && onOpenSettings ? onOpenSettings : onRefresh} retryLabel={runtimeUnavailable && onOpenSettings ? '환경 확인' : '다시 시도'}>{detailError}</ErrorNotice>}
     {controlError && <p className="worker-control-error form-error" role="alert">{controlError}</p>}
     <div className="worker-console-main">
       <section className="worker-output" aria-label="Worker 실행 출력">

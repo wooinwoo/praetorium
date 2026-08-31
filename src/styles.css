@@ -563,7 +563,7 @@ svg { display: block; flex: none; }
 .empty-state p { font-size: .85rem; line-height: 1.5; }
 .error-notice { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto; align-items: center; gap: 8px; margin: 8px 0; padding: 9px 11px; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 30%, var(--border)); border-radius: 7px; background: var(--red-soft); font-size: .8rem; }
 .error-notice span { color: var(--text-soft); overflow-wrap: anywhere; }
-.error-notice button { color: var(--red); background: transparent; text-decoration: underline; }
+.error-notice button { color: var(--red); background: transparent; text-decoration: underline; white-space: nowrap; }
 .inspector .error-notice { grid-template-columns: minmax(0, 1fr) auto; align-items: start; margin: 10px; }
 .inspector .error-notice > strong { grid-column: 1 / -1; }
 

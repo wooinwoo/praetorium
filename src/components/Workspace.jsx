@@ -8,6 +8,7 @@ import {
   buildConversation, buildTrace, goalConclusionPresentation, goalControlOptions, goalSupervisionHealth, goalTasks,
   interventionReceiptText, taskDisplayStatus, taskIsTerminal, taskPausedByOwner, textValue,
 } from '../domain/operator-model.js';
+import { runtimeNeedsAttention } from '../lib/runtime-errors.js';
 import { DecisionForm, DirectorComposer, WorkerIntervention } from './forms.jsx';
 import { Empty, ErrorNotice, formatClock, Icon, relativeTime, Splitter, Status, statusText } from './common.jsx';
 
@@ -146,11 +147,12 @@ function DirectorActivityPanel({ activity, goalId = null, compact = false, activ
   </details>;
 }
 
-function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onSelectTask, onOpenTask, onDirector, onDecision, directorId, refresh, errors, taskTrace, selectedTask, supervision, liveActivity, activityHeight, setActivityHeight }) {
+function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onSelectTask, onOpenTask, onDirector, onDecision, directorId, refresh, errors, taskTrace, selectedTask, supervision, liveActivity, activityHeight, setActivityHeight, onOpenSettings }) {
   const scrollRef = useRef(null);
   const [follow, setFollow] = useState(true);
   const [traceLimit, setTraceLimit] = useState(160);
   const [logExpanded, setLogExpanded] = useState(false);
+  const runtimeUnavailable = runtimeNeedsAttention(errors.trace);
   const visibleTrace = trace.slice(-traceLimit);
   const omittedTrace = trace.length - visibleTrace.length;
   useEffect(() => {
@@ -196,7 +198,7 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
     <section className={`live-log-pane ${logExpanded ? 'expanded' : 'collapsed'}`}>
       <div className="live-log">
         <button type="button" className="section-title live-log-toggle" aria-expanded={logExpanded} onClick={() => setLogExpanded(current => !current)}><span><Icon name="terminal" />Worker 원문 로그</span><span className="log-actions"><small>{selectedTask ? selectedTask.title : 'Worker를 선택하세요'}</small>{selectedTask && <Status value={taskDisplayStatus(selectedTask)} />}<Icon name="chevron" /></span></button>
-        {logExpanded && (errors.trace ? <ErrorNotice title="실행 로그 동기화 실패" onRetry={refresh}>{errors.trace}</ErrorNotice>
+        {logExpanded && (errors.trace ? <ErrorNotice title={runtimeUnavailable ? '실행 환경 확인 필요' : '실행 로그 동기화 실패'} onRetry={runtimeUnavailable && onOpenSettings ? onOpenSettings : refresh} retryLabel={runtimeUnavailable && onOpenSettings ? '환경 확인' : '다시 시도'}>{errors.trace}</ErrorNotice>
           : taskTrace?.availability === 'not_started' ? <Empty icon="terminal" title="아직 실행 전입니다">Worker가 시작되면 원문 로그가 여기에 표시됩니다.</Empty>
             : <pre>{taskTrace?.log || 'Trace에서 Worker를 선택하면 원문 로그를 표시합니다.'}</pre>)}
       </div>
@@ -296,7 +298,7 @@ async function taskControl(directorId, taskId, action, refresh) {
   refresh();
 }
 
-export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task, tasks = [], taskDetail, taskTrace, errors, refresh, decisionReady = true, workerControls = true, onClose }) {
+export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task, tasks = [], taskDetail, taskTrace, errors, refresh, decisionReady = true, workerControls = true, onClose, onOpenSettings }) {
   const [controlError, setControlError] = useState('');
   const record = taskDetail?.praetoriumRecord;
   const pausedByOwner = taskPausedByOwner(task, record);
@@ -304,6 +306,7 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
   const displayStatus = taskDisplayStatus(task, record);
   const controlAction = task?.status === 'running' ? 'pause' : pausedByOwner ? 'resume' : null;
   const selectedDecision = selectedEntry?.type === 'decision' && goal?.ownerDecision?.required;
+  const runtimeUnavailable = runtimeNeedsAttention(errors.task);
   useEffect(() => { setControlError(''); }, [task?.id]);
   return <aside id={id} className="inspector" aria-label="Inspector">
     <header><span><strong>세부 정보</strong><small>{task ? 'Worker' : selectedEntry?.eyebrow || '선택한 기록'}</small></span>{onClose && <button ref={closeRef} className="icon-button inspector-close" type="button" onClick={onClose} aria-label="세부 정보 닫기"><Icon name="x" /></button>}</header>
@@ -324,7 +327,7 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
           : <p className="decision-unavailable" role="status">{errors.goal ? '전체 결정 범위를 불러오지 못했습니다. 다시 동기화한 뒤 결정하세요.' : '전체 결정 범위를 불러오는 중입니다. 확인 전에는 결정할 수 없습니다.'}</p>}</section>}
         {selectedEntry.raw && <section className="inspector-block"><details><summary>증거 원문</summary><pre className="evidence-json">{JSON.stringify(selectedEntry.raw, null, 2)}</pre></details></section>}
       </> : <Empty icon="activity" title="Trace 항목을 선택하세요">판단 근거, Worker 상태, 실행 원문을 여기서 확인합니다.</Empty>}
-      {errors.task && <ErrorNotice title="Worker 상세 실패" onRetry={refresh}>{errors.task}</ErrorNotice>}
+      {task && errors.task && <ErrorNotice title={runtimeUnavailable ? '실행 환경 확인 필요' : 'Worker 상세 실패'} onRetry={runtimeUnavailable && onOpenSettings ? onOpenSettings : refresh} retryLabel={runtimeUnavailable && onOpenSettings ? '환경 확인' : '다시 시도'}>{errors.task}</ErrorNotice>}
       {goal?.error && <ErrorNotice title="Goal 오류">{goal.error}</ErrorNotice>}
     </div>
   </aside>;
@@ -472,7 +475,7 @@ function DockNode(props) {
   </div>;
 }
 
-export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, taskFocusRequest, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, dockLayout, setDockLayout = () => {}, workerRoomOpen = true, setWorkerRoomOpen = () => {}, lastSyncedAt = null, liveActivity }) {
+export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, taskFocusRequest, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, dockLayout, setDockLayout = () => {}, workerRoomOpen = true, setWorkerRoomOpen = () => {}, lastSyncedAt = null, liveActivity, onOpenSettings }) {
   const detailedGoal = goalDetail?.id === goal?.id ? goalDetail : null;
   const currentGoal = detailedGoal || goal;
   const tasks = useMemo(() => goalTasks(board, currentGoal).map(task => task.id === taskDetail?.task?.id
@@ -604,20 +607,20 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   const changeRatio = (splitId, ratio) => setDockLayout(current => updateDockRatio(reconcileDockLayout(current, taskIds, selectedTaskId), splitId, ratio));
   const canSplitPanel = panelId => canSplitDockPanel(effectiveDockLayout, panelId);
   const directorPanel = <DirectorView key="director-panel" director={director} goal={currentGoal} summary={summary} refresh={refresh} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} onOpenDecision={openOwnerDecision} onGoalAccepted={id => { if (id) selectGoal(id); }} />;
-  const processPanel = <TraceView key="process-panel" goal={currentGoal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={openTask} onOpenTask={id => activatePanel(workerPanelId(id))} onDirector={() => activatePanel(DIRECTOR_PANEL_ID)} onDecision={openOwnerDecision} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} />;
+  const processPanel = <TraceView key="process-panel" goal={currentGoal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={openTask} onOpenTask={id => activatePanel(workerPanelId(id))} onDirector={() => activatePanel(DIRECTOR_PANEL_ID)} onDecision={openOwnerDecision} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} onOpenSettings={onOpenSettings} />;
   const renderPanel = panelId => {
     if (panelId === DIRECTOR_PANEL_ID) return directorPanel;
     if (panelId === PROCESS_PANEL_ID) return processPanel;
     const task = taskByPanel.get(panelId);
     if (!task) return <div className="workspace-empty"><strong>Worker를 찾을 수 없습니다.</strong><span>현재 Goal의 탭 배치를 다시 동기화합니다.</span></div>;
     const selected = task.id === selectedTaskId;
-    return <Suspense key={task.id} fallback={<div className="workspace-empty"><strong>Worker Console 여는 중…</strong><span>실행 출력을 불러오고 있습니다.</span></div>}><WorkerConsole directorId={director?.id} goalId={currentGoal?.id} task={task} detail={selected ? taskDetail : null} trace={selected ? taskTrace : null} detailError={selected ? errors.task : null} traceError={selected ? errors.trace : null} onRefresh={refresh} /></Suspense>;
+    return <Suspense key={task.id} fallback={<div className="workspace-empty"><strong>Worker Console 여는 중…</strong><span>실행 출력을 불러오고 있습니다.</span></div>}><WorkerConsole directorId={director?.id} goalId={currentGoal?.id} task={task} detail={selected ? taskDetail : null} trace={selected ? taskTrace : null} detailError={selected ? errors.task : null} traceError={selected ? errors.trace : null} onRefresh={refresh} onOpenSettings={onOpenSettings} /></Suspense>;
   };
   return <>
     <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} onWorkers={() => setWorkerRoomOpen(value => !value)} onResetLayout={() => { setDockLayout(createDockLayout(taskIds, selectedTaskId)); setWorkerRoomOpen(true); }} workerRoomOpen={workerRoomOpen} refresh={refresh} />
     <main ref={projectRoomRef} id="workspace" className={`project-room ${compactDock ? 'dock-compact' : ''} ${draggedPanel ? 'dock-dragging' : ''}`} tabIndex="-1">
       <DockNode node={visibleDockLayout} tasks={tasks} taskByPanel={taskByPanel} draggedPanel={draggedPanel} splitAllowed={!draggedPanel || canSplitPanel(draggedPanel)} compact={compactDock} dropTarget={dropTarget} setDropTarget={setDropTarget} onDragStart={beginPanelDrag} onDragEnd={endPanelDrag} onActivate={activatePanel} onFocus={focusPanel} onMove={movePanel} onCanSplit={canSplitPanel} onRatio={changeRatio} renderPanel={renderPanel} />
     </main>
-    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={selectedEntry?.type === 'task' ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={false} onClose={() => setInspectorOpen(false)} /></>}
+    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={selectedEntry?.type === 'task' ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={false} onClose={() => setInspectorOpen(false)} onOpenSettings={onOpenSettings} /></>}
   </>;
 }

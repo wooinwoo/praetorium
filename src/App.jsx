@@ -35,6 +35,7 @@ function AppShell() {
     projectMessagesEnabled: true,
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState('projects');
   const [theme, setTheme] = useStoredState('praetorium.theme', 'dark');
   const [scale, setScale] = useStoredState('praetorium.scale', 1);
   const [railWidth, setRailWidth] = useStoredState('praetorium.railWidth', 248);
@@ -50,6 +51,8 @@ function AppShell() {
   const [railDragging, setRailDragging] = useState(false);
   const [railDropSide, setRailDropSide] = useState('');
   const pendingGoalRequest = useRef('');
+  const openSettings = useCallback(() => { setSettingsTab('projects'); setSettingsOpen(true); }, []);
+  const openRuntimeSettings = useCallback(() => { setSettingsTab('runtimes'); setSettingsOpen(true); }, []);
   const dockLayoutKey = data.selectedGoalId || `director:${data.selectedDirectorId || 'default'}`;
   const workspaceDockLayout = workspaceDockLayouts?.[dockLayoutKey] || null;
   const setWorkspaceDockLayout = useCallback(value => {
@@ -57,7 +60,7 @@ function AppShell() {
       const layouts = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
       const previous = layouts[dockLayoutKey] || null;
       const next = typeof value === 'function' ? value(previous) : value;
-      if (next === previous && layouts === current) return current;
+      if (next === previous || JSON.stringify(next) === JSON.stringify(previous)) return current;
       const older = Object.entries(layouts).filter(([key]) => key !== dockLayoutKey).slice(-23);
       return Object.fromEntries([...older, [dockLayoutKey, next]]);
     });
@@ -65,12 +68,12 @@ function AppShell() {
 
   const openNotification = useCallback(item => {
     if (['connection_lost', 'runtime_error'].includes(item.kind)) {
-      setSettingsOpen(true);
+      openRuntimeSettings();
       return;
     }
     setPendingNavigation(item);
     if (item.directorId && item.directorId !== data.selectedDirectorId) data.selectDirector(item.directorId);
-  }, [data.selectDirector, data.selectedDirectorId]);
+  }, [data.selectDirector, data.selectedDirectorId, openRuntimeSettings]);
   const notifications = useOperatorNotifications({
     summary: data.summary,
     summaryError: data.errors.summary,
@@ -136,7 +139,7 @@ function AppShell() {
     endRailDrag();
   };
 
-  const sidebar = <Sidebar key="project-rail" summary={data.summary} selectedDirector={data.selectedDirector} selectedGoal={data.selectedGoal} goals={data.goals} query={data.goalSearch} onQuery={data.setGoalSearch} historyFilter={data.historyFilter} onHistoryFilter={data.setHistoryFilter} history={data.goalHistory} onLoadMore={data.loadMoreGoals} onDirector={data.selectDirector} onGoal={data.selectGoal} onSettings={() => setSettingsOpen(true)} dockSide={railDock} onDockStart={beginRailDrag} onDockEnd={endRailDrag} onDockToggle={() => setRailDockPreference(value => value === 'right' ? 'left' : 'right')} onCollapse={() => setRailOpen(false)} />;
+  const sidebar = <Sidebar key="project-rail" summary={data.summary} selectedDirector={data.selectedDirector} selectedGoal={data.selectedGoal} goals={data.goals} query={data.goalSearch} onQuery={data.setGoalSearch} historyFilter={data.historyFilter} onHistoryFilter={data.setHistoryFilter} history={data.goalHistory} onLoadMore={data.loadMoreGoals} onDirector={data.selectDirector} onGoal={data.selectGoal} onSettings={openSettings} dockSide={railDock} onDockStart={beginRailDrag} onDockEnd={endRailDrag} onDockToggle={() => setRailDockPreference(value => value === 'right' ? 'left' : 'right')} onCollapse={() => setRailOpen(false)} />;
   const railSplitter = <Splitter key="project-rail-splitter" label="프로젝트 목록 너비" side={railDock} value={railWidth} min={220} max={420} onChange={setRailWidth} onReset={() => setRailWidth(248)} />;
   const workspace = <section key="workspace" className={`workspace-shell ${inspectorOpen ? '' : 'inspector-closed'}`}>
     <Workspace
@@ -167,6 +170,7 @@ function AppShell() {
       setDockLayout={setWorkspaceDockLayout}
       workerRoomOpen={Boolean(workerRoomOpen)}
       setWorkerRoomOpen={setWorkerRoomOpen}
+      onOpenSettings={openRuntimeSettings}
     />
   </section>;
 
@@ -180,7 +184,7 @@ function AppShell() {
         <div className="scale-control" aria-label="화면 글자 크기"><button type="button" onClick={() => setScale(value => Math.max(.9, +(value - .05).toFixed(2)))} aria-label="글자 축소">−</button><button type="button" onClick={() => setScale(1)} title="100%로 초기화">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale(value => Math.min(1.25, +(value + .05).toFixed(2)))} aria-label="글자 확대">+</button></div>
         <NotificationCenter notifications={notifications} onOpen={openNotification} />
         <button type="button" className="icon-button" onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')} aria-label={theme === 'dark' ? '라이트 모드' : '다크 모드'}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
-        <button type="button" className="icon-button" onClick={() => setSettingsOpen(true)} aria-label="환경 관리"><Icon name="settings" /></button>
+        <button type="button" className="icon-button" onClick={openSettings} aria-label="환경 관리"><Icon name="settings" /></button>
       </div>
     </header>
 
@@ -193,7 +197,7 @@ function AppShell() {
       {railOpen && railDock === 'right' && railSplitter}
       {railDock === 'right' && sidebar}
     </div>
-    <Settings open={settingsOpen} onClose={closeSettings} onChanged={data.refresh} />
+    <Settings open={settingsOpen} initialTab={settingsTab} onClose={closeSettings} onChanged={data.refresh} />
   </div>;
 }
 

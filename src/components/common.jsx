@@ -181,6 +181,6 @@ export function Empty({ icon = 'activity', title, children }) {
   return <div className="empty-state"><span><Icon name={icon} size={20} /></span><strong>{title}</strong>{children && <p>{children}</p>}</div>;
 }
 
-export function ErrorNotice({ title = '불러오지 못했습니다', children, onRetry }) {
-  return <div className="error-notice" role="alert"><strong>{title}</strong><span>{children}</span>{onRetry && <button type="button" onClick={onRetry}>다시 시도</button>}</div>;
+export function ErrorNotice({ title = '불러오지 못했습니다', children, onRetry, retryLabel = '다시 시도' }) {
+  return <div className="error-notice" role="alert"><strong>{title}</strong><span>{children}</span>{onRetry && <button type="button" onClick={onRetry}>{retryLabel}</button>}</div>;
 }

@@ -10,9 +10,22 @@ import {
   mergeNotifications, reconcilePersistentGoalNotifications,
 } from '../../src/domain/notification-model.js';
 import { directorActivityMessage } from '../../src/hooks/useDirectorActivity.js';
-import { runNeedsFullOutput, taskEvidenceIsSettled, withFullRunOutputs } from '../../src/hooks/usePraetorium.js';
+import { mergeErrorState, runNeedsFullOutput, taskEvidenceIsSettled, withFullRunOutputs } from '../../src/hooks/usePraetorium.js';
 import { timestampMs } from '../../src/lib/time.js';
 import { validateImageSelection } from '../../src/lib/image-attachments.js';
+import { runtimeNeedsAttention } from '../../src/lib/runtime-errors.js';
+
+test('polling preserves error state identity when nothing changed', () => {
+  const current = { task: 'runtime unavailable', trace: null };
+  assert.equal(mergeErrorState(current, { task: 'runtime unavailable' }), current);
+  assert.deepEqual(mergeErrorState(current, { task: null }), { task: null, trace: null });
+});
+
+test('runtime failures route operators to environment diagnostics', () => {
+  assert.equal(runtimeNeedsAttention('WSL · Ubuntu 런타임이 준비되지 않았습니다.'), true);
+  assert.equal(runtimeNeedsAttention('WSL · Ubuntu 런타임 준비 실패: Codex CLI 버전 불일치'), true);
+  assert.equal(runtimeNeedsAttention('Worker 상세 동기화 실패'), false);
+});
 
 test('operator model merges durable task records with fresher board state', () => {
   const tasks = goalTasks([

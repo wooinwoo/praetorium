@@ -23,7 +23,7 @@ test('Owner console keeps stale trace, locks mutations, and labels queued interv
   const [hook, model, workspace, forms] = await Promise.all([
     source('src/hooks/usePraetorium.js'), source('src/domain/operator-model.js'), source('src/components/Workspace.jsx'), source('src/components/forms.jsx'),
   ]);
-  assert.match(hook, /setErrors\(current => \(\{ \.\.\.current, trace: trace\.reason\.message \}\)\)/);
+  assert.match(hook, /mergeErrorState\(current, \{ trace: trace\.reason\.message \}\)/);
   assert.doesNotMatch(hook, /setTaskTrace\(null\)[\s\S]{0,160}trace\.reason/);
   assert.match(workspace, /기존 기록을 보존합니다/);
   assert.match(workspace, /record\.interventions\.map/);
@@ -43,11 +43,18 @@ test('React console rejects stale Worker responses and pauses hidden evidence po
   assert.match(app, /taskPollingEnabled: true/);
   assert.match(app, /projectMessagesEnabled: true/);
   assert.match(hook, /requestId !== taskRequest\.current \|\| signal\.aborted/);
+  assert.match(hook, /if \(id === selectedDirectorIdRef\.current\) return/);
+  assert.match(hook, /if \(id === selectedGoalIdRef\.current\) return/);
+  assert.match(hook, /if \(id === selectedTaskIdRef\.current\) return/);
   assert.match(hook, /5000, taskPollingEnabled/);
   assert.match(settings, /role="dialog" aria-modal="true"/);
   assert.match(settings, /event\.key !== 'Tab'/);
   assert.match(settings, /lastFocusRef\.current\?\.focus/);
+  assert.match(settings, /initialTab/);
+  assert.match(app, /openRuntimeSettings/);
   assert.match(workspace, /Worker 목록 동기화 실패/);
+  assert.match(workerConsole, /환경 확인/);
+  assert.match(workspace, /onOpenSettings/);
   assert.match(workspace, /selectedEntry\?\.type === 'task'/);
   assert.match(workspace, /goals\/\$\{encodeURIComponent\(goal\.id\)\}\/control/);
   assert.match(workerConsole, /공개 체크포인트/);
@@ -642,6 +649,10 @@ test('React console keeps durable history, unified Director chat, Worker access,
   assert.match(css, /\.topbar:has\(\.notification-panel\) \{ z-index: 80; \}/);
   assert.doesNotMatch(css, /@media \(max-width: 760px\) \{\n  \.operator-grid/);
   assert.match(hook, /preserve: true/);
+  assert.match(hook, /sameJson\(current, nextState\) \? current : nextState/);
+  assert.match(hook, /setTaskDetail\(current => sameJson\(current, details\.value\) \? current : details\.value\)/);
+  assert.match(hook, /setTaskTrace\(current => sameJson\(current, trace\.value\) \? current : trace\.value\)/);
+  assert.match(app, /next === previous \|\| JSON\.stringify\(next\) === JSON\.stringify\(previous\)/);
   assert.match(hook, /\[\.\.\.dependencies, enabled\]/);
 });
 

@@ -89,7 +89,7 @@ function RuntimeTarget({ target, profileTotal, requiredProfileIds }) {
   </article>;
 }
 
-export default function Settings({ open, onClose, onChanged }) {
+export default function Settings({ open, initialTab = 'projects', onClose, onChanged }) {
   const sheetRef = useRef(null);
   const closeRef = useRef(null);
   const lastFocusRef = useRef(null);
@@ -109,7 +109,11 @@ export default function Settings({ open, onClose, onChanged }) {
     } catch (nextError) { setError(nextError.message); }
     finally { setDiagnosing(false); }
   };
-  useEffect(() => { if (open) void load(false); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    setTab(initialTab);
+    void load(false);
+  }, [initialTab, open]);
   useEffect(() => {
     if (!open) return undefined;
     lastFocusRef.current = document.activeElement;

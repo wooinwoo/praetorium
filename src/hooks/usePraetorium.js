@@ -11,6 +11,12 @@ function sameJson(left, right) {
   catch { return false; }
 }
 
+export function mergeErrorState(current, updates) {
+  return Object.entries(updates).every(([key, value]) => current[key] === value)
+    ? current
+    : { ...current, ...updates };
+}
+
 function usePageVisible() {
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   useEffect(() => {
@@ -125,9 +131,13 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
   const historyRequest = useRef(0);
   const messageRequest = useRef(0);
   const projectPageIds = useRef(new Set());
+  const selectedDirectorIdRef = useRef(selectedDirectorId);
   const selectedGoalIdRef = useRef(selectedGoalId);
+  const selectedTaskIdRef = useRef(selectedTaskId);
   const fullRunOutputs = useRef(new Map());
+  selectedDirectorIdRef.current = selectedDirectorId;
   selectedGoalIdRef.current = selectedGoalId;
+  selectedTaskIdRef.current = selectedTaskId;
 
   const selectedDirector = useMemo(
     () => summary?.directors?.find(item => item.id === selectedDirectorId) || summary?.directors?.[0] || null,
@@ -171,8 +181,9 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
       if (summaryRevision.current) query.set('revision', summaryRevision.current);
       const next = await api(`/api/directors?${query}`, { signal, allowNotModified: true });
       if (requestId !== summaryRequest.current) return;
-      setLastSyncedAt(new Date());
-      setErrors(current => ({ ...current, summary: null }));
+      const syncedAt = Date.now();
+      setLastSyncedAt(current => !current || syncedAt - current.getTime() >= 15000 ? new Date(syncedAt) : current);
+      setErrors(current => mergeErrorState(current, { summary: null }));
       if (next?.notModified) return;
       summaryRevision.current = next.revision || '';
       setSummary(withFullRunOutputs(next, fullRunOutputs.current));
@@ -196,7 +207,7 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
       });
       setSummary(current => withFullRunOutputs(current, resolved));
     } catch (error) {
-      if (error.name !== 'AbortError') setErrors(current => ({ ...current, summary: error.message }));
+      if (error.name !== 'AbortError') setErrors(current => mergeErrorState(current, { summary: error.message }));
       throw error;
     }
   }, [selectedDirectorId, setSelectedDirectorId, refreshToken, streamSummaryToken]);
@@ -247,11 +258,14 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
   const fetchProjectMessages = useCallback(async ({ offset = 0, append = false, preserve = false, signal } = {}) => {
     if (!selectedDirector?.id) return;
     const requestId = ++messageRequest.current;
-    setProjectMessages(current => ({
-      ...(append || preserve ? current : { items: [], total: 0, nextOffset: 0, hasMore: false }),
-      loading: preserve ? current.loading : true,
-      error: '',
-    }));
+    setProjectMessages(current => {
+      const next = {
+        ...(append || preserve ? current : { items: [], total: 0, nextOffset: 0, hasMore: false }),
+        loading: preserve ? current.loading : true,
+        error: '',
+      };
+      return sameJson(current, next) ? current : next;
+    });
     try {
       const query = new URLSearchParams({ offset: String(offset), limit: '20' });
       if (projectPageIds.current.size) query.set('known', [...projectPageIds.current].join(','));
@@ -270,11 +284,15 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
         const nextOffset = append
           ? Number.isFinite(Number(next.nextOffset)) ? Number(next.nextOffset) : offset + page.length
           : Math.max(current.nextOffset || 0, page.length);
-        return { items, total: next.total || 0, nextOffset, hasMore: items.length < (next.total || 0), loading: false, error: '' };
+        const nextState = { items, total: next.total || 0, nextOffset, hasMore: items.length < (next.total || 0), loading: false, error: '' };
+        return sameJson(current, nextState) ? current : nextState;
       });
     } catch (error) {
       if (error.name !== 'AbortError' && requestId === messageRequest.current) {
-        setProjectMessages(current => ({ ...current, loading: false, error: error.message }));
+        setProjectMessages(current => {
+          const next = { ...current, loading: false, error: error.message };
+          return sameJson(current, next) ? current : next;
+        });
       }
     }
   }, [selectedDirector?.id, refreshToken]);
@@ -309,9 +327,9 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
       const nextStatus = next.status || null;
       setBoard(current => sameJson(current, nextTasks) ? current : nextTasks);
       setBoardStatus(current => sameJson(current, nextStatus) ? current : nextStatus);
-      setErrors(current => ({ ...current, board: null }));
+      setErrors(current => mergeErrorState(current, { board: null }));
     } catch (error) {
-      if (error.name !== 'AbortError') setErrors(current => ({ ...current, board: error.message }));
+      if (error.name !== 'AbortError') setErrors(current => mergeErrorState(current, { board: error.message }));
       throw error;
     }
   }, [selectedDirector?.id, selectedDirector?.cwd, refreshToken]);
@@ -325,9 +343,9 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
     try {
       const next = await api(`/api/directors/${encodeURIComponent(selectedDirector.id)}/goals/${encodeURIComponent(selectedGoal.id)}`, { signal });
       setGoalDetail(next);
-      setErrors(current => ({ ...current, goal: null }));
+      setErrors(current => mergeErrorState(current, { goal: null }));
     } catch (error) {
-      if (error.name !== 'AbortError') setErrors(current => ({ ...current, goal: error.message }));
+      if (error.name !== 'AbortError') setErrors(current => mergeErrorState(current, { goal: error.message }));
       throw error;
     }
   }, [selectedDirector?.id, selectedGoal?.id, selectedGoal?.detailRevision, refreshToken]);
@@ -351,22 +369,26 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
     const [details, trace] = await Promise.allSettled([api(base, { signal }), api(`${base}/trace`, { signal })]);
     if (requestId !== taskRequest.current || signal.aborted) return;
     if (details.status === 'fulfilled') {
-      setTaskDetail(details.value);
-      setErrors(current => ({ ...current, task: null }));
+      setTaskDetail(current => sameJson(current, details.value) ? current : details.value);
+      setErrors(current => mergeErrorState(current, { task: null }));
     } else if (details.reason?.name !== 'AbortError') {
-      setErrors(current => ({ ...current, task: details.reason.message }));
+      setErrors(current => mergeErrorState(current, { task: details.reason.message }));
     }
     if (trace.status === 'fulfilled') {
-      setTaskTrace(trace.value);
-      setErrors(current => ({ ...current, trace: null }));
+      setTaskTrace(current => sameJson(current, trace.value) ? current : trace.value);
+      setErrors(current => mergeErrorState(current, { trace: null }));
     } else if (trace.reason?.name !== 'AbortError') {
-      setErrors(current => ({ ...current, trace: trace.reason.message }));
+      setErrors(current => mergeErrorState(current, { trace: trace.reason.message }));
     }
   }, [selectedDirector?.id, selectedTaskId, refreshToken, taskPollingEnabled, taskEvidenceSettled]);
   usePoll(loadTask, [loadTask, taskPollingEnabled, pageVisible], 5000, taskPollingEnabled && pageVisible);
 
   const refresh = useCallback(() => setRefreshToken(value => value + 1), []);
   const selectDirector = useCallback(id => {
+    if (id === selectedDirectorIdRef.current) return;
+    selectedDirectorIdRef.current = id;
+    selectedGoalIdRef.current = '';
+    selectedTaskIdRef.current = '';
     taskRequest.current += 1;
     setSelectedDirectorId(id);
     setSelectedGoalId('');
@@ -380,6 +402,9 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
     projectPageIds.current = new Set();
   }, [setSelectedDirectorId, setSelectedGoalId]);
   const selectGoal = useCallback(id => {
+    if (id === selectedGoalIdRef.current) return;
+    selectedGoalIdRef.current = id;
+    selectedTaskIdRef.current = '';
     taskRequest.current += 1;
     setSelectedGoalId(id);
     setSelectedTaskId('');
@@ -395,7 +420,7 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
         if (!goal?.id) return false;
         setGoalHistory(current => ({ ...current, items: [...new Map([[goal.id, goal], ...current.items.map(item => [item.id, item])]).values()] }));
       } catch (error) {
-        setErrors(current => ({ ...current, goal: error.message }));
+        setErrors(current => mergeErrorState(current, { goal: error.message }));
         return false;
       }
     }
@@ -403,11 +428,13 @@ export function usePraetorium({ taskPollingEnabled = true, projectMessagesEnable
     return true;
   }, [goals, selectGoal, selectedDirector?.id]);
   const selectTask = useCallback(id => {
+    if (id === selectedTaskIdRef.current) return;
+    selectedTaskIdRef.current = id;
     taskRequest.current += 1;
     setSelectedTaskId(id);
     setTaskDetail(null);
     setTaskTrace(null);
-    setErrors(current => ({ ...current, task: null, trace: null }));
+    setErrors(current => mergeErrorState(current, { task: null, trace: null }));
   }, []);
 
   return {
