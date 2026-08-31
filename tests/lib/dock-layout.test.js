@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import {
   DIRECTOR_PANEL_ID,
   MAX_WORKER_DOCK_PANES,
+  PROCESS_PANEL_ID,
   canSplitDockPanel,
   collectDockPanels,
   countWorkerDockPanes,
   createDockLayout,
   filterDockLayout,
   findDockGroup,
+  mapDockInsertionIndex,
   moveDockPanel,
   reconcileDockLayout,
   updateDockRatio,
@@ -36,12 +38,12 @@ function paneShares(layout, share = 1, shares = []) {
   return shares;
 }
 
-test('dock layout starts with Director and one Worker tab group', () => {
+test('dock layout starts with separate Director chat, process, and Worker tabs', () => {
   const layout = createDockLayout(['t-1', 't-2'], 't-2');
 
   assert.equal(layout.type, 'split');
   assert.equal(layout.dir, 'h');
-  assert.deepEqual(findDockGroup(layout, 'director-group').tabs, [DIRECTOR_PANEL_ID]);
+  assert.deepEqual(findDockGroup(layout, 'director-group').tabs, [DIRECTOR_PANEL_ID, PROCESS_PANEL_ID]);
   assert.deepEqual(findDockGroup(layout, 'worker-group').tabs, [workerPanelId('t-1'), workerPanelId('t-2')]);
   assert.equal(findDockGroup(layout, 'worker-group').active, workerPanelId('t-2'));
 });
@@ -57,7 +59,7 @@ test('a Worker tab can reorder inside a group or split on every pane edge', () =
     const split = parentSplit(moved, groupId);
     assert.equal(split.dir, dir, position);
     assert.equal(split.children[index].id, groupId, position);
-    assert.deepEqual(new Set(collectDockPanels(moved)), new Set([DIRECTOR_PANEL_ID, workerPanelId('t-1'), workerPanelId('t-2')]));
+    assert.deepEqual(new Set(collectDockPanels(moved)), new Set([DIRECTOR_PANEL_ID, PROCESS_PANEL_ID, workerPanelId('t-1'), workerPanelId('t-2')]));
   }
 });
 
@@ -67,16 +69,39 @@ test('reconciliation removes stale tasks and adds each current Worker once', () 
   const reconciled = reconcileDockLayout(split, ['old-2', 'new-1'], 'new-1');
   const panels = collectDockPanels(reconciled);
 
-  assert.deepEqual(new Set(panels), new Set([DIRECTOR_PANEL_ID, workerPanelId('old-2'), workerPanelId('new-1')]));
-  assert.equal(panels.length, 3);
+  assert.deepEqual(new Set(panels), new Set([DIRECTOR_PANEL_ID, PROCESS_PANEL_ID, workerPanelId('old-2'), workerPanelId('new-1')]));
+  assert.equal(panels.length, 4);
   assert.equal(panels.includes(workerPanelId('old-1')), false);
 });
 
-test('split ratios clamp and Worker visibility filtering preserves Director', () => {
+test('legacy Director layouts gain the process tab without resetting geometry', () => {
+  const legacy = {
+    type: 'split', id: 'split:root', dir: 'h', ratio: .68, children: [
+      { type: 'group', id: 'director-group', tabs: [DIRECTOR_PANEL_ID], active: DIRECTOR_PANEL_ID },
+      { type: 'group', id: 'worker-group', tabs: [workerPanelId('t-1')], active: workerPanelId('t-1') },
+    ],
+  };
+  const reconciled = reconcileDockLayout(legacy, ['t-1']);
+
+  assert.equal(reconciled.ratio, .68);
+  assert.deepEqual(findDockGroup(reconciled, 'director-group').tabs, [DIRECTOR_PANEL_ID, PROCESS_PANEL_ID]);
+});
+
+test('split ratios clamp and Worker visibility filtering preserves core tabs', () => {
   const layout = createDockLayout(['t-1'], 't-1');
   assert.equal(updateDockRatio(layout, 'split:root', 9).ratio, .82);
   assert.equal(updateDockRatio(layout, 'split:root', -.2).ratio, .18);
-  assert.deepEqual(collectDockPanels(filterDockLayout(layout, panelId => panelId === DIRECTOR_PANEL_ID)), [DIRECTOR_PANEL_ID]);
+  assert.deepEqual(collectDockPanels(filterDockLayout(layout, panelId => !panelId.startsWith('worker:'))), [DIRECTOR_PANEL_ID, PROCESS_PANEL_ID]);
+});
+
+test('core tab reorder maps filtered positions around hidden Worker tabs', () => {
+  const layout = { type: 'group', id: 'mixed', tabs: [DIRECTOR_PANEL_ID, workerPanelId('t-1'), PROCESS_PANEL_ID], active: DIRECTOR_PANEL_ID };
+  const visible = filterDockLayout(layout, panelId => !panelId.startsWith('worker:'));
+  const index = mapDockInsertionIndex(layout, visible, 'mixed', 2);
+  const moved = moveDockPanel(layout, DIRECTOR_PANEL_ID, 'mixed', 'center', index);
+
+  assert.equal(index, 3);
+  assert.deepEqual(collectDockPanels(filterDockLayout(moved, panelId => !panelId.startsWith('worker:'))), [PROCESS_PANEL_ID, DIRECTOR_PANEL_ID]);
 });
 
 test('corrupt persisted ids and invalid task ids recover without duplicate tabs or nodes', () => {
@@ -91,7 +116,7 @@ test('corrupt persisted ids and invalid task ids recover without duplicate tabs 
   };
   const recovered = reconcileDockLayout(corrupt, ['t-1', '', null, 't-1', 't-2']);
 
-  assert.deepEqual(collectDockPanels(recovered), [DIRECTOR_PANEL_ID, workerPanelId('t-1'), workerPanelId('t-2')]);
+  assert.deepEqual(collectDockPanels(recovered), [DIRECTOR_PANEL_ID, PROCESS_PANEL_ID, workerPanelId('t-1'), workerPanelId('t-2')]);
   assert.equal(new Set(nodeIds(recovered)).size, nodeIds(recovered).length);
   assert.equal(recovered.ratio, .82);
   assert.equal(recovered.children[1].ratio, .5);
@@ -119,7 +144,7 @@ test('Worker splits stay within the live trace connection budget', () => {
   };
   const recovered = reconcileDockLayout(overflow, taskIds.slice(0, 5));
   assert.equal(countWorkerDockPanes(recovered), MAX_WORKER_DOCK_PANES);
-  assert.deepEqual(new Set(collectDockPanels(recovered)), new Set([DIRECTOR_PANEL_ID, ...taskIds.slice(0, 5).map(workerPanelId)]));
+  assert.deepEqual(new Set(collectDockPanels(recovered)), new Set([DIRECTOR_PANEL_ID, PROCESS_PANEL_ID, ...taskIds.slice(0, 5).map(workerPanelId)]));
 });
 
 test('repeated nested splits rebalance before a pane becomes unusably small', () => {

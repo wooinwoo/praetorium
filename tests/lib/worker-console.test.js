@@ -296,13 +296,17 @@ try {
     assert.match(workspace, /document\.querySelector\(['"]dialog\[open\], \[role="dialog"\]['"]\)/);
   });
 
-  it('keeps the complete Goal trace reachable from the unified project room', () => {
+  it('separates the complete Goal trace from Director chat as a dockable panel', () => {
     const workspace = source('src/components/Workspace.jsx');
 
-    assert.match(workspace, /function ProcessJournal[\s\S]*useState\(160\)/);
+    assert.match(workspace, /function TraceView[\s\S]*useState\(160\)/);
     assert.match(workspace, /trace\.slice\(-traceLimit\)/);
-    assert.match(workspace, /이전 \{Math\.min\(160, omitted\)\}개 불러오기/);
-    assert.match(workspace, /<section className="process-journal" aria-label="전체 작업 과정">/);
+    assert.match(workspace, /이전 \{Math\.min\(160, omittedTrace\)\}개 불러오기/);
+    assert.match(workspace, /PROCESS_PANEL_ID/);
+    assert.match(workspace, /if \(panelId === PROCESS_PANEL_ID\) return processPanel/);
+    assert.match(workspace, /Director 채팅/);
+    assert.match(workspace, /작업 과정/);
+    assert.doesNotMatch(workspace, /function ProcessJournal/);
     assert.doesNotMatch(workspace, /trace\.slice\(-10\)/);
   });
 

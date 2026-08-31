@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import {
-  DIRECTOR_PANEL_ID, activateDockPanel, canSplitDockPanel, createDockLayout, filterDockLayout, moveDockPanel,
-  reconcileDockLayout, updateDockRatio, workerPanelId, workerTaskId,
+  DIRECTOR_PANEL_ID, PROCESS_PANEL_ID, activateDockPanel, canSplitDockPanel, createDockLayout, filterDockLayout, mapDockInsertionIndex,
+  moveDockPanel, reconcileDockLayout, updateDockRatio, workerPanelId, workerTaskId,
 } from '../lib/dock-layout.js';
 import {
   buildConversation, buildTrace, goalConclusionPresentation, goalControlOptions, goalSupervisionHealth, goalTasks,
@@ -204,30 +204,7 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
   </div>;
 }
 
-function ProcessJournal({ goalId, trace, selectedEntry, onSelectEntry, onSelectTask, onOpenDecision }) {
-  const [traceLimit, setTraceLimit] = useState(160);
-  const visible = trace.slice(-traceLimit).reverse();
-  const omitted = trace.length - visible.length;
-  useEffect(() => { setTraceLimit(160); }, [goalId]);
-  return <section className="process-journal" aria-label="전체 작업 과정">
-    <header><span><Icon name="activity" /><strong>작업 과정</strong><small>계획·위임·검증 기록</small></span><b>{trace.length}</b></header>
-    <div className="process-journal-list">
-      {visible.map(entry => <button type="button" key={entry.id} className={selectedEntry?.id === entry.id ? 'selected' : ''} onClick={() => {
-        onSelectEntry(entry);
-        if (entry.taskId) onSelectTask(entry.taskId);
-        if (entry.type === 'decision') onOpenDecision();
-      }}>
-        <span className={`task-tab-dot ${entry.status}`} />
-        <span><small>{entry.eyebrow}</small><strong>{entry.title}</strong></span>
-        <time>{formatClock(entry.at)}</time>
-      </button>)}
-      {omitted > 0 && <button type="button" className="load-older" onClick={() => setTraceLimit(limit => limit + 160)}>이전 {Math.min(160, omitted)}개 불러오기</button>}
-      {!visible.length && <p>아직 공개된 작업 과정이 없습니다.</p>}
-    </div>
-  </section>;
-}
-
-function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, projectMessages, onLoadOlderMessages, liveActivity, activityHeight, setActivityHeight, trace, selectedEntry, onSelectEntry, onSelectTask }) {
+function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, projectMessages, onLoadOlderMessages }) {
   const canGuideGoal = guideableGoalStates.has(goal?.status);
   const [messageRoute, setMessageRoute] = useState(canGuideGoal ? 'goal' : 'new');
   useEffect(() => { setMessageRoute(canGuideGoal ? 'goal' : 'new'); }, [goal?.id, canGuideGoal]);
@@ -241,16 +218,12 @@ function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpen
   }, [director, goal, projectMessages?.items, summary]);
   const routeToGoal = canGuideGoal && messageRoute === 'goal';
   const waitingForOwner = goal?.status === 'awaiting_owner' && goal?.ownerDecision?.required;
-  return <section className="director-view">
+  return <section className={`director-view ${waitingForOwner ? 'has-context' : ''}`}>
     <header className="channel-header"><span className="director-avatar large">D</span><span><strong>Owner ↔ Director</strong><small>{director?.name || '프로젝트'}의 지속 대화</small></span><div className="channel-route" role="group" aria-label="메시지 전달 대상"><button type="button" disabled={!canGuideGoal} className={routeToGoal ? 'selected' : ''} onClick={() => setMessageRoute('goal')}>현재 작업에 반영</button><button type="button" className={!routeToGoal ? 'selected' : ''} onClick={() => setMessageRoute('new')}>새 작업으로 전달</button></div><span className="channel-actions"><Status value={director?.status} /></span></header>
-    <div className="director-context">
-      {waitingForOwner && <section className="director-decision-banner" role="alert" aria-live="polite">
+    {waitingForOwner && <div className="director-context"><section className="director-decision-banner" role="alert" aria-live="polite">
         <span><small>완료 아님 · 오너 결정 대기</small><strong>{goal.ownerDecision.question}</strong></span>
         <button type="button" className="attention-button" onClick={onOpenDecision}>결정 화면 열기 <Icon name="chevron" /></button>
-      </section>}
-      <ProcessJournal goalId={goal?.id} trace={trace} selectedEntry={selectedEntry} onSelectEntry={onSelectEntry} onSelectTask={onSelectTask} onOpenDecision={onOpenDecision} />
-      <DirectorActivityPanel activity={liveActivity} goalId={goal?.id} compact activityHeight={activityHeight} setActivityHeight={setActivityHeight} />
-    </div>
+      </section></div>}
     <DirectorComposer
       key={`${director?.id}:${routeToGoal ? goal?.id : 'project'}`}
       directorId={director?.id}
@@ -468,18 +441,19 @@ function DockGroup({ node, tasks, taskByPanel, draggedPanel, splitAllowed, dropT
         {node.tabs.map((panelId, index) => {
           const task = taskByPanel.get(panelId);
           const directorPanel = panelId === DIRECTOR_PANEL_ID;
-          const label = directorPanel ? 'Director' : workerTabName(tasks, task);
-          const title = directorPanel ? 'Owner ↔ Director' : task?.title || panelId;
+          const processPanel = panelId === PROCESS_PANEL_ID;
+          const label = directorPanel ? 'Director 채팅' : processPanel ? '작업 과정' : workerTabName(tasks, task);
+          const title = directorPanel ? 'Owner ↔ Director' : processPanel ? '계획·위임·검증 기록' : task?.title || panelId;
           const insertBefore = dropTarget?.kind === 'tab' && dropTarget.groupId === node.id && dropTarget.index === index;
           return <button type="button" role="tab" draggable="true" key={panelId} className={`dock-tab ${active === panelId ? 'selected' : ''} ${insertBefore ? 'drop-before' : ''}`} aria-selected={active === panelId} tabIndex={active === panelId ? 0 : -1} title={`${title} · 끌어서 이동/분할 · Ctrl+Alt+방향키로 분할`} onClick={() => onActivate(panelId)} onDragStart={event => onDragStart(event, panelId)} onDragEnd={onDragEnd} onDragOver={event => { event.preventDefault(); event.stopPropagation(); const bounds = event.currentTarget.getBoundingClientRect(); const targetIndex = event.clientX < bounds.left + bounds.width / 2 ? index : index + 1; setDropTarget({ kind: 'tab', groupId: node.id, index: targetIndex }); }} onDrop={event => drop(event, 'center', dropTarget?.groupId === node.id ? dropTarget.index : index)} onKeyDown={event => keyDownTab(event, panelId, index)}>
             <Icon name="grip" size={12} />
-            {directorPanel ? <span className="tab-avatar">D</span> : <span className={`task-tab-dot ${taskDisplayStatus(task)}`} />}
+            {directorPanel ? <span className="tab-avatar">D</span> : processPanel ? <span className="tab-core-icon"><Icon name="activity" size={12} /></span> : <span className={`task-tab-dot ${taskDisplayStatus(task)}`} />}
             <span><strong>{label}</strong><small>{title}</small></span>
           </button>;
         })}
       </div>
     </header>
-    <div className="dock-panel-body" role="tabpanel" aria-label={active === DIRECTOR_PANEL_ID ? 'Director' : taskByPanel.get(active)?.title || 'Worker'} onPointerDown={() => onFocus(active)}>{renderPanel(active)}</div>
+    <div className="dock-panel-body" role="tabpanel" aria-label={active === DIRECTOR_PANEL_ID ? 'Director 채팅' : active === PROCESS_PANEL_ID ? '작업 과정' : taskByPanel.get(active)?.title || 'Worker'} onPointerDown={() => onFocus(active)}>{renderPanel(active)}</div>
     {draggedPanel && <div className="dock-drop-overlay" aria-hidden="true">
       {dropPositions.map(position => <div key={position} className={`dock-drop-zone ${position} ${dropTarget?.kind === 'zone' && dropTarget.groupId === node.id && dropTarget.position === position ? 'active' : ''}`} data-label={{ top: '위', right: '오른쪽', bottom: '아래', left: '왼쪽', center: '탭' }[position]} onDragOver={event => { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDropTarget({ kind: 'zone', groupId: node.id, position }); }} onDrop={event => drop(event, position)} />)}
     </div>}
@@ -527,7 +501,7 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   const effectiveDockLayout = useMemo(() => layoutReady
     ? reconcileDockLayout(dockLayout, taskIds, selectedTaskId)
     : createDockLayout(), [dockLayout, layoutReady, taskIdsKey, selectedTaskId]);
-  const visibleDockLayout = useMemo(() => workerRoomOpen ? effectiveDockLayout : filterDockLayout(effectiveDockLayout, panelId => panelId === DIRECTOR_PANEL_ID), [effectiveDockLayout, workerRoomOpen]);
+  const visibleDockLayout = useMemo(() => workerRoomOpen ? effectiveDockLayout : filterDockLayout(effectiveDockLayout, panelId => !workerTaskId(panelId)), [effectiveDockLayout, workerRoomOpen]);
   const supervision = useMemo(() => goalSupervisionHealth({
     director,
     goal: currentGoal,
@@ -594,17 +568,25 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
     if (taskId && taskId !== selectedTaskId) selectTask(taskId);
   };
   const movePanel = (panelId, targetGroupId, position, index) => {
-    setDockLayout(current => moveDockPanel(reconcileDockLayout(current, taskIds, selectedTaskId), panelId, targetGroupId, position, index));
+    setDockLayout(current => {
+      const reconciled = reconcileDockLayout(current, taskIds, selectedTaskId);
+      const targetIndex = position === 'center' && !workerRoomOpen
+        ? mapDockInsertionIndex(reconciled, filterDockLayout(reconciled, candidate => !workerTaskId(candidate)), targetGroupId, index)
+        : index;
+      return moveDockPanel(reconciled, panelId, targetGroupId, position, targetIndex);
+    });
     const taskId = workerTaskId(panelId);
     if (taskId) selectTask(taskId);
-    setWorkerRoomOpen(true);
+    if (taskId) setWorkerRoomOpen(true);
     endPanelDrag();
   };
   const changeRatio = (splitId, ratio) => setDockLayout(current => updateDockRatio(reconcileDockLayout(current, taskIds, selectedTaskId), splitId, ratio));
   const canSplitPanel = panelId => canSplitDockPanel(effectiveDockLayout, panelId);
-  const directorPanel = <DirectorView key="director-panel" director={director} goal={currentGoal} summary={summary} refresh={refresh} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} onOpenDecision={openOwnerDecision} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={openTask} onGoalAccepted={id => { if (id) selectGoal(id); }} />;
+  const directorPanel = <DirectorView key="director-panel" director={director} goal={currentGoal} summary={summary} refresh={refresh} projectMessages={projectMessages} onLoadOlderMessages={loadMoreProjectMessages} onOpenDecision={openOwnerDecision} onGoalAccepted={id => { if (id) selectGoal(id); }} />;
+  const processPanel = <TraceView key="process-panel" goal={currentGoal} runs={runs} tasks={tasks} trace={trace} selectedEntry={selectedEntry} onSelectEntry={setSelectedEntry} onSelectTask={openTask} onOpenTask={id => activatePanel(workerPanelId(id))} onDirector={() => activatePanel(DIRECTOR_PANEL_ID)} onDecision={openOwnerDecision} directorId={director?.id} refresh={refresh} errors={errors} taskTrace={taskTrace} selectedTask={selectedTask} supervision={supervision} liveActivity={liveActivity} activityHeight={activityHeight} setActivityHeight={setActivityHeight} />;
   const renderPanel = panelId => {
     if (panelId === DIRECTOR_PANEL_ID) return directorPanel;
+    if (panelId === PROCESS_PANEL_ID) return processPanel;
     const task = taskByPanel.get(panelId);
     if (!task) return <div className="workspace-empty"><strong>Worker를 찾을 수 없습니다.</strong><span>현재 Goal의 탭 배치를 다시 동기화합니다.</span></div>;
     const selected = task.id === selectedTaskId;

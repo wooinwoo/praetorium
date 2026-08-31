@@ -246,6 +246,11 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.match(workspace, /canSplitDockPanel/);
   assert.match(workspace, /Ctrl\+Alt\+방향키로 분할/);
   assert.match(workspace, /createDockLayout/);
+  assert.match(workspace, /PROCESS_PANEL_ID/);
+  assert.match(workspace, /const processPanel = <TraceView/);
+  assert.match(workspace, /Director 채팅/);
+  assert.match(workspace, /mapDockInsertionIndex/);
+  assert.match(workspace, /if \(taskId\) setWorkerRoomOpen\(true\)/);
   assert.match(workspace, /const layoutReady = Boolean\(summary\)/);
   assert.match(workspace, /layoutReady\s*\? reconcileDockLayout/);
   assert.match(workspace, /if \(!layoutReady\) return;/);

@@ -1,6 +1,8 @@
 export const DIRECTOR_PANEL_ID = 'director';
+export const PROCESS_PANEL_ID = 'process';
 export const MAX_WORKER_DOCK_PANES = 4;
 const MIN_DOCK_PANE_SHARE = .08;
+const CORE_PANEL_IDS = [DIRECTOR_PANEL_ID, PROCESS_PANEL_ID];
 
 export function workerPanelId(taskId) {
   return `worker:${taskId}`;
@@ -38,7 +40,7 @@ function uniqueNodeId(preferred, seen) {
 
 export function createDockLayout(taskIds = [], selectedTaskId = '') {
   const workers = normalizedTaskIds(taskIds).map(workerPanelId);
-  const director = group('director-group', [DIRECTOR_PANEL_ID]);
+  const director = group('director-group', CORE_PANEL_IDS);
   if (!workers.length) return director;
   const selected = workerPanelId(selectedTaskId);
   const workerGroup = group('worker-group', workers, workers.includes(selected) ? selected : workers[0]);
@@ -244,16 +246,34 @@ export function filterDockLayout(layout, predicate) {
   return { ...layout, children };
 }
 
+export function mapDockInsertionIndex(layout, visibleLayout, groupId, visibleIndex) {
+  const fullGroup = findDockGroup(layout, groupId);
+  const visibleGroup = findDockGroup(visibleLayout, groupId);
+  if (!fullGroup || !visibleGroup || visibleGroup.tabs.length === fullGroup.tabs.length) return visibleIndex;
+  const index = Math.max(0, Math.min(visibleGroup.tabs.length, Number(visibleIndex) || 0));
+  const anchor = index < visibleGroup.tabs.length ? visibleGroup.tabs[index] : visibleGroup.tabs.at(-1);
+  const fullIndex = fullGroup.tabs.indexOf(anchor);
+  return fullIndex < 0 ? visibleIndex : fullIndex + (index === visibleGroup.tabs.length ? 1 : 0);
+}
+
 export function reconcileDockLayout(layout, taskIds = [], selectedTaskId = '') {
   const workerPanels = normalizedTaskIds(taskIds).map(workerPanelId);
-  const validPanels = new Set([DIRECTOR_PANEL_ID, ...workerPanels]);
+  const validPanels = new Set([...CORE_PANEL_IDS, ...workerPanels]);
   let next = cleanDockLayout(layout, validPanels);
   if (!next) return createDockLayout(taskIds, selectedTaskId);
 
   const existing = new Set(collectDockPanels(next));
-  if (!existing.has(DIRECTOR_PANEL_ID)) {
-    next = split('split:director', 'h', .64, group('director-group', [DIRECTOR_PANEL_ID]), next);
-    existing.add(DIRECTOR_PANEL_ID);
+  const missingCorePanels = CORE_PANEL_IDS.filter(panelId => !existing.has(panelId));
+  if (missingCorePanels.length) {
+    const anchor = CORE_PANEL_IDS.map(panelId => findPanel(next, panelId)).find(Boolean);
+    if (anchor) {
+      next = updateGroup(next, anchor.groupId, current => {
+        const coreTabs = CORE_PANEL_IDS.filter(panelId => current.tabs.includes(panelId) || missingCorePanels.includes(panelId));
+        const otherTabs = current.tabs.filter(panelId => !CORE_PANEL_IDS.includes(panelId));
+        return { ...current, tabs: [...coreTabs, ...otherTabs] };
+      });
+    } else next = split('split:director', 'h', .64, group('director-group', CORE_PANEL_IDS), next);
+    missingCorePanels.forEach(panelId => existing.add(panelId));
   }
   const missingWorkers = workerPanels.filter(panelId => !existing.has(panelId));
   if (missingWorkers.length) {
