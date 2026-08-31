@@ -58,6 +58,24 @@ test('React console rejects stale Worker responses and pauses hidden evidence po
   for (const status of ['succeeded', 'success', 'blocked']) assert.match(hook, new RegExp(`'${status}'`));
 });
 
+test('Environment management shows actionable checks instead of one generic runtime error', async () => {
+  const [settings, css] = await Promise.all([
+    source('src/components/Settings.jsx'), source('src/styles.css'),
+  ]);
+  for (const label of ['WSL 런타임', 'Hermes', 'Codex CLI', 'Codex app-server', 'Codex 로그인', '역할 프로필']) {
+    assert.match(settings, new RegExp(label));
+  }
+  assert.match(settings, /aria-busy=\{diagnosing\}/);
+  assert.match(settings, /disabled=\{diagnosing\}/);
+  assert.match(settings, /app-server와 역할 프로필을 새 정책으로 재진단하세요/);
+  assert.match(settings, /requiredProfileIds\.every\(id => target\.profiles\?\.includes\(id\)\)/);
+  assert.match(settings, /\^\\s\*codex-cli\\s\+/);
+  assert.match(settings, /targets\.filter\(item => !item\.system\)/);
+  assert.match(css, /\.runtime-checks \{[^}]*grid-template-columns: repeat\(2/);
+  assert.match(css, /\.runtime-message \{[^}]*overflow-wrap: anywhere/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.runtime-checks \{ grid-template-columns: 1fr; \}/);
+});
+
 test('Owner console renders queue position, collapsible waves, and dependency flow labels', async () => {
   const js = await source('js/owner-console.js');
   assert.match(js, /state\.summary\?\.queuedGoals/);

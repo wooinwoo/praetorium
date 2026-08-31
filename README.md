@@ -35,7 +35,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-praeto
 The versioned bootstrap script (`scripts/install-praetorium.ps1`) used for published releases:
 
 1. installs Git and Node.js through winget when missing;
-2. installs Codex CLI `0.149.0` and verifies the local Codex login;
+2. preserves a compatible Codex CLI (`>=0.149.0 <1.0.0`) or installs the minimum version, then verifies app-server support and local login;
 3. downloads and checksum-verifies Hermes `v2026.8.19` / Agent `v0.20.5`;
 4. checks out the exact requested Praetorium release;
 5. installs 14 role profiles, 12 skills, four boards, and the pinned Codex runtime bridges;
@@ -194,7 +194,7 @@ The pinned bridge applies only to Hermes Agent `v0.20.5` and fails closed on an 
 
 ## Local development
 
-Requirements: Node.js 22+, Rust stable, Codex CLI `0.149.0`, and the pinned Hermes installation.
+Requirements: Node.js 22+, Rust stable, compatible Codex CLI (`>=0.149.0 <1.0.0` with app-server support), and the pinned Hermes installation.
 
 ```powershell
 git clone https://github.com/wooinwoo/praetorium.git

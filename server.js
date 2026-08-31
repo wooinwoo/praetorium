@@ -152,6 +152,11 @@ addRoute('GET', '/api/runtimes', async (req, res) => {
         return;
       }
       if (!target.home) return;
+      if (target.codex?.compatible && target.codex?.appServer && !target.codex?.authenticated) {
+        target.setupLabel = `${target.label} 터미널`;
+        target.setupCommand = `${shellQuote(target.codex.path || 'codex')} login`;
+        return;
+      }
       try {
         const source = await wslRuntime.toWslPath(target.distro, ROOT);
         target.setupLabel = `${target.label} 터미널`;

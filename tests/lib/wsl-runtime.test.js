@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { normalizeWslPath, WslRuntime, _test } from '../../lib/wsl-runtime.js';
+import { PROFILE_CATALOG } from '../../lib/workflow-catalog.js';
+import {
+  CODEX_COMPATIBILITY, normalizeWslPath, supportsCodexVersion, WslRuntime, _test,
+} from '../../lib/wsl-runtime.js';
 
 describe('WSL runtime boundary', () => {
   it('normalizes Linux paths and rejects shell-shaped distro input', () => {
@@ -23,6 +26,44 @@ describe('WSL runtime boundary', () => {
       { name: 'Docker Dev', state: 'Stopped', version: 1, default: false, system: false },
       { name: 'docker-desktop', state: 'Running', version: 2, default: false, system: true },
     ]);
+  });
+
+  it('accepts compatible Codex updates without accepting older or future-major runtimes', () => {
+    assert.equal(CODEX_COMPATIBILITY, '>=0.149.0 <1.0.0');
+    assert.equal(supportsCodexVersion('codex-cli 0.149.0'), true);
+    assert.equal(supportsCodexVersion('warning\ncodex-cli 0.151.0'), true);
+    assert.equal(supportsCodexVersion('codex-cli 0.148.99'), false);
+    assert.equal(supportsCodexVersion('codex-cli 1.0.0'), false);
+    assert.equal(supportsCodexVersion('codex-cli 0.149.0-alpha.1'), false);
+    assert.equal(supportsCodexVersion('codex-cli 0.149.0.1'), false);
+    assert.equal(supportsCodexVersion('unknown'), false);
+  });
+
+  it('marks newer compatible Codex with app-server, login, and all profiles ready', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    runtime._run = async args => {
+      if (args.includes('-lc')) {
+        return { stdout: Buffer.from('/home/owner\nowner\n/home/owner/.local/bin:/usr/bin\n/usr/bin/hermes\n/home/owner/.local/bin/codex\n') };
+      }
+      if (args.at(-1) === '--version' && args.includes('/usr/bin/hermes')) {
+        return { stdout: Buffer.from('Hermes Agent v0.20.5\n') };
+      }
+      if (args.at(-1) === '--version') return { stdout: Buffer.from('codex-cli 0.151.0\n') };
+      if (args.includes('login')) return { stdout: Buffer.from('Logged in\n') };
+      if (args.includes('app-server')) return { stdout: Buffer.from('Usage: codex app-server\n') };
+      if (args.includes('/usr/bin/find')) return { stdout: Buffer.from(`${PROFILE_CATALOG.map(profile => profile.id).join('\n')}\n`) };
+      throw new Error(`Unexpected WSL probe: ${args.join(' ')}`);
+    };
+
+    const target = await runtime.inspect('Ubuntu', {
+      force: true,
+      metadata: { name: 'Ubuntu', state: 'Running', version: 2, default: true, system: false },
+    });
+    assert.equal(target.ready, true);
+    assert.equal(target.error, null);
+    assert.equal(target.codex.compatible, true);
+    assert.equal(target.codex.appServer, true);
+    assert.equal(target.profilesReady, true);
   });
 
   it('falls back to the quiet list when verbose metadata is unavailable', async () => {
@@ -109,6 +150,18 @@ describe('WSL runtime boundary', () => {
     assert.ok(!launch.args.some(arg => arg.includes('/tmp/override') || arg.includes('/tmp/hermes')));
   });
 
+  it('returns the exact failed runtime check to Worker callers', async () => {
+    const runtime = new WslRuntime({ platform: 'win32' });
+    runtime.inspect = async () => ({
+      label: 'WSL · Ubuntu', ready: false,
+      error: 'Codex CLI 버전 >=0.149.0 <1.0.0가 필요합니다. 현재 codex-cli 0.148.0.',
+    });
+    await assert.rejects(
+      runtime.launch({ distro: 'Ubuntu', cwd: '/home/owner/app', args: [] }),
+      /WSL · Ubuntu 런타임 준비 실패: Codex CLI 버전 >=0\.149\.0 <1\.0\.0가 필요합니다/,
+    );
+  });
+
   it('discovers direct and one-level grouped Git repositories', async () => {
     const runtime = new WslRuntime({ platform: 'win32' });
     runtime.listDistributions = async () => [
@@ -149,6 +202,24 @@ describe('WSL runtime boundary', () => {
     const server = readFileSync(new URL('../../server.js', import.meta.url), 'utf8');
     assert.match(server, /await Promise\.all\(result\.targets\.filter\(item => item\.kind === 'wsl' && !item\.system && !item\.ready\)\.map\(async target =>/);
     assert.match(server, /const source = await wslRuntime\.toWslPath\(target\.distro, ROOT\)/);
+    assert.match(server, /target\.codex\?\.compatible && target\.codex\?\.appServer && !target\.codex\?\.authenticated/);
+  });
+
+  it('preserves an already compatible standalone Codex during WSL bootstrap', () => {
+    const bootstrap = readFileSync(new URL('../../scripts/bootstrap-wsl-runtime.mjs', import.meta.url), 'utf8');
+    assert.match(bootstrap, /nativeCodexCandidates\(destination\)/);
+    assert.match(bootstrap, /function supportsCodexCandidate[\s\S]*supportsCodexVersion\(codexVersion\(node, entry\)\)[\s\S]*app-server', '--help/);
+    assert.match(bootstrap, /nativeCodexCandidates\(destination\)\.find\(entry => supportsCodexCandidate\(node, entry\)\)/);
+    assert.match(bootstrap, /resolve\(candidate\) !== resolve\(destination\)/);
+    assert.match(bootstrap, /app-server', '--help/);
+  });
+
+  it('updates an incompatible Windows Codex and rejects ambiguous version output', () => {
+    const installer = readFileSync(new URL('../../scripts/install-praetorium.ps1', import.meta.url), 'utf8');
+    assert.match(installer, /function Get-CodexVersion/);
+    assert.match(installer, /\(\?m\)\^\[ \\t\]\*codex-cli/);
+    assert.match(installer, /if \(-not \(Test-CompatibleCodexVersion \$installedVersion\)\)[\s\S]*npm\.cmd install --global/);
+    assert.doesNotMatch(installer, /\?\?/);
   });
 
   it('captures WSL candidate metadata before and after hashing', async () => {

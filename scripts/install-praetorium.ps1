@@ -16,7 +16,7 @@ $HermesTag = 'v2026.8.19'
 $HermesVersion = 'Hermes Agent v0.20.5'
 $HermesInstallerUrl = "https://raw.githubusercontent.com/NousResearch/hermes-agent/$HermesTag/scripts/install.ps1"
 $HermesInstallerSha256 = '74225BF244253BFA5BC2B1D16FA3BB8618E199A53D1C0344B37AB9930696D3BA'
-$CodexVersion = '0.149.0'
+$MinimumCodexVersion = [version]'0.149.0'
 
 function Write-Step {
     param([string]$Message)
@@ -107,19 +107,42 @@ function Sync-Source {
     }
 }
 
+function Get-CodexVersion {
+    $application = Get-Application 'codex.exe'
+    if (-not $application) { return $null }
+    $versionOutput = (& $application.Source --version 2>&1) -join [Environment]::NewLine
+    $match = [regex]::Match($versionOutput, '(?m)^[ \t]*codex-cli[ \t]+(\d+\.\d+\.\d+)[ \t]*\r?$')
+    if (-not $match.Success) { return $null }
+    return [version]$match.Groups[1].Value
+}
+
+function Test-CompatibleCodexVersion {
+    param([AllowNull()][version]$Version)
+    return $null -ne $Version -and $Version.Major -eq $MinimumCodexVersion.Major -and $Version -ge $MinimumCodexVersion
+}
+
 function Install-Codex {
-    if (-not (Get-Application 'codex.exe')) {
-        Write-Step "Installing Codex CLI $CodexVersion"
-        & npm.cmd install --global "@openai/codex@$CodexVersion"
+    $installedVersion = Get-CodexVersion
+    if (-not (Test-CompatibleCodexVersion $installedVersion)) {
+        Write-Step $(if ($installedVersion) { "Updating Codex CLI $installedVersion to $MinimumCodexVersion" } else { "Installing Codex CLI $MinimumCodexVersion" })
+        & npm.cmd install --global "@openai/codex@$MinimumCodexVersion"
         if ($LASTEXITCODE -ne 0) { throw "Codex CLI install failed ($LASTEXITCODE)." }
         Refresh-ProcessPath
+        $installedVersion = Get-CodexVersion
     }
-    if (-not (Get-Application 'codex.exe')) { throw 'codex.exe is unavailable after installation.' }
+    if (-not (Test-CompatibleCodexVersion $installedVersion)) {
+        $foundVersion = if ($installedVersion) { $installedVersion } else { 'unavailable' }
+        throw "Codex CLI >=$MinimumCodexVersion <1.0.0 is required; found $foundVersion."
+    }
 
-    & codex.exe login status
+    $application = Get-Application 'codex.exe'
+    & $application.Source app-server --help *> $null
+    if ($LASTEXITCODE -ne 0) { throw 'Installed Codex CLI does not support app-server.' }
+
+    & $application.Source login status
     if ($LASTEXITCODE -ne 0) {
         Write-Step 'One-time Codex account login (the only required interactive step)'
-        & codex.exe login
+        & $application.Source login
         if ($LASTEXITCODE -ne 0) { throw 'Codex login did not complete.' }
     }
 }

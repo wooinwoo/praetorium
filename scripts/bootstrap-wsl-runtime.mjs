@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROFILE_CATALOG } from '../lib/workflow-catalog.js';
+import { MINIMUM_CODEX_VERSION, supportsCodexVersion } from '../lib/wsl-runtime.js';
 import { patchHermesRuntime } from './patch-hermes-codex-runtime.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -15,7 +16,6 @@ const sourceReferences = join(repoRoot, '.agents', 'skill-references');
 const sourceSouls = join(repoRoot, '.agents', 'hermes-profiles', 'souls');
 const workdirIndex = process.argv.indexOf('--workdir');
 const defaultWorkdir = resolve(workdirIndex >= 0 ? process.argv[workdirIndex + 1] : join(homedir(), 'projects'));
-const pinnedCodexVersion = 'codex-cli 0.149.0';
 
 function run(executable, args, options = {}) {
   return execFileSync(executable, args, { encoding: 'utf8', stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit', ...options });
@@ -45,8 +45,9 @@ function copyDirectoryChildren(source, destination) {
   }
 }
 
-function nativeCodexCandidates() {
+function nativeCodexCandidates(destination) {
   const candidates = [
+    destination,
     join(hermesRoot, 'node', 'bin', 'codex'),
     join(homedir(), '.local', 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
   ];
@@ -57,28 +58,50 @@ function nativeCodexCandidates() {
   return candidates.filter(candidate => existsSync(candidate) && !candidate.startsWith('/mnt/'));
 }
 
+function runCodex(node, entry, args) {
+  const executable = realpathSync(entry);
+  return executable.endsWith('.js')
+    ? run(node, [executable, ...args], { capture: true })
+    : run(executable, args, { capture: true });
+}
+
 function codexVersion(node, entry) {
-  try { return run(node, [realpathSync(entry), '--version'], { capture: true }).trim(); }
+  try { return runCodex(node, entry, ['--version']).trim(); }
   catch { return ''; }
+}
+
+function supportsCodexCandidate(node, entry) {
+  if (!supportsCodexVersion(codexVersion(node, entry))) return false;
+  try { runCodex(node, entry, ['app-server', '--help']); return true; }
+  catch { return false; }
 }
 
 function ensureNativeCodex() {
   const destination = join(homedir(), '.local', 'bin', 'codex');
   const node = join(hermesRoot, 'node', 'bin', 'node');
   if (!existsSync(node)) throw new Error('Hermes-managed Linux Node runtime was not found.');
-  let candidate = nativeCodexCandidates().find(entry => codexVersion(node, entry).includes(pinnedCodexVersion));
+  let candidate = nativeCodexCandidates(destination).find(entry => supportsCodexCandidate(node, entry));
   if (!candidate) {
     const npm = join(hermesRoot, 'node', 'bin', 'npm');
-    if (!existsSync(npm)) throw new Error('Hermes-managed npm was not found; cannot install the pinned WSL Codex CLI.');
-    run(node, [realpathSync(npm), 'install', '--global', `@openai/codex@${pinnedCodexVersion.split(' ').at(-1)}`, '--prefix', join(homedir(), '.local')]);
+    if (!existsSync(npm)) throw new Error('Hermes-managed npm was not found; cannot install the compatible WSL Codex CLI.');
+    rmSync(destination, { force: true });
+    run(node, [realpathSync(npm), 'install', '--global', `@openai/codex@${MINIMUM_CODEX_VERSION}`, '--prefix', join(homedir(), '.local')]);
     candidate = join(homedir(), '.local', 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
   }
-  mkdirSync(dirname(destination), { recursive: true });
-  rmSync(destination, { force: true });
-  writeFileSync(destination, `#!/bin/sh\nexec '${node.replaceAll("'", "'\\''")}' '${realpathSync(candidate).replaceAll("'", "'\\''")}' "$@"\n`, 'utf8');
-  chmodSync(destination, 0o755);
+  if (resolve(candidate) !== resolve(destination)) {
+    const executable = realpathSync(candidate);
+    const command = executable.endsWith('.js')
+      ? `'${node.replaceAll("'", "'\\''")}' '${executable.replaceAll("'", "'\\''")}'`
+      : `'${executable.replaceAll("'", "'\\''")}'`;
+    mkdirSync(dirname(destination), { recursive: true });
+    rmSync(destination, { force: true });
+    writeFileSync(destination, `#!/bin/sh\nexec ${command} "$@"\n`, 'utf8');
+    chmodSync(destination, 0o755);
+  }
   const installed = run(destination, ['--version'], { capture: true }).trim();
-  if (!installed.includes(pinnedCodexVersion)) throw new Error(`Pinned WSL Codex verification failed: ${installed || 'not executable'}`);
+  if (!supportsCodexVersion(installed)) throw new Error(`Compatible WSL Codex verification failed: ${installed || 'not executable'}`);
+  try { run(destination, ['app-server', '--help'], { capture: true }); }
+  catch { throw new Error('Installed WSL Codex does not support app-server.'); }
   try { run(destination, ['login', 'status'], { capture: true }); }
   catch {
     process.stdout.write('Praetorium needs one Codex login inside this WSL distribution.\n');
