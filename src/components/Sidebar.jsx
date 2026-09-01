@@ -19,9 +19,9 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
     return goals.filter(goal => `${goal.objective} ${goal.id}`.toLowerCase().includes(value));
   }, [goals, query]);
   const activeIds = new Set(summary?.activeGoals || []);
-  const activeDirectorIds = new Set((summary?.goals || [])
+  const activeGoalByDirector = new Map((summary?.goals || [])
     .filter(goal => activeIds.has(goal.id))
-    .map(goal => goal.directorId));
+    .map(goal => [goal.directorId, goal]));
   const active = visibleGoals.filter(goal => activeIds.has(goal.id));
   const queued = orderQueuedGoals(visibleGoals.filter(goal => goal.status === 'queued'));
   const recent = visibleGoals.filter(goal => !activeIds.has(goal.id) && goal.status !== 'queued')
@@ -38,7 +38,7 @@ export default function Sidebar({ summary, selectedDirector, selectedGoal, goals
         <div className="director-switcher">
           {(summary?.directors || []).map(director => <button type="button" key={director.id} className={director.id === selectedDirector?.id ? 'selected' : ''} onClick={() => onDirector(director.id)} title={director.name}>
             <span className="director-avatar">{initials(director.name)}</span>
-            <span><strong>{director.name}</strong><small><span>{director.kind === 'project' ? (director.runtime === 'wsl' ? `WSL · ${director.distro || 'Ubuntu'}` : 'Windows 프로젝트') : 'Skill Director'}</span><Status value={activeDirectorIds.has(director.id) ? 'running' : director.status} dot /></small></span>
+            <span><strong>{director.name}</strong><small><span>{director.kind === 'project' ? (director.runtime === 'wsl' ? `WSL · ${director.distro || 'Ubuntu'}` : 'Windows 프로젝트') : 'Skill Director'}</span><Status value={activeGoalByDirector.get(director.id)?.status === 'awaiting_owner' ? 'awaiting_owner' : activeGoalByDirector.has(director.id) ? 'running' : director.status} dot /></small></span>
           </button>)}
         </div>
       </section>

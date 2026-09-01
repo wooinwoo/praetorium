@@ -110,7 +110,7 @@ test('Owner console orders selectable active, queued, and recent Goals and prese
   assert.match(hook, /selectedGoalId/);
   assert.match(hook, /\.sort\(\(a, b\) => Date\.parse\(b\.updatedAt/);
   assert.match(sidebar, /const active = visibleGoals\.filter/);
-  assert.match(sidebar, /const activeDirectorIds = new Set/);
+  assert.match(sidebar, /const activeGoalByDirector = new Map/);
   assert.match(sidebar, /const queued = orderQueuedGoals\(visibleGoals\.filter/);
   assert.match(sidebar, /const recent = visibleGoals\.filter/);
   assert.match(workspace, /accepted\?\.goalId/);
@@ -620,8 +620,13 @@ test('React console keeps durable history, unified Director chat, Worker access,
   assert.match(workspace, /currentGoal\?\.currentWaveTaskIds \|\| \[\]/);
   assert.match(operatorModel, /goal\?\.currentWaveTaskIds \|\| \[\]/);
   assert.match(operatorModel, /export function goalOperationalFocus/);
+  assert.match(sidebar, /activeGoalByDirector/);
+  assert.match(sidebar, /status === 'awaiting_owner' \? 'awaiting_owner'/);
   assert.match(workspace, /project-room-handoff/);
   assert.match(workspace, /project-room-owner/);
+  assert.match(workspace, /const ownerAction =/);
+  assert.match(workspace, /onOwnerDetails/);
+  assert.match(workspace, /onWorkerAttention/);
   assert.match(workspace, /Goal 워크플로 진행 단계/);
   assert.match(workspace, /function WorkerNow/);
   assert.match(workspace, /Worker \$\{running\.length\}개 실행 중/);

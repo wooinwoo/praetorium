@@ -63,6 +63,7 @@ test('operational focus keeps current stage, next handoff, and Owner action visi
   assert.equal(focus.current.value, 'Worker 1/2 실행 중');
   assert.equal(focus.next.value, '독립 리뷰 3개');
   assert.equal(focus.owner.value, '없음');
+  assert.equal(focus.owner.action, null);
   assert.equal(focus.route.find(step => step.id === 'candidate').state, 'current');
 });
 
@@ -78,6 +79,7 @@ test('operational focus surfaces remediation, Owner decisions, and stalled super
     goal: { status: 'awaiting_owner', ownerDecision: { required: true, question: '실제 배포할까요?' } },
   });
   assert.equal(decision.owner.required, true);
+  assert.equal(decision.owner.action, 'decision');
   assert.equal(decision.owner.value, '결정 필요');
   assert.match(decision.owner.detail, /실제 배포/);
   assert.equal(decision.route.find(step => step.id === 'owner').state, 'current');
@@ -87,7 +89,17 @@ test('operational focus surfaces remediation, Owner decisions, and stalled super
     supervision: { stalled: true, detail: '마지막 신호 12분 전' },
   });
   assert.equal(stalled.owner.value, '상태 확인 권장');
+  assert.equal(stalled.owner.action, 'refresh');
   assert.match(stalled.owner.detail, /12분/);
+
+  const paused = goalOperationalFocus({
+    goal: { status: 'executing', workflowId: 'quick-fix', requiredTransition: { stage: 'candidate' }, currentWaveTaskIds: ['paused'] },
+    tasks: [{ id: 'paused', status: 'scheduled', pausedByOwner: true }],
+  });
+  assert.equal(paused.owner.action, 'worker');
+
+  const stopped = goalOperationalFocus({ goal: { status: 'blocked', error: '재시도 필요' } });
+  assert.equal(stopped.owner.action, 'details');
 });
 
 test('operator model creates chronological selectable trace with honest final state', () => {

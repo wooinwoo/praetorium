@@ -181,6 +181,7 @@ describe('Worker Codex session console contract', () => {
       runtimeProvider: join(agentRoot, 'hermes_cli', 'runtime_provider.py'),
       appServerClient: join(agentRoot, 'agent', 'transports', 'codex_app_server.py'),
       codexRuntime: join(agentRoot, 'agent', 'codex_runtime.py'),
+      codexPluginMigration: join(agentRoot, 'hermes_cli', 'codex_runtime_plugin_migration.py'),
       kanbanDb: join(agentRoot, 'hermes_cli', 'kanban_db.py'),
       kanbanTools: join(agentRoot, 'tools', 'kanban_tools.py'),
     };
@@ -191,6 +192,7 @@ describe('Worker Codex session console contract', () => {
       writeFileSync(paths.runtimeProvider, originalProvider, 'utf8');
       writeFileSync(paths.appServerClient, '# incompatible Hermes layout\n', 'utf8');
       writeFileSync(paths.codexRuntime, '', 'utf8');
+      writeFileSync(paths.codexPluginMigration, '', 'utf8');
       writeFileSync(paths.kanbanDb, '', 'utf8');
       writeFileSync(paths.kanbanTools, '', 'utf8');
 

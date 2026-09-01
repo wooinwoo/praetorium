@@ -333,15 +333,16 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
   </aside>;
 }
 
-function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onDetails, onWorkers, onResetLayout, workerRoomOpen, refresh }) {
+function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onDetails, onOwnerDetails, onWorkerAttention, onWorkers, onResetLayout, workerRoomOpen, refresh }) {
   const focus = goalOperationalFocus({ goal, tasks, supervision });
+  const ownerAction = { decision: onDecision, worker: onWorkerAttention, refresh, details: onOwnerDetails }[focus.owner.action] || null;
   return <header className={`project-room-header tone-${focus.tone}`}>
     <span className="project-room-signal"><i /></span>
     <div className="project-room-focus" title={focus.current.detail}>
       <small>현재 · {focus.current.label}</small><strong>{focus.current.value}</strong><span>{focus.current.detail}</span>
     </div>
     <div className="project-room-handoff" title={focus.next.detail}><small>다음</small><strong>{focus.next.value}</strong><span>{focus.next.detail}</span></div>
-    <button type="button" className={`project-room-owner tone-${focus.owner.tone}`} onClick={focus.owner.required && goal?.ownerDecision?.required ? onDecision : undefined} disabled={!focus.owner.required} title={focus.owner.detail}>
+    <button type="button" className={`project-room-owner tone-${focus.owner.tone}`} onClick={ownerAction || undefined} disabled={!ownerAction} title={focus.owner.detail}>
       <small>OWNER</small><strong>{focus.owner.value}</strong><span>{focus.owner.detail}</span>
     </button>
     <ol className="project-room-route" aria-label="Goal 워크플로 진행 단계">{focus.route.map(step => <li key={step.id} className={step.state}><i />{step.label}</li>)}</ol>
@@ -573,6 +574,10 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
     setSelectedEntry(trace.findLast(entry => entry.type === 'decision') || null);
     setInspectorOpen(true);
   };
+  const openDetails = () => {
+    if (!selectedEntry) setSelectedEntry(trace.at(-1) || null);
+    setInspectorOpen(true);
+  };
   const beginPanelDrag = (event, panelId) => {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', panelId);
@@ -584,6 +589,12 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
     setDockLayout(current => activateDockPanel(reconcileDockLayout(current, taskIds, selectedTaskId), panelId));
     const taskId = workerTaskId(panelId);
     if (taskId) openTask(taskId);
+  };
+  const openOwnerWorker = () => {
+    const task = tasks.find(item => taskPausedByOwner(item) || taskDisplayStatus(item) === 'paused');
+    if (!task) return;
+    setWorkerRoomOpen(true);
+    activatePanel(workerPanelId(task.id));
   };
   const focusPanel = panelId => {
     setFocusedPanel(panelId);
@@ -617,7 +628,7 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
     return <Suspense key={task.id} fallback={<div className="workspace-empty"><strong>Worker Console 여는 중…</strong><span>실행 출력을 불러오고 있습니다.</span></div>}><WorkerConsole directorId={director?.id} goalId={currentGoal?.id} task={task} detail={selected ? taskDetail : null} trace={selected ? taskTrace : null} detailError={selected ? errors.task : null} traceError={selected ? errors.trace : null} onRefresh={refresh} onOpenSettings={onOpenSettings} /></Suspense>;
   };
   return <>
-    <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} onWorkers={() => setWorkerRoomOpen(value => !value)} onResetLayout={() => { setDockLayout(createDockLayout(taskIds, selectedTaskId)); setWorkerRoomOpen(true); }} workerRoomOpen={workerRoomOpen} refresh={refresh} />
+    <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} onOwnerDetails={openDetails} onWorkerAttention={openOwnerWorker} onWorkers={() => setWorkerRoomOpen(value => !value)} onResetLayout={() => { setDockLayout(createDockLayout(taskIds, selectedTaskId)); setWorkerRoomOpen(true); }} workerRoomOpen={workerRoomOpen} refresh={refresh} />
     <main ref={projectRoomRef} id="workspace" className={`project-room ${compactDock ? 'dock-compact' : ''} ${draggedPanel ? 'dock-dragging' : ''}`} tabIndex="-1">
       <DockNode node={visibleDockLayout} tasks={tasks} taskByPanel={taskByPanel} draggedPanel={draggedPanel} splitAllowed={!draggedPanel || canSplitPanel(draggedPanel)} compact={compactDock} dropTarget={dropTarget} setDropTarget={setDropTarget} onDragStart={beginPanelDrag} onDragEnd={endPanelDrag} onActivate={activatePanel} onFocus={focusPanel} onMove={movePanel} onCanSplit={canSplitPanel} onRatio={changeRatio} renderPanel={renderPanel} />
     </main>

@@ -123,11 +123,11 @@ export function goalOperationalFocus({ goal, tasks = [], supervision = null } = 
     nextDetail = '자동 재개하지 않습니다.';
   }
 
-  let owner = { required: false, value: '없음', detail: '디렉터가 계속 감독합니다.', tone: 'done' };
-  if (stage === 'owner') owner = { required: true, value: '결정 필요', detail: currentDetail, tone: 'attention' };
-  else if (paused.length) owner = { required: true, value: 'Worker 일시정지', detail: '재개하거나 방향을 지시하세요.', tone: 'attention' };
-  else if (supervision?.stalled) owner = { required: true, value: '상태 확인 권장', detail: supervision.detail || supervision.label, tone: 'attention' };
-  else if (stage === 'stopped') owner = { required: true, value: '재시도 판단', detail: currentDetail, tone: 'attention' };
+  let owner = { required: false, action: null, value: '없음', detail: '디렉터가 계속 감독합니다.', tone: 'done' };
+  if (stage === 'owner') owner = { required: true, action: 'decision', value: '결정 필요', detail: currentDetail, tone: 'attention' };
+  else if (paused.length) owner = { required: true, action: 'worker', value: 'Worker 일시정지', detail: '재개하거나 방향을 지시하세요.', tone: 'attention' };
+  else if (supervision?.stalled) owner = { required: true, action: 'refresh', value: '상태 확인 권장', detail: supervision.detail || supervision.label, tone: 'attention' };
+  else if (stage === 'stopped') owner = { required: true, action: 'details', value: '재시도 판단', detail: currentDetail, tone: 'attention' };
 
   const mainRoute = ['analysis', 'candidate', 'review', 'gate', 'complete'];
   const ownerInsertion = Math.max(1, mainRoute.indexOf(transition.stage));

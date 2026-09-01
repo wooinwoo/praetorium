@@ -1290,6 +1290,8 @@ describe('DirectorService', () => {
     ], goal), {
       safe: true,
       foreignRunnableTaskIds: [],
+      foreignQueuedTaskIds: [],
+      foreignRunningTaskIds: [],
       activeRunnableTaskIds: ['t_active'],
     });
     assert.deepEqual(_test.goalBoardIsolation([
@@ -1298,8 +1300,78 @@ describe('DirectorService', () => {
     ], goal), {
       safe: false,
       foreignRunnableTaskIds: ['t_foreign'],
+      foreignQueuedTaskIds: ['t_foreign'],
+      foreignRunningTaskIds: [],
       activeRunnableTaskIds: ['t_active'],
     });
+  });
+
+  it('quarantines foreign queued cards before dispatching active Goal work', async () => {
+    let boardTasks = [
+      { id: 't_active', status: 'ready', assignee: 'codex-implementer' },
+      { id: 't_foreign', status: 'todo', assignee: 'codex-implementer' },
+    ];
+    const scheduled = [];
+    let dispatched = null;
+    const svc = service({ runtime: runtime({
+      listTasks: async () => boardTasks.map(task => ({ ...task })),
+      scheduleTask: async ({ taskId }) => {
+        scheduled.push(taskId);
+        boardTasks = boardTasks.map(task => task.id === taskId ? { ...task, status: 'scheduled' } : task);
+        return { json: {} };
+      },
+      dispatch: async ({ max }) => { dispatched = max; return { json: { spawned: max } }; },
+    }) });
+    const goal = seedActiveGoal(svc, { taskId: 't_active' });
+
+    const result = await svc.tickDirector('project-director-1');
+
+    assert.deepEqual(scheduled, ['t_foreign']);
+    assert.ok(dispatched > 0);
+    assert.equal(result.goalIsolation.safe, true);
+    assert.deepEqual(result.quarantinedForeignTaskIds, ['t_foreign']);
+    assert.ok(goal.events.some(event => event.phase === 'foreign_tasks_quarantined'
+      && event.details?.taskIds?.includes('t_foreign')));
+  });
+
+  it('never reclaims a foreign running card while isolating active Goal dispatch', async () => {
+    let dispatched = null;
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [
+        { id: 't_active', status: 'ready', assignee: 'codex-implementer' },
+        { id: 't_foreign_running', status: 'running', assignee: 'codex-implementer' },
+      ],
+      scheduleTask: async () => assert.fail('running foreign work must not be scheduled or killed'),
+      reclaimTask: async () => assert.fail('running foreign work must not be reclaimed'),
+      dispatch: async ({ max }) => { dispatched = max; return { json: { spawned: max } }; },
+    }) });
+    seedActiveGoal(svc, { taskId: 't_active' });
+
+    const result = await svc.tickDirector('project-director-1');
+
+    assert.equal(dispatched, 0);
+    assert.deepEqual(result.goalIsolation.foreignRunningTaskIds, ['t_foreign_running']);
+    assert.deepEqual(result.quarantinedForeignTaskIds, []);
+  });
+
+  it('does not quarantine an unjournaled card while the active wave is materializing', async () => {
+    let dispatched = null;
+    const svc = service({ runtime: runtime({
+      listTasks: async () => [
+        { id: 't_active', status: 'ready', assignee: 'codex-implementer' },
+        { id: 't_materializing', status: 'todo', assignee: 'codex-implementer' },
+      ],
+      scheduleTask: async () => assert.fail('materializing work must be recovered before foreign-card quarantine'),
+      dispatch: async ({ max }) => { dispatched = max; return { json: { spawned: max } }; },
+    }) });
+    const goal = seedActiveGoal(svc, { taskId: 't_active' });
+    goal.waves[0].status = 'materializing';
+
+    const result = await svc.tickDirector('project-director-1');
+
+    assert.equal(dispatched, 0);
+    assert.deepEqual(result.goalIsolation.foreignQueuedTaskIds, ['t_materializing']);
+    assert.deepEqual(result.quarantinedForeignTaskIds, []);
   });
 
   it('quarantines stale cards from another Goal instead of presenting them as active-Goal work', async () => {
