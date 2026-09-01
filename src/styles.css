@@ -220,7 +220,7 @@ svg { display: block; flex: none; }
 .splitter:focus-visible { outline-offset: -1px; }
 .splitter-horizontal { width: 100%; min-width: 0; height: 5px; min-height: 5px; cursor: ns-resize; }
 .splitter-horizontal::after { top: 2px; right: 0; bottom: auto; left: 0; width: auto; height: 1px; }
-.workspace-shell { display: grid; grid-template-columns: minmax(0, 1fr) 5px minmax(280px, var(--inspector-width)); grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); container-type: inline-size; }
+.workspace-shell { display: grid; grid-template-columns: minmax(0, 1fr) 5px minmax(320px, var(--inspector-width)); grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); container-type: inline-size; }
 .workspace-shell.inspector-closed { grid-template-columns: minmax(0, 1fr); }
 .workspace-tabbar { display: flex; grid-column: 1 / -1; grid-row: 1; min-width: 0; border-bottom: 1px solid var(--border); background: var(--surface-0); }
 .workspace-tabs { display: flex; min-width: 0; flex: 1; overflow: visible; }
@@ -276,6 +276,8 @@ svg { display: block; flex: none; }
 .project-room-health { grid-column: 5; grid-row: 1 / -1; max-width: 145px; overflow: hidden; padding: 4px 7px; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; background: var(--surface-1); font-size: .7rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .project-room-health.tone-failed, .project-room-health.tone-attention { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 35%, var(--border)); background: var(--amber-soft); }
 .project-room-actions { display: flex; grid-column: 6; grid-row: 1 / -1; align-items: center; justify-content: flex-end; gap: 5px; }
+.view-mode-button { min-width: 98px; }
+.view-mode-button:disabled { cursor: default; opacity: 1; }
 .project-room { position: relative; display: block; grid-column: 1; grid-row: 2; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
 .project-room > .dock-split, .project-room > .dock-group { width: 100%; height: 100%; }
 .dock-split { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
@@ -988,7 +990,7 @@ svg { display: block; flex: none; }
 
 @media (max-width: 1360px) {
   .session-state { display: none; }
-  .workspace-shell { grid-template-columns: minmax(0, 1fr) 5px minmax(280px, var(--inspector-width)); }
+  .workspace-shell { grid-template-columns: minmax(0, 1fr) 5px minmax(320px, var(--inspector-width)); }
   .goal-header { grid-template-columns: minmax(0, 1fr) auto; }
   .goal-progress { display: none; }
 }
@@ -997,6 +999,11 @@ svg { display: block; flex: none; }
   :root { --topbar-height: 44px; --workspace-tab-height: 44px; }
   .brand-divider, .breadcrumb, .scale-control, .connection { display: none; }
   .notification-panel { position: fixed; top: calc(var(--topbar-height) + 6px); right: 6px; }
+  .operator-grid, .operator-grid.rail-right { grid-template-columns: minmax(0, 1fr); }
+  .operator-grid > .splitter { display: none; }
+  .operator-grid > .workspace-shell { grid-column: 1; grid-row: 1; }
+  .operator-grid > .sidebar { position: absolute; z-index: 70; top: 0; bottom: 0; left: 0; width: min(86vw, 320px); border-right: 1px solid var(--border-strong); box-shadow: var(--shadow); }
+  .operator-grid.rail-right > .sidebar { right: 0; left: auto; border-right: 0; border-left: 1px solid var(--border-strong); }
   .workspace-shell { grid-template-columns: minmax(0, 1fr); }
   .workspace-shell > .splitter-right { display: none; }
   .inspector { position: fixed; z-index: 60; top: var(--topbar-height); right: 0; bottom: 0; display: grid; width: min(100%, 360px); border-left: 1px solid var(--border-strong); box-shadow: var(--shadow); }
@@ -1051,7 +1058,7 @@ svg { display: block; flex: none; }
   .workflow-list article { grid-template-columns: 1fr; }
 }
 
-@container (max-width: 920px) {
+@container (max-width: 1120px) {
   .project-room-header { grid-template-columns: auto minmax(180px, 1fr) minmax(140px, .65fr) minmax(116px, .55fr) auto; grid-template-rows: minmax(38px, auto) 30px; }
   .project-room-route, .project-room-health { display: none; }
   .project-room-actions { grid-column: 2 / -1; grid-row: 2; }
@@ -1062,6 +1069,7 @@ svg { display: block; flex: none; }
   .project-room-handoff { display: none; }
   .project-room-owner { grid-column: 3; }
   .project-room-focus span, .project-room-owner span { display: none; }
+  .view-mode-button, .project-room-actions > .icon-button { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -333,7 +333,7 @@ export function Inspector({ id, closeRef, directorId, goal, selectedEntry, task,
   </aside>;
 }
 
-function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onDetails, onOwnerDetails, onWorkerAttention, onWorkers, onResetLayout, workerRoomOpen, refresh }) {
+function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onDetails, onOwnerDetails, onWorkerAttention, onWorkers, onResetLayout, workerRoomOpen, focusMode, compactDock, onFocusMode, refresh }) {
   const focus = goalOperationalFocus({ goal, tasks, supervision });
   const ownerAction = { decision: onDecision, worker: onWorkerAttention, refresh, details: onOwnerDetails }[focus.owner.action] || null;
   return <header className={`project-room-header tone-${focus.tone}`}>
@@ -348,6 +348,7 @@ function ProjectRoomHeader({ director, goal, tasks, supervision, onDecision, onD
     <ol className="project-room-route" aria-label="Goal 워크플로 진행 단계">{focus.route.map(step => <li key={step.id} className={step.state}><i />{step.label}</li>)}</ol>
     {supervision && <span className={`project-room-health tone-${supervision.tone}`} title={supervision.detail}>{supervision.label}</span>}
     <div className="project-room-actions">
+      <button type="button" className={`secondary-button compact view-mode-button ${focusMode || compactDock ? 'selected' : ''}`} onClick={onFocusMode} disabled={compactDock} aria-pressed={focusMode || compactDock} title={compactDock ? '좁은 화면에서는 집중 보기가 자동 적용됩니다.' : focusMode ? '현재 집중 보기 · 클릭하면 저장된 분할 배치를 엽니다.' : '현재 분할 보기 · 클릭하면 한 탭씩 집중해서 봅니다.'}><Icon name={focusMode || compactDock ? 'panel' : 'layers'} />{compactDock ? '자동 집중' : focusMode ? '집중 보기' : '분할 보기'}</button>
       <button type="button" className={`secondary-button compact ${workerRoomOpen ? 'selected' : ''}`} onClick={onWorkers} aria-pressed={workerRoomOpen}><Icon name="command" />Workers {tasks.length}</button>
       <button type="button" className="icon-button" onClick={onResetLayout} aria-label="탭 배치 초기화" title="탭 배치 초기화"><Icon name="layers" /></button>
       {goal?.ownerDecision?.required && <button type="button" className="attention-button compact" onClick={onDecision}>결정하기</button>}
@@ -468,7 +469,7 @@ function DockNode(props) {
   </div>;
 }
 
-export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, taskFocusRequest, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, dockLayout, setDockLayout = () => {}, workerRoomOpen = true, setWorkerRoomOpen = () => {}, lastSyncedAt = null, liveActivity, onOpenSettings }) {
+export default function Workspace({ director, goal, goalDetail, summary, board, selectedTaskId, selectTask, selectGoal, taskDetail, taskTrace, taskFocusRequest, errors, refresh, projectMessages, loadMoreProjectMessages, inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, activityHeight, setActivityHeight, dockLayout, setDockLayout = () => {}, workerRoomOpen = true, setWorkerRoomOpen = () => {}, focusMode = true, setFocusMode = () => {}, lastSyncedAt = null, liveActivity, onOpenSettings }) {
   const detailedGoal = goalDetail?.id === goal?.id ? goalDetail : null;
   const currentGoal = detailedGoal || goal;
   const tasks = useMemo(() => goalTasks(board, currentGoal).map(task => task.id === taskDetail?.task?.id
@@ -508,10 +509,11 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
   const effectiveDockLayout = useMemo(() => layoutReady
     ? reconcileDockLayout(dockLayout, taskIds, selectedTaskId)
     : createDockLayout(), [dockLayout, layoutReady, taskIdsKey, selectedTaskId]);
+  const singlePane = compactDock || focusMode;
   const visibleDockLayout = useMemo(() => {
     const visible = workerRoomOpen ? effectiveDockLayout : filterDockLayout(effectiveDockLayout, panelId => !workerTaskId(panelId));
-    return compactDock ? compactDockLayout(visible, focusedPanel) : visible;
-  }, [compactDock, effectiveDockLayout, focusedPanel, workerRoomOpen]);
+    return singlePane ? compactDockLayout(visible, focusedPanel) : visible;
+  }, [effectiveDockLayout, focusedPanel, singlePane, workerRoomOpen]);
   const supervision = useMemo(() => goalSupervisionHealth({
     director,
     goal: currentGoal,
@@ -628,10 +630,10 @@ export default function Workspace({ director, goal, goalDetail, summary, board, 
     return <Suspense key={task.id} fallback={<div className="workspace-empty"><strong>Worker Console 여는 중…</strong><span>실행 출력을 불러오고 있습니다.</span></div>}><WorkerConsole directorId={director?.id} goalId={currentGoal?.id} task={task} detail={selected ? taskDetail : null} trace={selected ? taskTrace : null} detailError={selected ? errors.task : null} traceError={selected ? errors.trace : null} onRefresh={refresh} onOpenSettings={onOpenSettings} /></Suspense>;
   };
   return <>
-    <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} onOwnerDetails={openDetails} onWorkerAttention={openOwnerWorker} onWorkers={() => setWorkerRoomOpen(value => !value)} onResetLayout={() => { setDockLayout(createDockLayout(taskIds, selectedTaskId)); setWorkerRoomOpen(true); }} workerRoomOpen={workerRoomOpen} refresh={refresh} />
-    <main ref={projectRoomRef} id="workspace" className={`project-room ${compactDock ? 'dock-compact' : ''} ${draggedPanel ? 'dock-dragging' : ''}`} tabIndex="-1">
-      <DockNode node={visibleDockLayout} tasks={tasks} taskByPanel={taskByPanel} draggedPanel={draggedPanel} splitAllowed={!draggedPanel || canSplitPanel(draggedPanel)} compact={compactDock} dropTarget={dropTarget} setDropTarget={setDropTarget} onDragStart={beginPanelDrag} onDragEnd={endPanelDrag} onActivate={activatePanel} onFocus={focusPanel} onMove={movePanel} onCanSplit={canSplitPanel} onRatio={changeRatio} renderPanel={renderPanel} />
+    <ProjectRoomHeader director={director} goal={currentGoal} tasks={tasks} supervision={supervision} onDecision={openOwnerDecision} onDetails={() => { if (!selectedEntry) setSelectedEntry(trace.at(-1) || null); setInspectorOpen(value => !value); }} onOwnerDetails={openDetails} onWorkerAttention={openOwnerWorker} onWorkers={() => setWorkerRoomOpen(value => !value)} onResetLayout={() => { setDockLayout(createDockLayout(taskIds, selectedTaskId)); setWorkerRoomOpen(true); }} workerRoomOpen={workerRoomOpen} focusMode={focusMode} compactDock={compactDock} onFocusMode={() => setFocusMode(value => !value)} refresh={refresh} />
+    <main ref={projectRoomRef} id="workspace" className={`project-room ${singlePane ? 'dock-compact' : ''} ${draggedPanel ? 'dock-dragging' : ''}`} tabIndex="-1">
+      <DockNode node={visibleDockLayout} tasks={tasks} taskByPanel={taskByPanel} draggedPanel={draggedPanel} splitAllowed={!draggedPanel || canSplitPanel(draggedPanel)} compact={singlePane} dropTarget={dropTarget} setDropTarget={setDropTarget} onDragStart={beginPanelDrag} onDragEnd={endPanelDrag} onActivate={activatePanel} onFocus={focusPanel} onMove={movePanel} onCanSplit={canSplitPanel} onRatio={changeRatio} renderPanel={renderPanel} />
     </main>
-    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={280} max={520} onChange={setInspectorWidth} onReset={() => setInspectorWidth(312)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={selectedEntry?.type === 'task' ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={false} onClose={() => setInspectorOpen(false)} onOpenSettings={onOpenSettings} /></>}
+    {inspectorOpen && <><Splitter label="세부 정보 너비" side="right" value={inspectorWidth} min={320} max={680} onChange={setInspectorWidth} onReset={() => setInspectorWidth(380)} /><Inspector id="inspector" closeRef={inspectorCloseRef} directorId={director?.id} goal={currentGoal} selectedEntry={selectedEntry} task={selectedEntry?.type === 'task' ? selectedTask : null} tasks={tasks} taskDetail={taskDetail} taskTrace={taskTrace} errors={errors} refresh={refresh} decisionReady={Boolean(detailedGoal) && !errors.goal} workerControls={false} onClose={() => setInspectorOpen(false)} onOpenSettings={onOpenSettings} /></>}
   </>;
 }

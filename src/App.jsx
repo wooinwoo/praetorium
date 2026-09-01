@@ -43,7 +43,8 @@ function AppShell() {
   const [railOpen, setRailOpen] = useStoredState('praetorium.railOpen', true);
   const [workspaceDockLayouts, setWorkspaceDockLayouts] = useStoredState('praetorium.workspaceDockLayouts.v2', {});
   const [workerRoomOpen, setWorkerRoomOpen] = useStoredState('praetorium.workerRoomOpen', true);
-  const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth', 312);
+  const [focusMode, setFocusMode] = useStoredState('praetorium.focusMode', true);
+  const [inspectorWidth, setInspectorWidth] = useStoredState('praetorium.inspectorWidth.v2', 380);
   const [activityHeight, setActivityHeight] = useStoredState('praetorium.activityHeight', 112);
   const [inspectorOpen, setInspectorOpen] = useStoredState('praetorium.inspectorOpen', false);
   const [pendingNavigation, setPendingNavigation] = useState(navigationFromLocation);
@@ -170,6 +171,8 @@ function AppShell() {
       setDockLayout={setWorkspaceDockLayout}
       workerRoomOpen={Boolean(workerRoomOpen)}
       setWorkerRoomOpen={setWorkerRoomOpen}
+      focusMode={Boolean(focusMode)}
+      setFocusMode={setFocusMode}
       onOpenSettings={openRuntimeSettings}
     />
   </section>;

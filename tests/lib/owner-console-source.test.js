@@ -259,8 +259,9 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.match(app, /setTaskFocusRequest\(current => \(\{ taskId: pendingNavigation\.taskId, token: current\.token \+ 1 \}\)\)/);
   assert.match(app, /dockLayoutKey = data\.selectedGoalId/);
   assert.match(app, /praetorium\.workerRoomOpen/);
+  assert.match(app, /praetorium\.focusMode/);
   assert.match(app, /key="workspace"/);
-  assert.match(app, /praetorium\.inspectorWidth/);
+  assert.match(app, /praetorium\.inspectorWidth\.v2/);
   assert.match(app, /praetorium\.inspectorOpen/);
   assert.match(workspace, /Owner ↔ Director/);
   assert.match(workspace, /function DockSplitter/);
@@ -277,7 +278,11 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.match(workspace, /const processPanel = <TraceView/);
   assert.match(workspace, /Director 채팅/);
   assert.match(workspace, /mapDockInsertionIndex/);
-  assert.match(workspace, /compactDockLayout\(visible, focusedPanel\)/);
+  assert.match(workspace, /const singlePane = compactDock \|\| focusMode/);
+  assert.match(workspace, /singlePane \? compactDockLayout\(visible, focusedPanel\) : visible/);
+  assert.match(workspace, /집중 보기/);
+  assert.match(workspace, /분할 보기/);
+  assert.match(workspace, /setFocusMode\(value => !value\)/);
   assert.match(workspace, /getBoundingClientRect\(\)\.width < 820/);
   assert.match(workspace, /if \(taskFocusRequest\?\.taskId\) setFocusedPanel\(workerPanelId\(taskFocusRequest\.taskId\)\)/);
   assert.doesNotMatch(workspace, /if \(selectedTaskId\) setFocusedPanel/);
@@ -299,6 +304,8 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.doesNotMatch(workerConsole, /id="worker-(?:readable|raw)-(?:tab|output)"/);
   assert.match(workspace, /작업 과정/);
   assert.match(workspace, /<Splitter label="세부 정보 너비"/);
+  assert.match(workspace, /min=\{320\} max=\{680\}/);
+  assert.match(workspace, /setInspectorWidth\(380\)/);
   assert.match(workspace, /onClose=\{\(\) => setInspectorOpen\(false\)\}/);
   assert.match(workspace, /selectedEntry\?\.type === 'decision'/);
   assert.match(workspace, /const preview = String\(presentation\.content/);
@@ -315,7 +322,7 @@ test('Owner console uses persistent IDE-style tab groups and resizable splits', 
   assert.doesNotMatch(common, /location\.assign/);
   assert.match(css, /\.splitter[\s\S]*cursor: ew-resize/);
   assert.match(css, /\.workspace-shell[\s\S]*grid-template-rows: auto minmax\(0, 1fr\)/);
-  assert.match(css, /@container \(max-width: 920px\)/);
+  assert.match(css, /@container \(max-width: 1120px\)/);
   assert.match(css, /\.workspace-shell > \.splitter-right \{ grid-column: 2; grid-row: 2; \}/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.inspector \{ position: fixed;/);
   assert.match(css, /\.operator-grid \{[^}]*grid-template-columns: clamp\(220px, var\(--rail-width\), 34vw\)/);
@@ -661,7 +668,9 @@ test('React console keeps durable history, unified Director chat, Worker access,
   assert.match(css, /\.director-decision-banner/);
   assert.match(css, /\.decision-gate:focus-visible/);
   assert.match(css, /\.topbar:has\(\.notification-panel\) \{ z-index: 80; \}/);
-  assert.doesNotMatch(css, /@media \(max-width: 760px\) \{\n  \.operator-grid/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.operator-grid, \.operator-grid\.rail-right \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(css, /\.operator-grid > \.sidebar \{ position: absolute;/);
+  assert.match(css, /\.view-mode-button, \.project-room-actions > \.icon-button \{ display: none; \}/);
   assert.match(hook, /preserve: true/);
   assert.match(hook, /sameJson\(current, nextState\) \? current : nextState/);
   assert.match(hook, /setTaskDetail\(current => sameJson\(current, details\.value\) \? current : details\.value\)/);
