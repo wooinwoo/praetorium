@@ -21,7 +21,7 @@ const paths = {
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/>',
   panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
-  praetorium: '<path d="M7 20V4h6.5a5 5 0 0 1 0 10H10"/><circle cx="11" cy="9" r=".7" fill="currentColor" stroke="none"/><circle cx="13.5" cy="9" r=".7" fill="currentColor" stroke="none"/><circle cx="16" cy="9" r=".7" fill="currentColor" stroke="none"/>',
+  praetorium: '<path d="m3 9 9-6 9 6H3ZM4 10h16M6 10v9M12 10v9M18 10v9M3 20h18"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.5-2L20 12M4 12l2.4 5a7 7 0 0 0 11.5-2"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
   send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
