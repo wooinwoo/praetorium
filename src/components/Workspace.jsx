@@ -209,7 +209,8 @@ function TraceView({ goal, runs, tasks, trace, selectedEntry, onSelectEntry, onS
 function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpenDecision, projectMessages, onLoadOlderMessages }) {
   const canGuideGoal = guideableGoalStates.has(goal?.status);
   const [messageRoute, setMessageRoute] = useState(canGuideGoal ? 'goal' : 'new');
-  useEffect(() => { setMessageRoute(canGuideGoal ? 'goal' : 'new'); }, [goal?.id, canGuideGoal]);
+  const [hiddenConversationIds, setHiddenConversationIds] = useState(null);
+  useEffect(() => { setMessageRoute(canGuideGoal ? 'goal' : 'new'); setHiddenConversationIds(null); }, [goal?.id, canGuideGoal]);
   const messages = useMemo(() => {
     const project = buildConversation(null, { recentRuns: projectMessages?.items || [] }, director, 'project')
       .map(message => ({ ...message, kind: message.kind ? `프로젝트 · ${message.kind}` : '프로젝트' }));
@@ -219,9 +220,11 @@ function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpen
     return [...unique.values()].sort((left, right) => Date.parse(left.at || 0) - Date.parse(right.at || 0));
   }, [director, goal, projectMessages?.items, summary]);
   const routeToGoal = canGuideGoal && messageRoute === 'goal';
+  const conversationId = message => message.id.replace(/:(owner|director)$/, '');
+  const visibleMessages = hiddenConversationIds ? messages.filter(message => !hiddenConversationIds.has(conversationId(message))) : messages;
   const waitingForOwner = goal?.status === 'awaiting_owner' && goal?.ownerDecision?.required;
   return <section className={`director-view ${waitingForOwner ? 'has-context' : ''}`}>
-    <header className="channel-header"><span className="director-avatar large">D</span><span><strong>Owner ↔ Director</strong><small>{director?.name || '프로젝트'}의 지속 대화</small></span><div className="channel-route" role="group" aria-label="메시지 전달 대상"><button type="button" disabled={!canGuideGoal} className={routeToGoal ? 'selected' : ''} onClick={() => setMessageRoute('goal')}>현재 작업에 반영</button><button type="button" className={!routeToGoal ? 'selected' : ''} onClick={() => setMessageRoute('new')}>새 작업으로 전달</button></div><span className="channel-actions"><Status value={director?.status} /></span></header>
+    <header className="channel-header"><span className="director-avatar large">D</span><span><strong>Owner ↔ Director</strong><small>{director?.name || '프로젝트'}의 지속 대화</small></span><div className="channel-route" role="group" aria-label="메시지 전달 대상"><button type="button" disabled={!canGuideGoal} className={routeToGoal ? 'selected' : ''} onClick={() => { setMessageRoute('goal'); setHiddenConversationIds(null); }}>현재 작업</button><button type="button" className={!routeToGoal ? 'selected' : ''} onClick={() => { setMessageRoute('new'); setHiddenConversationIds(current => current || new Set(messages.map(conversationId))); }} title="기존 기록은 보존하고 새 요청 화면을 엽니다."><Icon name="plus" size={13} />새 작업</button></div><span className="channel-actions">{hiddenConversationIds && <button type="button" className="text-button" onClick={() => setHiddenConversationIds(null)}>이전 기록 보기</button>}<Status value={director?.status} /></span></header>
     {waitingForOwner && <div className="director-context"><section className="director-decision-banner" role="alert" aria-live="polite">
         <span><small>완료 아님 · 오너 결정 대기</small><strong>{goal.ownerDecision.question}</strong></span>
         <button type="button" className="attention-button" onClick={onOpenDecision}>결정 화면 열기 <Icon name="chevron" /></button>
@@ -230,10 +233,10 @@ function DirectorView({ director, goal, summary, refresh, onGoalAccepted, onOpen
       key={`${director?.id}:${routeToGoal ? goal?.id : 'project'}`}
       directorId={director?.id}
       goalId={routeToGoal ? goal?.id : null}
-      messages={messages}
-      hasOlder={projectMessages?.hasMore}
+      messages={visibleMessages}
+      hasOlder={!hiddenConversationIds && projectMessages?.hasMore}
       loadingOlder={projectMessages?.loading}
-      historyError={projectMessages?.error || ''}
+      historyError={hiddenConversationIds ? '' : projectMessages?.error || ''}
       onLoadOlder={onLoadOlderMessages}
       onAccepted={async accepted => { if (!routeToGoal) onGoalAccepted(accepted?.goalId); refresh(); }}
     />

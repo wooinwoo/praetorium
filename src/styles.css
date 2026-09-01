@@ -332,7 +332,7 @@ svg { display: block; flex: none; }
 }
 
 .channel-route { display: flex; flex: none; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-0); }
-.channel-route button { min-height: 28px; padding: 0 8px; color: var(--muted); border-radius: 5px; background: transparent; font-size: .72rem; white-space: nowrap; }
+.channel-route button { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border-radius: 5px; background: transparent; font-size: .72rem; white-space: nowrap; }
 .channel-route button:hover, .channel-route button.selected { color: var(--text); background: var(--surface-3); }
 .channel-route button.selected { box-shadow: inset 0 0 0 1px var(--border-strong); }
 
@@ -595,6 +595,7 @@ svg { display: block; flex: none; }
 .channel-header strong { font-size: .9rem; }
 .channel-header small { overflow: hidden; color: var(--muted); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
 .channel-actions { display: flex; align-items: center; gap: 10px; }
+.channel-actions .text-button { min-height: 28px; padding: 0 3px; font-size: .72rem; white-space: nowrap; }
 .channel-scope { display: flex; padding: 3px; border-radius: 6px; background: var(--surface-2); }
 .channel-scope button { min-height: 27px; padding: 0 9px; color: var(--muted); border-radius: 4px; background: transparent; font-size: .75rem; }
 .channel-scope button:hover, .channel-scope button.selected { color: var(--text); background: var(--surface-1); }

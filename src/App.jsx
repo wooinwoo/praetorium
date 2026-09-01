@@ -179,7 +179,7 @@ function AppShell() {
 
   return <div className="app-shell" style={{ '--rail-width': `${railWidth}px`, '--inspector-width': `${inspectorWidth}px` }}>
     <header className="topbar">
-      <div className="brand"><span className="brand-mark"><Icon name="layers" size={18} /></span><strong>PRAETORIUM</strong><span className="brand-divider" /><span className="breadcrumb"><b>{projectName}</b><small>{data.selectedDirector?.runtime === 'wsl' ? `WSL · ${data.selectedDirector.distro || 'Ubuntu'}` : 'Local'}</small></span></div>
+      <div className="brand"><span className="brand-mark"><Icon name="praetorium" size={18} /></span><strong>PRAETORIUM</strong><span className="brand-divider" /><span className="breadcrumb"><b>{projectName}</b><small>{data.selectedDirector?.runtime === 'wsl' ? `WSL · ${data.selectedDirector.distro || 'Ubuntu'}` : 'Local'}</small></span></div>
       <div className="topbar-actions">
         <button type="button" className={`icon-button ${railOpen ? 'selected' : ''}`} onClick={() => setRailOpen(value => !value)} aria-label={railOpen ? '프로젝트 목록 접기' : '프로젝트 목록 열기'} title={railOpen ? '프로젝트 목록 접기' : '프로젝트 목록 열기'}><Icon name="panel" /></button>
         <span className={`connection ${connected ? 'online' : 'offline'}`}><i />{connected ? '로컬 연결' : '연결 끊김'}</span>

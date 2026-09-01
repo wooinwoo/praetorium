@@ -587,6 +587,11 @@ test('React console keeps durable history, unified Director chat, Worker access,
   assert.match(sidebar, /aria-label=\{accessibleLabel\}/);
   assert.match(sidebar, /이전 기록 더 보기/);
   assert.match(workspace, /channel-route/);
+  assert.match(workspace, />새 작업</);
+  assert.match(workspace, /기존 기록은 보존하고 새 요청 화면을 엽니다/);
+  assert.match(workspace, /setHiddenConversationIds\(current => current \|\| new Set\(messages\.map\(conversationId\)\)\)/);
+  assert.match(workspace, /const visibleMessages = hiddenConversationIds \? messages\.filter\(message => !hiddenConversationIds\.has\(conversationId\(message\)\)\) : messages/);
+  assert.match(workspace, /이전 기록 보기/);
   assert.match(workspace, /const guideableGoalStates = new Set/);
   assert.doesNotMatch(workspace.match(/const guideableGoalStates[^;]+;/)?.[0] || '', /awaiting_owner/);
   assert.match(workspace, /key=\{`\$\{director\?\.id\}:\$\{routeToGoal \? goal\?\.id : 'project'\}`\}/);
